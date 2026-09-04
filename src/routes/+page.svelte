@@ -5,6 +5,8 @@
     PackageCheck, Paperclip, Plus, ReceiptText, RefreshCw, ShoppingCart, TriangleAlert,
     Wallet
   } from 'lucide-svelte';
+  import { goto } from '$app/navigation';
+  import { page } from '$app/state';
   import Button from '$lib/components/Button.svelte';
   import Modal from '$lib/components/Modal.svelte';
   import { api } from '$lib/api';
@@ -14,7 +16,14 @@
   let { data }: { data: PageData } = $props();
   let orders = $state<OrderSummary[]>(data.orders);
   let order = $state<OrderDetail | null>(data.order);
-  let view = $state<'dashboard' | 'orders' | 'quotes' | 'procure' | 'accept' | 'finance' | 'expenses'>('dashboard');
+  type View = 'dashboard' | 'orders' | 'quotes' | 'procure' | 'accept' | 'finance' | 'expenses';
+  const validViews: View[] = ['dashboard', 'orders', 'quotes', 'procure', 'accept', 'finance', 'expenses'];
+  const initialView = validViews.includes(data.view as View) ? data.view as View : 'dashboard';
+  let view = $state<View>(initialView);
+  $effect(() => {
+    const next = page.url.searchParams.get('view');
+    if (next && validViews.includes(next as View) && next !== view) view = next as View;
+  });
   let busy = $state(false);
   let message = $state('');
   let errorMessage = $state('');
@@ -126,7 +135,11 @@
       await reload();
     }, '凭证已关联费用单');
   }
-  async function choose(code: string) { await run(async () => { await reload(code); view = 'dashboard'; }, '项目已切换'); }
+  async function selectView(next: View) {
+    view = next;
+    await goto(`?view=${next}`, { keepFocus: true, noScroll: true, replaceState: false });
+  }
+  async function choose(code: string) { await run(async () => { await reload(code); await selectView('dashboard'); }, '项目已切换'); }
   async function toggleTask(task: { id: string; done: number }) {
     await run(async () => { await api.post(`/api/tasks/${task.id}/toggle`, { done: !task.done }); await reload(); }, task.done ? '任务已重新打开' : '任务已完成');
   }
@@ -160,7 +173,7 @@
       const result = await api.post<{ data?: OrderSummary }>(modalKind === 'order' ? '/api/orders' : paths[modalKind], form);
       modalOpen = false;
       await reload(modalKind === 'order' ? result.data?.code : code);
-      if (modalKind === 'order') view = 'quotes';
+      if (modalKind === 'order') await selectView('quotes');
     }, '操作已保存');
   }
 </script>
@@ -173,7 +186,7 @@
     <div class="workspace-label">我的工作空间</div>
     <nav class="nav" aria-label="主导航">
       {#each nav as [key, label, Icon]}
-        <button class:active={view === key} onclick={() => view = key} aria-current={view === key ? 'page' : undefined}>
+        <button class:active={view === key} onclick={() => selectView(key)} aria-current={view === key ? 'page' : undefined}>
           <Icon size={17} /><span>{label}</span>{#if view === key}<ChevronRight class="nav-arrow" size={14} />{/if}
         </button>
       {/each}
@@ -198,7 +211,7 @@
         <section class="empty-large"><FolderKanban size={34} /><b>还没有项目</b><p>创建第一个项目后即可开始业务闭环。</p><Button variant="primary" onclick={() => open('order')}><Plus size={16} />新建项目</Button></section>
       {:else if view === 'dashboard'}
         <section class="page-view">
-          <div class="page-head"><div><div class="eyebrow">MONDAY · {date(new Date().toISOString())}</div><h1>先处理会影响交付的事</h1><p>需求、任务、材料、采购、凭证和审批，都围绕当前项目沉淀。</p></div><Button onclick={() => view = 'orders'}>查看重点订单 <ArrowRight size={16} /></Button></div>
+          <div class="page-head"><div><div class="eyebrow">MONDAY · {date(new Date().toISOString())}</div><h1>先处理会影响交付的事</h1><p>需求、任务、材料、采购、凭证和审批，都围绕当前项目沉淀。</p></div><Button onclick={() => selectView('orders')}>查看重点订单 <ArrowRight size={16} /></Button></div>
           <div class="kpi-grid">
             <div class="kpi accent"><small>项目总数</small><strong>{orders.length}</strong><span>当前业务台账</span></div>
             <div class="kpi"><small>进行中项目</small><strong>{orders.filter((item) => item.stage !== '已回款').length}</strong><span>需要持续推进</span></div>
@@ -217,14 +230,14 @@
               <div class="focus-title"><div><b>{order.name}</b><span>{order.code} · {order.customer}</span></div><strong>{money(order.contract_amount)}</strong></div>
               <div class="progress-label"><span>项目闭环进度</span><b>{stageProgress(order.stage)}%</b></div><div class="progress"><i style:width={`${stageProgress(order.stage)}%`}></i></div>
               <div class="focus-meta"><span>负责人<b>{order.owner || '待分配'}</b></span><span>实际成本<b>{money(order.actual_cost)}</b></span><span>预计毛利<b class:bad={margin < 0}>{money(margin)}</b></span></div>
-              <div class="quick-links"><button onclick={() => view = 'orders'}>查看订单详情 <ArrowRight size={15} /></button><button onclick={() => view = 'finance'}>查看财务跟进 <ArrowRight size={15} /></button></div>
+              <div class="quick-links"><button onclick={() => selectView('orders')}>查看订单详情 <ArrowRight size={15} /></button><button onclick={() => selectView('finance')}>查看财务跟进 <ArrowRight size={15} /></button></div>
             </section>
             <section class="panel action-panel">
               <div class="panel-head"><div><div class="section-kicker">待办事项</div><h2>今天要推进</h2></div><span class="count-badge">{pendingTasks + pendingExpenses + openIssues + pendingProcurement}</span></div>
-              {#if pendingExpenses}<div class="action-item"><span class="action-icon red"><ReceiptText size={16} /></span><div><b>{pendingExpenses} 笔报销待审核</b><small>费用已经归集到当前项目</small></div><button onclick={() => view = 'expenses'}>处理 <ArrowRight size={15} /></button></div>{/if}
-              {#if openIssues}<div class="action-item"><span class="action-icon amber"><TriangleAlert size={16} /></span><div><b>{openIssues} 项验收问题待整改</b><small>完成整改后才能提交复验</small></div><button onclick={() => view = 'accept'}>处理 <ArrowRight size={15} /></button></div>{/if}
-              {#if !openIssues && pendingProcurement}<div class="action-item"><span class="action-icon amber"><ShoppingCart size={16} /></span><div><b>{pendingProcurement} 项采购待定标</b><small>定标后才会形成承诺成本</small></div><button onclick={() => view = 'procure'}>处理 <ArrowRight size={15} /></button></div>{/if}
-              {#each order.tasks.filter((item) => !item.done).slice(0, 2) as task}<div class="action-item"><span class="action-icon blue"><ListTodo size={16} /></span><div><b>{task.title}</b><small>{order.code} · 项目工作项</small></div><button onclick={() => view = 'dashboard'}>继续 <ArrowRight size={15} /></button></div>{/each}
+              {#if pendingExpenses}<div class="action-item"><span class="action-icon red"><ReceiptText size={16} /></span><div><b>{pendingExpenses} 笔报销待审核</b><small>费用已经归集到当前项目</small></div><button onclick={() => selectView('expenses')}>处理 <ArrowRight size={15} /></button></div>{/if}
+              {#if openIssues}<div class="action-item"><span class="action-icon amber"><TriangleAlert size={16} /></span><div><b>{openIssues} 项验收问题待整改</b><small>完成整改后才能提交复验</small></div><button onclick={() => selectView('accept')}>处理 <ArrowRight size={15} /></button></div>{/if}
+              {#if !openIssues && pendingProcurement}<div class="action-item"><span class="action-icon amber"><ShoppingCart size={16} /></span><div><b>{pendingProcurement} 项采购待定标</b><small>定标后才会形成承诺成本</small></div><button onclick={() => selectView('procure')}>处理 <ArrowRight size={15} /></button></div>{/if}
+              {#each order.tasks.filter((item) => !item.done).slice(0, 2) as task}<div class="action-item"><span class="action-icon blue"><ListTodo size={16} /></span><div><b>{task.title}</b><small>{order.code} · 项目工作项</small></div><button onclick={() => selectView('dashboard')}>继续 <ArrowRight size={15} /></button></div>{/each}
               {#if !pendingTasks && !pendingExpenses && !openIssues && !pendingProcurement}<div class="empty-state"><CheckCircle2 size={24} /><b>关键节点已清空</b><small>可以继续推进项目下一阶段</small></div>{/if}
             </section>
           </div>
@@ -250,7 +263,7 @@
       {:else if view === 'accept'}
         <section><div class="page-head"><div><div class="eyebrow">ACCEPTANCE · RECTIFICATION</div><h1>验收与整改</h1><p>先完成整改，再提交复验；复验通过后项目才会进入已验收。</p></div><Button variant="primary" disabled={openIssues > 0 || order.stage !== '执行中'} onclick={() => mutate(`/api/orders/${order!.code}/workflow`, { submitted: true }, '已提交复验，等待验收')}>提交复验</Button></div><section class="panel"><div class="panel-head"><h2>{order.code} · {order.name}</h2><span class="status-pill" class:green={!openIssues} class:orange={Boolean(openIssues)}>{openIssues ? `${openIssues} 项待整改` : '整改已完成'}</span></div>{#each order.acceptance_issues as issue}<div class="metric"><span><b>{issue.description}</b><small>{issue.owner || '待分配'} · <span class:overdue={overdue(issue.due_date) && issue.status === '待整改'}>{overdue(issue.due_date) && issue.status === '待整改' ? '已逾期 · ' : ''}截止 {issue.due_date || '未设置'}</span> · {issue.status === '已整改' ? '等待复验' : issue.status}</small></span>{#if issue.status === '待整改'}<Button size="sm" onclick={() => mutate(`/api/acceptance-issues/${issue.id}/close`, { resolution_note: '整改完成，待复验' }, '已标记整改完成')}>标记整改完成</Button>{:else if issue.status === '已整改'}<Button size="sm" variant="primary" onclick={() => mutate(`/api/acceptance-issues/${issue.id}/close`, { verify: true, resolution_note: '复验通过' }, '问题复验通过')}>复验通过</Button>{:else}<span class="status-pill green">已验收</span>{/if}</div>{:else}<div class="empty">暂无验收整改问题</div>{/each}<div class="row-actions"><Button size="sm" onclick={() => open('issue')}><Plus size={14} />登记整改问题</Button>{#if order.stage === '待复验'}<Button size="sm" variant="danger" onclick={() => mutate(`/api/orders/${order!.code}/workflow`, { submitted: false }, '已退回整改')}>退回整改</Button><Button size="sm" variant="primary" onclick={() => mutate(`/api/orders/${order!.code}/stage`, { stage: '已验收' }, '复验通过')}>复验通过</Button>{/if}</div></section></section>
       {:else if view === 'finance' || view === 'expenses'}
-        <section><div class="page-head"><div><div class="eyebrow">{view === 'expenses' ? 'PROJECT COST · EXPENSES & REIMBURSEMENT' : 'FINANCE · CLOSE THE LOOP'}</div><h1>{view === 'expenses' ? '项目费用与报销' : '财务跟进'}</h1><p>{view === 'expenses' ? '一个订单可以挂多张报价表、费用单和凭证，人员垫付与供应商采购分开记录。' : '开票、结算、回款三条状态线独立推进。'}</p></div><div class="hero-actions"><Button onclick={() => open('expense')}><Plus size={16} />录入费用</Button><Button variant="primary" onclick={() => open('finance')}><Wallet size={16} />更新开票回款</Button></div></div><div class="finance-cards"><div class="finance-card"><small>合同额</small><strong>{money(order.contract_amount)}</strong><span>客户合同口径</span></div><div class="finance-card"><small>预计成本</small><strong>{money(order.cost_summary.find((item) => item.cost_type === '预计')?.amount)}</strong><span>物料与采购计划</span></div><div class="finance-card"><small>承诺成本</small><strong>{money(order.cost_summary.find((item) => item.cost_type === '承诺')?.amount)}</strong><span>采购定标承诺</span></div><div class="finance-card"><small>实际成本</small><strong>{money(order.actual_cost)}</strong><span>已确认发生</span></div><div class="finance-card"><small>已开票</small><strong>{money(order.workflow.invoice)}</strong><span>不得超过合同额</span></div><div class="finance-card"><small>已回款</small><strong>{money(order.workflow.payment)}</strong><span>不得超过开票额</span></div></div><section class="panel"><div class="panel-head"><div><div class="section-kicker">费用审核队列</div><h2>项目费用与报销</h2></div><span>{order.expenses.length} 笔</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>费用项目</th><th>发生日期</th><th>金额</th><th>付款主体</th><th>凭证</th><th>状态</th><th>动作</th></tr></thead><tbody>{#each order.expenses as expense}<tr><td><b>{expense.category}</b><small>{expense.payment_type}</small></td><td>{date(expense.occurred_on)}</td><td><b>{money(expense.amount)}</b></td><td>{expense.payer || '未填写'}</td><td><span class="attachment"><Paperclip size={13} />{expense.proof || '待上传'}</span><Button size="sm" onclick={() => attachProof(expense.id)}>上传凭证</Button></td><td><span class="status-pill" class:green={expense.status === '已报销'} class:orange={expense.status !== '已报销'}>{expense.status}</span></td><td>{#if expense.status === '待审核'}<div class="action-group"><Button size="sm" onclick={() => mutate(`/api/expenses/${expense.id}/status`, { status: '待报销', proof: expense.proof }, '审核已通过')}>审核通过</Button><Button size="sm" variant="danger" onclick={() => rejectExpense(expense)}>驳回</Button></div>{:else if expense.status === '已驳回'}<span class="muted">已驳回：{expense.reject_reason || expense.proof || '待补充'}</span>{:else if expense.status === '待报销'}<Button size="sm" onclick={() => mutate(`/api/expenses/${expense.id}/status`, { status: '已报销', proof: expense.proof }, '报销已完成')}>完成报销</Button>{:else}<span class="muted">已归档</span>{/if}</td></tr>{/each}</tbody></table></div></section><section class="panel section-gap"><div class="panel-head"><div><div class="section-kicker">财务明细</div><h2>发票与回款明细</h2></div><span>{order.invoices.length + order.payments.length} 笔</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>类型</th><th>单号/流水号</th><th>日期</th><th>金额</th><th>状态</th></tr></thead><tbody>{#each order.invoices as invoice}<tr><td>发票</td><td>{invoice.invoice_no}</td><td>{date(invoice.issued_on || undefined)}</td><td><b>{money(invoice.amount)}</b></td><td>{invoice.status}</td></tr>{/each}{#each order.payments as payment}<tr><td>回款</td><td>{payment.reference_no || '—'}</td><td>{date(payment.paid_on)}</td><td><b>{money(payment.amount)}</b></td><td>已到账</td></tr>{/each}{#if !order.invoices.length && !order.payments.length}<tr><td colspan="5" class="empty">暂无发票或回款明细</td></tr>{/if}</tbody></table></div></section></section>
+        <section><div class="page-head"><div><div class="eyebrow">{view === 'expenses' ? 'PROJECT COST · EXPENSES & REIMBURSEMENT' : 'FINANCE · CLOSE THE LOOP'}</div><h1>{view === 'expenses' ? '项目费用与报销' : '财务跟进'}</h1><p>{view === 'expenses' ? '一个订单可以挂多张报价表、费用单和凭证，人员垫付与供应商采购分开记录。' : '开票、结算、回款三条状态线独立推进。'}</p></div><div class="hero-actions">{#if view === 'expenses'}<Button onclick={() => open('expense')}><Plus size={16} />录入费用</Button>{:else}<Button variant="primary" onclick={() => open('finance')}><Wallet size={16} />更新开票回款</Button>{/if}</div></div><div class="finance-cards"><div class="finance-card"><small>合同额</small><strong>{money(order.contract_amount)}</strong><span>客户合同口径</span></div><div class="finance-card"><small>预计成本</small><strong>{money(order.cost_summary.find((item) => item.cost_type === '预计')?.amount)}</strong><span>物料与采购计划</span></div><div class="finance-card"><small>承诺成本</small><strong>{money(order.cost_summary.find((item) => item.cost_type === '承诺')?.amount)}</strong><span>采购定标承诺</span></div><div class="finance-card"><small>实际成本</small><strong>{money(order.actual_cost)}</strong><span>已确认发生</span></div><div class="finance-card"><small>已开票</small><strong>{money(order.workflow.invoice)}</strong><span>不得超过合同额</span></div><div class="finance-card"><small>已回款</small><strong>{money(order.workflow.payment)}</strong><span>不得超过开票额</span></div></div>{#if view === 'expenses'}<section class="panel"><div class="panel-head"><div><div class="section-kicker">费用审核队列</div><h2>项目费用与报销</h2></div><span>{order.expenses.length} 笔</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>费用项目</th><th>发生日期</th><th>金额</th><th>付款主体</th><th>凭证</th><th>状态</th><th>动作</th></tr></thead><tbody>{#each order.expenses as expense}<tr><td><b>{expense.category}</b><small>{expense.payment_type}</small></td><td>{date(expense.occurred_on)}</td><td><b>{money(expense.amount)}</b></td><td>{expense.payer || '未填写'}</td><td><span class="attachment"><Paperclip size={13} />{expense.proof || '待上传'}</span><Button size="sm" onclick={() => attachProof(expense.id)}>上传凭证</Button></td><td><span class="status-pill" class:green={expense.status === '已报销'} class:orange={expense.status !== '已报销'}>{expense.status}</span></td><td>{#if expense.status === '待审核'}<div class="action-group"><Button size="sm" onclick={() => mutate(`/api/expenses/${expense.id}/status`, { status: '待报销', proof: expense.proof }, '审核已通过')}>审核通过</Button><Button size="sm" variant="danger" onclick={() => rejectExpense(expense)}>驳回</Button></div>{:else if expense.status === '已驳回'}<span class="muted">已驳回：{expense.reject_reason || expense.proof || '待补充'}</span>{:else if expense.status === '待报销'}<Button size="sm" onclick={() => mutate(`/api/expenses/${expense.id}/status`, { status: '已报销', proof: expense.proof }, '报销已完成')}>完成报销</Button>{:else}<span class="muted">已归档</span>{/if}</td></tr>{/each}</tbody></table></div></section>{/if}{#if view === 'finance'}<section class="panel section-gap"><div class="panel-head"><div><div class="section-kicker">财务明细</div><h2>发票与回款明细</h2></div><span>{order.invoices.length + order.payments.length} 笔</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>类型</th><th>单号/流水号</th><th>日期</th><th>金额</th><th>状态</th></tr></thead><tbody>{#each order.invoices as invoice}<tr><td>发票</td><td>{invoice.invoice_no}</td><td>{date(invoice.issued_on || undefined)}</td><td><b>{money(invoice.amount)}</b></td><td>{invoice.status}</td></tr>{/each}{#each order.payments as payment}<tr><td>回款</td><td>{payment.reference_no || '—'}</td><td>{date(payment.paid_on)}</td><td><b>{money(payment.amount)}</b></td><td>已到账</td></tr>{/each}{#if !order.invoices.length && !order.payments.length}<tr><td colspan="5" class="empty">暂无发票或回款明细</td></tr>{/if}</tbody></table></div></section>{/if}</section>
       {:else}
         <section><div class="page-head"><div><div class="eyebrow">WECOM PILOT · EXPENSE TO PROJECT</div><h1>企业微信入口</h1><p>报销进入项目费用台账。</p></div><Button variant="primary" onclick={() => open('expense')}><Plus size={16} />模拟提交报销</Button></div><div class="case-hero"><div class="case-icon"><MessageCircle size={27} /></div><div><b>首个企业微信试点</b><h2>报销单 → 项目归属校验 → 财务人审 → 费用回写</h2><p>企业微信负责采集和触达，项目中心负责事实、状态、凭证与审计。</p></div></div><div class="wechat-grid"><section class="panel"><div class="panel-head"><div><div class="section-kicker">PILOT FLOW</div><h2>四步跑通</h2></div><span>人工确认保留</span></div>{#each [['01','提交报销','审批单带项目号、金额和发票'],['02','归属校验','判断项目归属、预算占用和异常风险'],['03','财务人审','确认、驳回或补充凭证'],['04','回写项目','成本、预警和活动流同步更新']] as step}<div class="pilot-step"><b>{step[0]}</b><div><strong>{step[1]}</strong><small>{step[2]}</small></div></div>{/each}</section><section class="panel"><div class="panel-head"><div><div class="section-kicker">ACCEPTANCE BAR</div><h2>试点验收标准</h2></div></div><div class="metric"><strong>≥95%</strong><span>项目归属准确率</span></div><div class="metric"><strong>−50%</strong><span>财务人工处理时长目标</span></div><div class="metric"><strong>100%</strong><span>人审确认后回写成功</span></div></section></div></section>
       {/if}
