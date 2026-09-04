@@ -59,4 +59,6 @@ export interface OrderDetail extends OrderSummary {
   risk: Risk;
 }
 
+export interface WorkspaceData { orders: OrderSummary[]; order: OrderDetail | null; view: string; }
+
 export type JsonRecord = Record<string, unknown>;
