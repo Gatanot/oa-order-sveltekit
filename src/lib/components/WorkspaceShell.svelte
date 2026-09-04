@@ -184,14 +184,14 @@
         </a>
       {/each}
     </nav>
-    <div class="sidebar-bottom"><div class="mini-user"><div class="avatar">李</div><div><b>李海明</b><small>项目负责人</small></div><span class="online"></span></div></div>
+    <div class="sidebar-bottom"><div class="mini-user"><div class="avatar">演</div><div><b>演示账号</b><small>登录用户功能待接入</small></div></div></div>
   </aside>
 
   <main class="main">
     <header class="topbar">
       <div class="top-context">
         <div class="breadcrumb">工作空间 <span>/</span> <b>{nav.find(([key]) => key === currentView)?.[1]}</b></div>
-        {#if workspaceState.order}<label class="project-switcher"><span>当前项目</span><select aria-label="切换当前项目" value={workspaceState.order.code} onchange={(event) => choose((event.currentTarget as HTMLSelectElement).value)}>{#each workspaceState.orders as item}<option value={item.code}>{item.code} · {item.name}</option>{/each}</select><strong class={`status-pill ${stageTone(workspaceState.order.stage)}`}>{workspaceState.order.stage}</strong></label>{/if}
+        {#if workspaceState.order}<label class="project-switcher"><span>当前项目</span><select aria-label="切换当前项目" value={workspaceState.order.code} onchange={(event) => choose((event.currentTarget as HTMLSelectElement).value)}>{#each workspaceState.orders as item}<option value={item.code}>{item.code} · {item.name}</option>{/each}</select><strong class={`status-pill ${stageTone(workspaceState.order.stage)}`}>{workspaceState.order.stage}</strong><small class="project-owner">负责人：{workspaceState.order.owner || '未分配'}</small></label>{/if}
       </div>
       <div class="top-actions">
         <button class="icon-btn" title="刷新数据" aria-label="刷新数据" disabled={workspaceState.busy} onclick={() => run(() => reload(), '数据已刷新')}><RefreshCw size={17} /></button>
