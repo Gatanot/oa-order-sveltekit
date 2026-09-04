@@ -8,7 +8,7 @@
   import { api } from '$lib/api';
   import type { ProcurementItem, WorkspaceData } from '$lib/types';
   import { WORKSPACE_CONTEXT, type ModalKind, type View, type WorkspaceContext, type WorkspaceState, views } from '$lib/workspace-context';
-
+  import { stageTone } from '$lib/workspace-utils';
   let { data, children }: { data: WorkspaceData; children: import('svelte').Snippet } = $props();
   let workspaceState: WorkspaceState = $state({
     orders: data.orders,
@@ -34,7 +34,15 @@
     INVALID_EXPENSE_TRANSITION: '当前费用状态不能执行此操作', FINANCE_TOTAL_CANNOT_DECREASE: '开票或回款累计金额不能减少',
     INVALID_ORDER_AMOUNTS: '请检查合同金额和预算成本，预算不能高于合同金额', CUSTOMER_REQUIRED: '请填写客户名称',
     NAME_REQUIRED: '请填写项目名称', ACCEPTANCE_VERIFY_STAGE_REQUIRED: '只有项目进入待复验后，才能确认验收问题通过',
-    ACCEPTANCE_ISSUE_MUST_BE_REPAIRED: '验收问题还未完成整改，请先标记整改完成'
+    ACCEPTANCE_ISSUE_MUST_BE_REPAIRED: '验收问题还未完成整改，请先标记整改完成',
+    QUOTE_CONFIRM_REQUIRED: '请先确认一个有效报价版本，再进入执行阶段',
+    ACCEPTANCE_ALREADY_SUBMITTED: '当前项目已经提交复验，请等待验收结果',
+    ACCEPTANCE_RETURN_NOT_ALLOWED: '当前项目不在待复验阶段，无法退回整改',
+    ACCEPTANCE_NOT_PASSED: '请先完成验收，再进行项目结算',
+    ALREADY_SETTLED: '项目已经完成结算',
+    INVALID_MONEY: '金额必须是有效的非负数',
+    ORDER_WORKFLOW_NOT_FOUND: '项目流程信息不存在，请刷新后重试',
+    NO_WORKFLOW_COMMAND: '当前操作缺少必要信息，请刷新后重试'
   };
 
   const currentView = $derived((page.params.view && views.includes(page.params.view as View) ? page.params.view : 'dashboard') as View);
@@ -135,7 +143,7 @@
     const defaults: Record<ModalKind, Record<string, string | number>> = {
       order: { customer: '', name: '', owner: '', contract_amount: 0, budget_cost: 0 }, task: { title: '' },
       expense: { category: '', occurred_on: today, amount: 0, payment_type: '员工垫付', payer: '', proof: '' },
-      quote: { version: `V${(order?.quotes.length ?? 0) + 1}`, total: (order?.contract_amount ?? 0) / 100, estimated_cost: (order?.budget_cost ?? 0) / 100, proof: '客户确认邮件' },
+      quote: { version: `V${(order?.quotes.length ?? 0) + 1}`, total: (order?.contract_amount ?? 0) / 100, estimated_cost: (order?.budget_cost ?? 0) / 100, proof: '' },
       material: { name: '', quantity: 1, unit: '项', cost_unit: 0, supplier: '' },
       procurement: { name: '', budget: 0 }, offer: { supplier: '', amount: (item?.budget ?? 0) / 100, proof: '供应商报价单' },
       issue: { description: '', owner: '', due_date: '' }, finance: { invoice: (order?.workflow.invoice ?? 0) / 100, payment: (order?.workflow.payment ?? 0) / 100 }
@@ -171,7 +179,7 @@
     <div class="workspace-label">我的工作空间</div>
     <nav class="nav" aria-label="主导航">
       {#each nav as [key, label, Icon]}
-        <a class:active={currentView === key} href={`/workspace/${encodeURIComponent(workspaceState.order!.code)}/${key}`} aria-current={currentView === key ? 'page' : undefined}>
+        <a class:active={currentView === key} href={`/workspace/${encodeURIComponent(workspaceState.order!.code)}/${key}`} aria-label={label} title={label} aria-current={currentView === key ? 'page' : undefined}>
           <Icon size={17} /><span>{label}</span>{#if currentView === key}<ChevronRight class="nav-arrow" size={14} />{/if}
         </a>
       {/each}
@@ -181,7 +189,10 @@
 
   <main class="main">
     <header class="topbar">
-      <div class="breadcrumb">工作空间 <span>/</span> <b>{nav.find(([key]) => key === currentView)?.[1]}</b></div>
+      <div class="top-context">
+        <div class="breadcrumb">工作空间 <span>/</span> <b>{nav.find(([key]) => key === currentView)?.[1]}</b></div>
+        {#if workspaceState.order}<label class="project-switcher"><span>当前项目</span><select aria-label="切换当前项目" value={workspaceState.order.code} onchange={(event) => choose((event.currentTarget as HTMLSelectElement).value)}>{#each workspaceState.orders as item}<option value={item.code}>{item.code} · {item.name}</option>{/each}</select><strong class={`status-pill ${stageTone(workspaceState.order.stage)}`}>{workspaceState.order.stage}</strong></label>{/if}
+      </div>
       <div class="top-actions">
         <button class="icon-btn" title="刷新数据" aria-label="刷新数据" disabled={workspaceState.busy} onclick={() => run(() => reload(), '数据已刷新')}><RefreshCw size={17} /></button>
         <Button size="sm" onclick={() => { if (workspaceState.order) window.location.href = `/api/orders/${workspaceState.order.code}/export`; }}>导出</Button>
@@ -190,6 +201,7 @@
       </div>
     </header>
     {#if workspaceState.errorMessage}<div class="notice error" role="alert">{workspaceState.errorMessage}</div>{/if}
+    {#if workspaceState.order}<div class="workflow-strip" aria-label="项目流程"><div class="workflow-strip-title"><b>{workspaceState.order.name}</b><small>{workspaceState.order.code} · {workspaceState.order.customer}</small></div><div class="workflow-strip-stages">{#each ['报价中', '执行中', '待复验', '已验收', '待回款', '已回款'] as stage, index}<span class:current={stage === workspaceState.order.stage} class:done={['报价中', '执行中', '待复验', '已验收', '待回款', '已回款'].indexOf(workspaceState.order.stage) > index}>{index + 1}. {stage}</span>{/each}</div></div>{/if}
     <div class="content">{@render children()}</div>
   </main>
 </div>
@@ -199,7 +211,7 @@
     <label>客户名称<input bind:value={form.customer} required /></label><label>项目名称<input bind:value={form.name} required /></label><label>负责人<input bind:value={form.owner} /></label><label>合同金额<input bind:value={form.contract_amount} type="number" min="0.01" step="0.01" required /></label><label>预算成本<input bind:value={form.budget_cost} type="number" min="0.01" step="0.01" required /></label>
   {:else if modalKind === 'task'}<label>工作内容<input bind:value={form.title} required /></label>
   {:else if modalKind === 'expense'}<label>费用项目<input bind:value={form.category} required /></label><label>发生日期<input bind:value={form.occurred_on} type="date" /></label><label>金额<input bind:value={form.amount} type="number" min="0.01" step="0.01" required /></label><label>付款主体<input bind:value={form.payer} /></label><label>凭证说明<input bind:value={form.proof} /></label>
-  {:else if modalKind === 'quote'}<label>版本号<input bind:value={form.version} required /></label><label>报价总额<input bind:value={form.total} type="number" min="0.01" step="0.01" required /></label><label>预计成本<input bind:value={form.estimated_cost} type="number" min="0" step="0.01" required /></label><label>确认凭证<input bind:value={form.proof} required /></label>
+  {:else if modalKind === 'quote'}<p class="form-hint">报价确认后，项目将进入“执行中”，之后不能再确认其他报价版本。请填写真实的客户确认凭证，例如确认邮件、盖章报价单或合同附件。</p><label>版本号<input bind:value={form.version} required /></label><label>报价总额<input bind:value={form.total} type="number" min="0.01" step="0.01" required /></label><label>预计成本<input bind:value={form.estimated_cost} type="number" min="0" step="0.01" required /></label><label>客户确认凭证<input bind:value={form.proof} placeholder="例如：客户确认邮件 2026-03-20" required /></label>
   {:else if modalKind === 'material'}<label>物料名称<input bind:value={form.name} required /></label><label>数量<input bind:value={form.quantity} type="number" min="0.01" step="0.01" required /></label><label>单位<input bind:value={form.unit} required /></label><label>成本单价<input bind:value={form.cost_unit} type="number" min="0" step="0.01" required /></label><label>供应商<input bind:value={form.supplier} /></label>
   {:else if modalKind === 'procurement'}<label>采购项目<input bind:value={form.name} required /></label><label>预算金额<input bind:value={form.budget} type="number" min="0.01" step="0.01" required /></label>
   {:else if modalKind === 'offer'}<label>供应商名称<input bind:value={form.supplier} required /></label><label>报价金额<input bind:value={form.amount} type="number" min="0.01" step="0.01" required /></label><label>报价凭证<input bind:value={form.proof} required /></label>
@@ -207,4 +219,4 @@
   {:else}<p class="form-hint">当前累计：已开票 ¥{((workspaceState.order?.workflow.invoice ?? 0) / 100).toFixed(2)}，已回款 ¥{((workspaceState.order?.workflow.payment ?? 0) / 100).toFixed(2)}。请输入更新后的累计金额，系统会自动记录本次新增明细。</p><label>更新后已开票累计金额<input bind:value={form.invoice} type="number" min="0" step="0.01" required /></label><label>更新后已回款累计金额<input bind:value={form.payment} type="number" min="0" step="0.01" required /></label>{/if}
 </Modal>
 
-{#if workspaceState.message}<div class="toast" role="status">{workspaceState.message}</div>{/if}
+{#if workspaceState.message}<div class="toast on" role="status">{workspaceState.message}</div>{/if}
