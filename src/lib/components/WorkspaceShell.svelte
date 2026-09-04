@@ -45,7 +45,12 @@
     NO_WORKFLOW_COMMAND: '当前操作缺少必要信息，请刷新后重试'
   };
 
-  const currentView = $derived((page.params.view && views.includes(page.params.view as View) ? page.params.view : 'dashboard') as View);
+  // Modules are separate static routes, so the active view is read from the URL
+  // rather than the old dynamic `view` route param.
+  const currentView = $derived(((() => {
+    const segment = page.url.pathname.split('/').filter(Boolean).at(-1);
+    return segment && views.includes(segment as View) ? segment : 'dashboard';
+  })()) as View);
   const modalTitles: Record<ModalKind, string> = {
     order: '新建项目', task: '新增项目工作项', expense: '录入项目费用', quote: '新增报价版本',
     material: '录入物料成本', procurement: '新增采购需求', offer: '新增供应商报价', issue: '登记验收问题', finance: '更新开票与回款'
