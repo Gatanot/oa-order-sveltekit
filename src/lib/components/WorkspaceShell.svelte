@@ -28,7 +28,8 @@
     QUOTE_PROOF_REQUIRED: '请先补充客户确认凭证', OPEN_ACCEPTANCE_ISSUES: '还有未完成的验收整改，请先处理后再提交复验',
     ACCEPTANCE_SUBMISSION_REQUIRED: '请先提交复验，才能执行此动作', ACCEPTANCE_SUBMIT_STAGE_REQUIRED: '只有执行中的项目可以提交复验',
     INVALID_STAGE_TRANSITION: '当前阶段不能执行此操作，请按流程推进', SETTLEMENT_REQUIRED: '请先完成项目结算',
-    PAYMENT_INCOMPLETE: '回款未达到已开票金额，项目暂不能完结', INVOICE_EXCEEDS_CONTRACT: '已开票金额不能超过合同金额',
+    PAYMENT_INCOMPLETE: '回款未达到已开票金额，项目暂不能完结', INVOICE_INCOMPLETE: '合同金额尚未全部开票，项目暂不能完结',
+    INVOICE_EXCEEDS_CONTRACT: '已开票金额不能超过合同金额', FINANCE_CLOSED: '项目已完成回款，不能继续登记财务数据',
     PAYMENT_EXCEEDS_INVOICE: '回款金额不能超过已开票金额', OVER_BUDGET_APPROVAL_REQUIRED: '该报价超过预算，需要审批确认',
     RESOLUTION_NOTE_REQUIRED: '请填写整改说明或复验备注', ACCEPTANCE_ISSUE_CLOSE_STAGE_REQUIRED: '当前阶段不能处理验收问题',
     INVALID_EXPENSE_TRANSITION: '当前费用状态不能执行此操作', FINANCE_TOTAL_CANNOT_DECREASE: '开票或回款累计金额不能减少',
@@ -42,7 +43,8 @@
     ALREADY_SETTLED: '项目已经完成结算',
     INVALID_MONEY: '金额必须是有效的非负数',
     ORDER_WORKFLOW_NOT_FOUND: '项目流程信息不存在，请刷新后重试',
-    NO_WORKFLOW_COMMAND: '当前操作缺少必要信息，请刷新后重试'
+    NO_WORKFLOW_COMMAND: '当前操作缺少必要信息，请刷新后重试', NO_FINANCE_CHANGE: '请至少填写一笔开票或回款金额',
+    EXPENSE_REJECTION_REASON_REQUIRED: '请填写费用驳回原因'
   };
 
   // Modules are separate static routes, so the active view is read from the URL
@@ -107,6 +109,7 @@
   }
 
   async function award(item: ProcurementItem, offer: { id: string; supplier: string; amount: number }) {
+    if (!window.confirm(`确认选择供应商“${offer.supplier}”，报价 ¥${(offer.amount / 100).toFixed(2)} 并回写项目承诺成本吗？`)) return;
     workspaceState.busy = true;
     try {
       try { await api.post(`/api/procurement-items/${item.id}/award`, { offer_id: offer.id }); }
@@ -183,7 +186,7 @@
     }
     if (modalKind === 'reject-expense') {
       await run(async () => {
-        await api.post(`/api/expenses/${targetExpenseId}/status`, { status: '已驳回', proof: String(form.reason || '').trim() });
+        await api.post(`/api/expenses/${targetExpenseId}/status`, { status: '已驳回', reason: String(form.reason || '').trim() });
         modalOpen = false;
         await reload();
       }, '费用已驳回，已记录原因');
