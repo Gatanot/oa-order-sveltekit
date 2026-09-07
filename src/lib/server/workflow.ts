@@ -81,7 +81,11 @@ export function settleProject(db: Database.Database, orderId: string, actor: str
   if (current.stage !== '已验收') throw new Error('ACCEPTANCE_NOT_PASSED');
   if (current.settled) throw new Error('ALREADY_SETTLED');
   db.prepare('UPDATE order_workflows SET settled=1 WHERE order_id=?').run(orderId);
-  return setStage(db, orderId, '待回款', actor, '项目结算');
+  const result = setStage(db, orderId, '待回款', actor, '项目结算');
+  if (result.invoice === result.contract_amount && result.payment >= result.invoice) {
+    return setStage(db, orderId, '已回款', actor, '回款完成');
+  }
+  return result;
 }
 
 export function recordFinance(db: Database.Database, orderId: string, values: { invoice?: number; payment?: number }, actor: string) {
@@ -135,6 +139,7 @@ export function updateExpenseStatus(db: Database.Database, expense: { id: string
   if (!transitionsForStatus[expense.status]?.includes(next)) throw new Error('INVALID_EXPENSE_TRANSITION');
   const rejectionReason = reason.trim();
   if (next === '已驳回' && !rejectionReason) throw new Error('EXPENSE_REJECTION_REASON_REQUIRED');
+  if (expense.status === '已驳回' && next === '待审核' && (!proof.trim() || proof === '待上传凭证')) throw new Error('EXPENSE_PROOF_REQUIRED');
   const changedAt = isoNow();
   const reviewFields = next === '待报销' || next === '已驳回'
     ? { reviewed_by: actor, reviewed_at: changedAt }
@@ -147,7 +152,7 @@ export function updateExpenseStatus(db: Database.Database, expense: { id: string
   } else if (next === '已驳回') {
     db.prepare("UPDATE cost_entries SET status='已冲销',created_by=?,created_at=? WHERE source_type='expense' AND source_id=? AND status='有效'").run(actor, changedAt, expense.id);
   }
-  db.prepare('INSERT INTO status_history VALUES(?,?,?,?,?,?,?,?,?,?)').run(randomUUID(), expense.order_id, 'expense', expense.id, expense.status, next, '更新费用状态', actor, null, changedAt);
+  db.prepare('INSERT INTO status_history VALUES(?,?,?,?,?,?,?,?,?,?)').run(randomUUID(), expense.order_id, 'expense', expense.id, expense.status, next, '更新费用状态', actor, next === '已驳回' ? rejectionReason : null, changedAt);
   touch(db, expense.order_id);
-  audit(db, expense.order_id, '更新费用状态', actor, { expense_id: expense.id, from: expense.status, to: next });
+  audit(db, expense.order_id, '更新费用状态', actor, { expense_id: expense.id, from: expense.status, to: next, ...(next === '已驳回' ? { reason: rejectionReason } : {}) });
 }

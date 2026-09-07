@@ -44,7 +44,7 @@
     INVALID_MONEY: '金额必须是有效的非负数',
     ORDER_WORKFLOW_NOT_FOUND: '项目流程信息不存在，请刷新后重试',
     NO_WORKFLOW_COMMAND: '当前操作缺少必要信息，请刷新后重试', NO_FINANCE_CHANGE: '请至少填写一笔开票或回款金额',
-    EXPENSE_REJECTION_REASON_REQUIRED: '请填写费用驳回原因'
+    EXPENSE_REJECTION_REASON_REQUIRED: '请填写费用驳回原因', EXPENSE_PROOF_REQUIRED: '请先补充费用凭证，再重新提交审核'
   };
 
   // Modules are separate static routes, so the active view is read from the URL
