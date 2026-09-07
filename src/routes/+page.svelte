@@ -32,12 +32,12 @@
   <FolderKanban size={34} />
   <b>还没有项目</b>
   <p>创建第一个项目后即可开始业务闭环。</p>
-  <form class="panel" onsubmit={createProject} style="width: min(440px, 100%); text-align: left;">
-    <label>客户名称<input bind:value={customer} required /></label>
-    <label>项目名称<input bind:value={name} required /></label>
-    <label>负责人<input bind:value={owner} /></label>
-    <label>合同金额<input bind:value={contractAmount} type="number" min="0.01" step="0.01" required /></label>
-    <label>预算成本<input bind:value={budgetCost} type="number" min="0.01" step="0.01" required /></label>
+  <form class="panel standalone-form" onsubmit={createProject} style="width: min(440px, 100%); text-align: left;">
+    <label>客户名称 <span class="required-mark">必填</span><input bind:value={customer} placeholder="例如：华东科技有限公司" required /></label>
+    <label>项目名称 <span class="required-mark">必填</span><input bind:value={name} placeholder="例如：办公楼弱电改造项目" required /></label>
+    <label>项目负责人 <span class="optional-mark">选填</span><input bind:value={owner} placeholder="例如：张三" /></label>
+    <label>合同金额（元） <span class="required-mark">必填</span><input bind:value={contractAmount} type="number" min="0.01" step="0.01" placeholder="0.00" required /></label>
+    <label>预算成本（元） <span class="required-mark">必填</span><input bind:value={budgetCost} type="number" min="0.01" step="0.01" placeholder="0.00" required /></label>
     {#if errorMessage}<div class="notice error" role="alert">{errorMessage}</div>{/if}
     <Button type="submit" variant="primary" disabled={busy}><Plus size={16} />创建项目</Button>
   </form>

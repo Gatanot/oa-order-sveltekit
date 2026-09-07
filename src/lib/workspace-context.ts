@@ -4,7 +4,7 @@ export type View = 'dashboard' | 'orders' | 'quotes' | 'procure' | 'accept' | 'f
 export const views: View[] = ['dashboard', 'orders', 'quotes', 'procure', 'accept', 'finance', 'expenses'];
 export const WORKSPACE_CONTEXT = 'orbit-workspace';
 
-export type ModalKind = 'order' | 'task' | 'expense' | 'quote' | 'material' | 'procurement' | 'offer' | 'issue' | 'finance';
+export type ModalKind = 'order' | 'task' | 'expense' | 'quote' | 'material' | 'procurement' | 'offer' | 'issue' | 'finance' | 'attachment' | 'reject-expense';
 
 export interface WorkspaceState {
   orders: OrderSummary[];

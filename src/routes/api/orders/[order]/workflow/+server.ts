@@ -1,5 +1,5 @@
 import { findOrder, getDb, moneyToCents } from '$lib/server/db';
-import { recordFinance, returnAcceptance, settleProject, submitAcceptance } from '$lib/server/workflow';
+import { recordFinance, recordFinanceIncrease, returnAcceptance, settleProject, submitAcceptance } from '$lib/server/workflow';
 import { action, body } from '$lib/server/http';
 import type { RequestHandler } from './$types';
 
@@ -16,6 +16,13 @@ export const POST: RequestHandler = async (event) => {
       if (data.invoice !== undefined || data.payment !== undefined) recordFinance(db, order.id, {
         invoice: data.invoice === undefined ? undefined : moneyToCents(data.invoice),
         payment: data.payment === undefined ? undefined : moneyToCents(data.payment)
+      }, actor);
+      return { ok: true, stage: result.stage };
+    }
+    if (data.invoice_addition !== undefined || data.payment_addition !== undefined) {
+      const result = recordFinanceIncrease(db, order.id, {
+        invoice: data.invoice_addition === undefined ? undefined : moneyToCents(data.invoice_addition),
+        payment: data.payment_addition === undefined ? undefined : moneyToCents(data.payment_addition)
       }, actor);
       return { ok: true, stage: result.stage };
     }

@@ -53,11 +53,26 @@
   })()) as View);
   const modalTitles: Record<ModalKind, string> = {
     order: '新建项目', task: '新增项目工作项', expense: '录入项目费用', quote: '新增报价版本',
-    material: '录入物料成本', procurement: '新增采购需求', offer: '新增供应商报价', issue: '登记验收问题', finance: '更新开票与回款'
+    material: '录入物料成本', procurement: '新增采购需求', offer: '新增供应商报价', issue: '登记验收问题', finance: '登记本次开票与回款',
+    attachment: '关联费用凭证', 'reject-expense': '驳回费用'
+  };
+  const modalDescriptions: Record<ModalKind, string> = {
+    order: '填写客户、项目和金额，创建项目。',
+    task: '写下要跟进的一件事。',
+    expense: '填写一笔项目费用，审核后计入实际成本。',
+    quote: '填写客户确认过的报价信息。',
+    material: '填写一项物料及其实际成本。',
+    procurement: '填写要采购的物品和预算。',
+    offer: '填写供应商对当前采购项目的报价。',
+    issue: '填写需要整改的验收问题。',
+    finance: '填写本次发生的开票和回款金额，没有发生就填 0。',
+    attachment: '填写要关联到这笔费用的凭证名称。',
+    'reject-expense': '填写驳回这笔费用的原因。'
   };
   let modalOpen = $state(false);
   let modalKind = $state<ModalKind>('order');
   let targetItem = $state<ProcurementItem | null>(null);
+  let targetExpenseId = $state<string | null>(null);
   let form = $state<Record<string, string | number>>({});
 
   // A project change re-runs the [order] layout load. Keep the shell state in sync
@@ -94,12 +109,11 @@
   async function award(item: ProcurementItem, offer: { id: string; supplier: string; amount: number }) {
     workspaceState.busy = true;
     try {
-      if (!window.confirm(`确认选择供应商“${offer.supplier}”，报价 ¥${(offer.amount / 100).toFixed(2)} 并回写项目承诺成本吗？`)) return;
       try { await api.post(`/api/procurement-items/${item.id}/award`, { offer_id: offer.id }); }
       catch (reason) {
         const text = reason instanceof Error ? reason.message : '';
         if (!text.includes('OVER_BUDGET_APPROVAL_REQUIRED')) throw reason;
-        if (!window.confirm(`供应商报价已超过预算，确认进入审批模拟并定标吗？`)) return;
+        if (!window.confirm(`报价 ¥${(offer.amount / 100).toFixed(2)} 超出预算，仍要定标吗？`)) return;
         await api.post(`/api/procurement-items/${item.id}/award`, { offer_id: offer.id, approved: true });
       }
       await reload(); notify('采购已定标，成本已回写');
@@ -112,14 +126,15 @@
     await mutate(`/api/orders/${workspaceState.order.code}/reset`, {}, '演示流程已重置');
   }
 
+  function openAction(kind: 'attachment' | 'reject-expense', expenseId: string) {
+    targetExpenseId = expenseId;
+    modalKind = kind;
+    form = kind === 'attachment' ? { name: '' } : { reason: '请补充合规凭证' };
+    modalOpen = true;
+  }
+
   async function attachProof(expenseId: string) {
-    if (!workspaceState.order) return;
-    const name = window.prompt('凭证文件名（演示只保存文件信息，不上传二进制）', '发票或付款截图.png');
-    if (!name?.trim()) return;
-    await run(async () => {
-      await api.post(`/api/orders/${workspaceState.order!.code}/attachments`, { name: name.trim(), kind: '费用凭证', related_type: 'expense', related_id: expenseId });
-      await reload();
-    }, '凭证已关联费用单');
+    openAction('attachment', expenseId);
   }
 
   async function selectView(next: View) {
@@ -136,9 +151,7 @@
   }
 
   async function rejectExpense(expense: { id: string }) {
-    const reason = window.prompt('请输入驳回原因', '请补充合规凭证');
-    if (!reason?.trim()) return;
-    await mutate(`/api/expenses/${expense.id}/status`, { status: '已驳回', proof: reason.trim() }, '费用已驳回，已记录原因');
+    openAction('reject-expense', expense.id);
   }
 
   function open(kind: ModalKind, item: ProcurementItem | null = null) {
@@ -146,12 +159,13 @@
     const today = new Date().toISOString().slice(0, 10);
     const order = workspaceState.order;
     const defaults: Record<ModalKind, Record<string, string | number>> = {
-      order: { customer: '', name: '', owner: '', contract_amount: 0, budget_cost: 0 }, task: { title: '' },
-      expense: { category: '', occurred_on: today, amount: 0, payment_type: '员工垫付', payer: '', proof: '' },
-      quote: { version: `V${(order?.quotes.length ?? 0) + 1}`, total: (order?.contract_amount ?? 0) / 100, estimated_cost: (order?.budget_cost ?? 0) / 100, proof: '' },
-      material: { name: '', quantity: 1, unit: '项', cost_unit: 0, supplier: '' },
-      procurement: { name: '', budget: 0 }, offer: { supplier: '', amount: (item?.budget ?? 0) / 100, proof: '供应商报价单' },
-      issue: { description: '', owner: '', due_date: '' }, finance: { invoice: (order?.workflow.invoice ?? 0) / 100, payment: (order?.workflow.payment ?? 0) / 100 }
+      order: { customer: '', name: '', owner: '', contract_amount: '', budget_cost: '' }, task: { title: '' },
+      expense: { category: '', occurred_on: today, amount: '', payment_type: '员工垫付', payer: '', proof: '' },
+      quote: { version: `V${(order?.quotes.length ?? 0) + 1}`, total: '', estimated_cost: '', proof: '' },
+      material: { name: '', quantity: 1, unit: '项', cost_unit: '', supplier: '' },
+      procurement: { name: '', budget: '' }, offer: { supplier: '', amount: '', proof: '供应商报价单' },
+      issue: { description: '', owner: '', due_date: '' }, finance: { invoice_addition: 0, payment_addition: 0 },
+      attachment: { name: '' }, 'reject-expense': { reason: '请补充合规凭证' }
     };
     form = defaults[kind]; modalOpen = true;
   }
@@ -159,10 +173,27 @@
   async function submitModal() {
     const code = workspaceState.order?.code;
     if (modalKind !== 'order' && !code) return;
+    if (modalKind === 'attachment') {
+      await run(async () => {
+        await api.post(`/api/orders/${code}/attachments`, { name: String(form.name || '').trim(), kind: '费用凭证', related_type: 'expense', related_id: targetExpenseId });
+        modalOpen = false;
+        await reload();
+      }, '凭证已关联费用单');
+      return;
+    }
+    if (modalKind === 'reject-expense') {
+      await run(async () => {
+        await api.post(`/api/expenses/${targetExpenseId}/status`, { status: '已驳回', proof: String(form.reason || '').trim() });
+        modalOpen = false;
+        await reload();
+      }, '费用已驳回，已记录原因');
+      return;
+    }
     const paths: Record<Exclude<ModalKind, 'order'>, string> = {
       task: `/api/orders/${code}/tasks`, expense: `/api/orders/${code}/expenses`, quote: `/api/orders/${code}/quotes`,
       material: `/api/orders/${code}/materials`, procurement: `/api/orders/${code}/procurement-items`,
-      offer: `/api/procurement-items/${targetItem?.id}/offers`, issue: `/api/orders/${code}/acceptance-issues`, finance: `/api/orders/${code}/workflow`
+      offer: `/api/procurement-items/${targetItem?.id}/offers`, issue: `/api/orders/${code}/acceptance-issues`, finance: `/api/orders/${code}/workflow`,
+      attachment: `/api/orders/${code}/attachments`, 'reject-expense': `/api/expenses/${targetExpenseId}/status`
     };
     await run(async () => {
       const result = await api.post<{ data?: { code?: string } }>(modalKind === 'order' ? '/api/orders' : paths[modalKind], form);
@@ -211,17 +242,51 @@
   </main>
 </div>
 
-<Modal bind:open={modalOpen} title={modalTitles[modalKind]} busy={workspaceState.busy} onsubmit={submitModal} submitLabel="保存">
+<Modal bind:open={modalOpen} title={modalTitles[modalKind]} description={modalDescriptions[modalKind]} busy={workspaceState.busy} onsubmit={submitModal} submitLabel={modalKind === 'finance' ? '登记' : modalKind === 'attachment' ? '关联' : modalKind === 'reject-expense' ? '驳回' : '保存'}>
   {#if modalKind === 'order'}
-    <label>客户名称<input bind:value={form.customer} required /></label><label>项目名称<input bind:value={form.name} required /></label><label>负责人<input bind:value={form.owner} /></label><label>合同金额<input bind:value={form.contract_amount} type="number" min="0.01" step="0.01" required /></label><label>预算成本<input bind:value={form.budget_cost} type="number" min="0.01" step="0.01" required /></label>
-  {:else if modalKind === 'task'}<label>工作内容<input bind:value={form.title} required /></label>
-  {:else if modalKind === 'expense'}<label>费用项目<input bind:value={form.category} required /></label><label>发生日期<input bind:value={form.occurred_on} type="date" /></label><label>金额<input bind:value={form.amount} type="number" min="0.01" step="0.01" required /></label><label>付款主体<input bind:value={form.payer} /></label><label>凭证说明<input bind:value={form.proof} /></label>
-  {:else if modalKind === 'quote'}<p class="form-hint">报价确认后，项目将进入“执行中”，之后不能再确认其他报价版本。请填写真实的客户确认凭证，例如确认邮件、盖章报价单或合同附件。</p><label>版本号<input bind:value={form.version} required /></label><label>报价总额<input bind:value={form.total} type="number" min="0.01" step="0.01" required /></label><label>预计成本<input bind:value={form.estimated_cost} type="number" min="0" step="0.01" required /></label><label>客户确认凭证<input bind:value={form.proof} placeholder="例如：客户确认邮件 2026-03-20" required /></label>
-  {:else if modalKind === 'material'}<label>物料名称<input bind:value={form.name} required /></label><label>数量<input bind:value={form.quantity} type="number" min="0.01" step="0.01" required /></label><label>单位<input bind:value={form.unit} required /></label><label>成本单价<input bind:value={form.cost_unit} type="number" min="0" step="0.01" required /></label><label>供应商<input bind:value={form.supplier} /></label>
-  {:else if modalKind === 'procurement'}<label>采购项目<input bind:value={form.name} required /></label><label>预算金额<input bind:value={form.budget} type="number" min="0.01" step="0.01" required /></label>
-  {:else if modalKind === 'offer'}<label>供应商名称<input bind:value={form.supplier} required /></label><label>报价金额<input bind:value={form.amount} type="number" min="0.01" step="0.01" required /></label><label>报价凭证<input bind:value={form.proof} required /></label>
-  {:else if modalKind === 'issue'}<label>问题描述<textarea bind:value={form.description} required></textarea></label><label>整改负责人<input bind:value={form.owner} /></label><label>截止日期<input bind:value={form.due_date} type="date" /></label>
-  {:else}<p class="form-hint">当前累计：已开票 ¥{((workspaceState.order?.workflow.invoice ?? 0) / 100).toFixed(2)}，已回款 ¥{((workspaceState.order?.workflow.payment ?? 0) / 100).toFixed(2)}。请输入更新后的累计金额，系统会自动记录本次新增明细。</p><label>更新后已开票累计金额<input bind:value={form.invoice} type="number" min="0" step="0.01" required /></label><label>更新后已回款累计金额<input bind:value={form.payment} type="number" min="0" step="0.01" required /></label>{/if}
+    <label class="form-field">客户名称<span class="required-mark">必填</span><input bind:value={form.customer} placeholder="例如：华东科技有限公司" required /></label>
+    <label class="form-field">项目名称<span class="required-mark">必填</span><input bind:value={form.name} placeholder="例如：办公楼弱电改造项目" required /></label>
+    <label class="form-field">项目负责人<span class="optional-mark">选填</span><input bind:value={form.owner} placeholder="例如：张三" /></label>
+    <label class="form-field">合同金额（元）<span class="required-mark">必填</span><input bind:value={form.contract_amount} type="number" min="0.01" step="0.01" placeholder="0.00" required /></label>
+    <label class="form-field">预算成本（元）<span class="required-mark">必填</span><input bind:value={form.budget_cost} type="number" min="0.01" step="0.01" placeholder="0.00" required /></label>
+  {:else if modalKind === 'task'}
+    <label class="form-field">工作内容<span class="required-mark">必填</span><input bind:value={form.title} placeholder="例如：整理客户验收资料" required /></label>
+  {:else if modalKind === 'expense'}
+    <label class="form-field">费用项目<span class="required-mark">必填</span><input bind:value={form.category} placeholder="例如：差旅费、材料费、招待费" required /></label>
+    <label class="form-field">发生日期<span class="optional-mark">选填</span><input bind:value={form.occurred_on} type="date" /></label>
+    <label class="form-field">费用金额（元）<span class="required-mark">必填</span><input bind:value={form.amount} type="number" min="0.01" step="0.01" placeholder="0.00" required /></label>
+    <label class="form-field">付款人或付款主体<span class="optional-mark">选填</span><input bind:value={form.payer} placeholder="例如：李四 / 公司账户" /></label>
+    <label class="form-field">凭证说明<span class="optional-mark">选填</span><input bind:value={form.proof} placeholder="例如：发票号、付款截图名称" /></label>
+  {:else if modalKind === 'quote'}
+    <label class="form-field">报价版本号<span class="required-mark">必填</span><input bind:value={form.version} placeholder="例如：V1" required /></label>
+    <label class="form-field">报价总额（元）<span class="required-mark">必填</span><input bind:value={form.total} type="number" min="0.01" step="0.01" placeholder="0.00" required /></label>
+    <label class="form-field">预计成本（元）<span class="required-mark">必填</span><input bind:value={form.estimated_cost} type="number" min="0" step="0.01" placeholder="0.00" required /></label>
+    <label class="form-field">客户确认凭证<span class="required-mark">必填</span><input bind:value={form.proof} placeholder="例如：客户确认邮件 2026-03-20" required /></label>
+  {:else if modalKind === 'material'}
+    <label class="form-field">物料名称<span class="required-mark">必填</span><input bind:value={form.name} placeholder="例如：六类网线" required /></label>
+    <label class="form-field">数量<span class="required-mark">必填</span><input bind:value={form.quantity} type="number" min="0.01" step="0.01" placeholder="例如：10" required /></label>
+    <label class="form-field">计量单位<span class="required-mark">必填</span><input bind:value={form.unit} placeholder="例如：箱、件、米" required /></label>
+    <label class="form-field">成本单价（元）<span class="required-mark">必填</span><input bind:value={form.cost_unit} type="number" min="0" step="0.01" placeholder="0.00" required /></label>
+    <label class="form-field">供应商<span class="optional-mark">选填</span><input bind:value={form.supplier} placeholder="例如：某某建材有限公司" /></label>
+  {:else if modalKind === 'procurement'}
+    <label class="form-field">采购项目<span class="required-mark">必填</span><input bind:value={form.name} placeholder="例如：机房服务器" required /></label>
+    <label class="form-field">采购预算（元）<span class="required-mark">必填</span><input bind:value={form.budget} type="number" min="0.01" step="0.01" placeholder="0.00" required /></label>
+  {:else if modalKind === 'offer'}
+    <label class="form-field">供应商名称<span class="required-mark">必填</span><input bind:value={form.supplier} placeholder="例如：某某设备有限公司" required /></label>
+    <label class="form-field">供应商报价（元）<span class="required-mark">必填</span><input bind:value={form.amount} type="number" min="0.01" step="0.01" placeholder="0.00" required /></label>
+    <label class="form-field">报价凭证<span class="required-mark">必填</span><input bind:value={form.proof} placeholder="例如：供应商报价单 2026-03-20" required /></label>
+  {:else if modalKind === 'issue'}
+    <label class="form-field">验收问题描述<span class="required-mark">必填</span><textarea bind:value={form.description} placeholder="请描述问题现象、位置和影响" required></textarea></label>
+    <label class="form-field">整改负责人<span class="optional-mark">选填</span><input bind:value={form.owner} placeholder="例如：张三" /></label>
+    <label class="form-field">整改截止日期<span class="optional-mark">选填</span><input bind:value={form.due_date} type="date" /></label>
+  {:else if modalKind === 'finance'}
+    <label class="form-field finance-field">本次开票金额（元）<span class="optional-mark">无新增填 0</span><input bind:value={form.invoice_addition} type="number" min="0" step="0.01" placeholder="0.00" required /></label>
+    <label class="form-field finance-field">本次回款金额（元）<span class="optional-mark">无新增填 0</span><input bind:value={form.payment_addition} type="number" min="0" step="0.01" placeholder="0.00" required /></label>
+  {:else if modalKind === 'attachment'}
+    <label class="form-field">凭证名称<span class="required-mark">必填</span><input bind:value={form.name} placeholder="例如：差旅费发票.jpg" required /></label>
+  {:else}
+    <label class="form-field">驳回原因<span class="required-mark">必填</span><textarea bind:value={form.reason} placeholder="请写明需要补充或修改的内容" required></textarea></label>
+  {/if}
 </Modal>
 
 {#if workspaceState.message}<div class="toast on" role="status">{workspaceState.message}</div>{/if}

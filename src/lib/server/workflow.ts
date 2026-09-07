@@ -99,6 +99,22 @@ export function recordFinance(db: Database.Database, orderId: string, values: { 
   return state(db, orderId);
 }
 
+/**
+ * User-facing finance input is an addition, not a replacement of the running total.
+ * Convert it to the persisted cumulative totals here so the UI does not expose
+ * an accounting/storage detail that users have to calculate themselves.
+ */
+export function recordFinanceIncrease(db: Database.Database, orderId: string, values: { invoice?: number; payment?: number }, actor: string) {
+  const current = state(db, orderId);
+  const invoiceIncrease = values.invoice ?? 0;
+  const paymentIncrease = values.payment ?? 0;
+  if (invoiceIncrease < 0 || paymentIncrease < 0) throw new Error('INVALID_MONEY');
+  return recordFinance(db, orderId, {
+    invoice: current.invoice + invoiceIncrease,
+    payment: current.payment + paymentIncrease
+  }, actor);
+}
+
 export function updateOrderStage(db: Database.Database, orderId: string, stage: string, actor: string) {
   return setStage(db, orderId, stage, actor, '更新订单阶段');
 }

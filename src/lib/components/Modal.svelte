@@ -3,9 +3,10 @@
   import { X } from 'lucide-svelte';
   import Button from './Button.svelte';
 
-  let { open = $bindable(false), title, busy = false, onsubmit, submitLabel = '保存', children }: {
+  let { open = $bindable(false), title, description, busy = false, onsubmit, submitLabel = '保存', children }: {
     open: boolean;
     title: string;
+    description?: string;
     busy?: boolean;
     onsubmit: () => void | Promise<void>;
     submitLabel?: string;
@@ -39,7 +40,10 @@
   <div class="modal-backdrop" role="presentation" onmousedown={(event) => event.target === event.currentTarget && close()}>
     <div use:opened class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
       <header class="modal__header">
-        <h2 id="modal-title">{title}</h2>
+        <div>
+          <h2 id="modal-title">{title}</h2>
+          {#if description}<p class="modal__description">{description}</p>{/if}
+        </div>
         <button class="icon-button" type="button" aria-label="关闭" onclick={close}><X size={18} /></button>
       </header>
       <form onsubmit={(event) => { event.preventDefault(); onsubmit(); }}>
