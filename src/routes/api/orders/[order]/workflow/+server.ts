@@ -12,11 +12,17 @@ export const POST: RequestHandler = async (event) => {
     if (data.submitted === true) return { ok: true, ...(submitAcceptance(db, order.id, actor) as object) };
     if (data.submitted === false) return { ok: true, ...(returnAcceptance(db, order.id, actor) as object) };
     if (data.settled === true) {
+      if (data.invoice !== undefined || data.payment !== undefined) {
+        try {
+          recordFinance(db, order.id, {
+            invoice: data.invoice === undefined ? undefined : moneyToCents(data.invoice),
+            payment: data.payment === undefined ? undefined : moneyToCents(data.payment)
+          }, actor);
+        } catch (reason) {
+          if (!(reason instanceof Error) || reason.message !== 'NO_FINANCE_CHANGE') throw reason;
+        }
+      }
       const result = settleProject(db, order.id, actor);
-      if (data.invoice !== undefined || data.payment !== undefined) recordFinance(db, order.id, {
-        invoice: data.invoice === undefined ? undefined : moneyToCents(data.invoice),
-        payment: data.payment === undefined ? undefined : moneyToCents(data.payment)
-      }, actor);
       return { ok: true, stage: result.stage };
     }
     if (data.invoice_addition !== undefined || data.payment_addition !== undefined) {
