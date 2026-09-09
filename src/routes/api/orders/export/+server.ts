@@ -4,7 +4,12 @@ import type { RequestHandler } from './$types';
 const columns: Record<string, string> = {
   code: '订单编号', order_date: '订单日期', customer_name: '客户', project_name: '项目', project_owner: '项目负责人', service_name: '订单内容', quantity: '数量', unit: '单位', quote_amount: '报价', cost_amount: '成本', created_by: '录入人', status: '状态', note: '备注'
 };
-const csv = (value: unknown) => `"${String(value ?? '').replaceAll('"', '""')}"`;
+const csv = (value: unknown) => {
+  const text = String(value ?? '');
+  // Prevent spreadsheet formula injection while preserving the exported value.
+  const safe = /^[=+\-@]/.test(text) ? `'${text}` : text;
+  return `"${safe.replaceAll('"', '""')}"`;
+};
 export const GET: RequestHandler = ({ url }) => {
   const params = url.searchParams;
   const from = params.get('from') || '';

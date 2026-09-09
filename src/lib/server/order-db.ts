@@ -10,9 +10,12 @@ const now = () => new Date().toISOString();
 export const uuid = () => randomUUID();
 
 export function moneyToCents(value: unknown): number {
-  const raw = String(value ?? '').trim();
+  if (value === '' || value === null || value === undefined || typeof value === 'boolean') throw new Error('金额格式不正确');
+  const raw = String(value).trim();
   if (!/^\d+(\.\d{1,2})?$/.test(raw)) throw new Error('金额格式不正确');
-  return Math.round(Number(raw) * 100);
+  const amount = Number(raw);
+  if (!Number.isFinite(amount) || amount > Number.MAX_SAFE_INTEGER / 100) throw new Error('金额格式不正确');
+  return Math.round(amount * 100);
 }
 
 function migrate(db: Database.Database) {
@@ -87,7 +90,14 @@ export function listOrders() {
   return getOrderDb().prepare(`SELECT o.*, c.name AS customer_name, p.name AS project_name, p.owner AS project_owner, ci.category AS catalog_category FROM orders_simple o JOIN customers_simple c ON c.id=o.customer_id JOIN projects_simple p ON p.id=o.project_id LEFT JOIN catalog_items ci ON ci.id=o.catalog_id ORDER BY o.order_date DESC,o.created_at DESC`).all();
 }
 
-export function createProject(data: { customer?: string; customer_id?: string; name: string; owner?: string }) {
+export interface CreateProjectInput {
+  customer?: string;
+  customer_id?: string;
+  name: string;
+  owner?: string;
+}
+
+export function createProject(data: CreateProjectInput) {
   const db = getOrderDb();
   return db.transaction(() => {
     let customerId = data.customer_id;

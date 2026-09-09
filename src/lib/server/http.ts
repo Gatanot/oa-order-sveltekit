@@ -1,11 +1,14 @@
 import { error, json, type RequestEvent } from '@sveltejs/kit';
 
-export async function body(event: RequestEvent): Promise<Record<string, any>> {
+export async function body(event: RequestEvent): Promise<Record<string, unknown>> {
   const length = Number(event.request.headers.get('content-length') || 0);
-  if (length > 1024 * 1024) error(413, 'REQUEST_TOO_LARGE');
+  if (Number.isFinite(length) && length > 1024 * 1024) error(413, 'REQUEST_TOO_LARGE');
   try {
-    return await event.request.json();
-  } catch {
+    const value: unknown = await event.request.json();
+    if (!value || typeof value !== 'object' || Array.isArray(value)) error(400, 'INVALID_JSON');
+    return value as Record<string, unknown>;
+  } catch (reason) {
+    if (reason && typeof reason === 'object' && 'status' in reason) throw reason;
     error(400, 'INVALID_JSON');
   }
 }
