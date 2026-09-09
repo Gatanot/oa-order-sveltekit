@@ -1,44 +1,96 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
-  import { FolderKanban, Plus } from 'lucide-svelte';
-  import Button from '$lib/components/Button.svelte';
+  import { Download, FileSpreadsheet, LayoutDashboard, ListFilter, Menu, Plus, RefreshCw, Search, Trash2, Upload, X } from 'lucide-svelte';
+  import * as XLSX from 'xlsx';
   import { api } from '$lib/api';
 
-  let customer = $state('');
-  let name = $state('');
-  let owner = $state('');
-  let contractAmount = $state(0);
-  let budgetCost = $state(0);
-  let busy = $state(false);
-  let errorMessage = $state('');
+  type Customer = { id: string; name: string; contact: string };
+  type Project = { id: string; customer_id: string; customer_name: string; name: string; owner: string; status: string };
+  type Catalog = { id: string; category: string; name: string; unit: string; quote_unit: number; cost_unit: number; customer_name?: string; project_name?: string };
+  type Order = { id: string; code: string; customer_id: string; project_id: string; customer_name: string; project_name: string; project_owner: string; service_name: string; quantity: number; unit: string; quote_amount: number; cost_amount: number; order_date: string; created_by: string; status: string; note: string };
+  type Data = { customers: Customer[]; projects: Project[]; catalog: Catalog[]; orders: Order[] };
+  let { data }: { data: Data } = $props();
+  let view = $state<'overview' | 'entry' | 'catalog'>('overview');
+  let sidebarCollapsed = $state(false);
+  let customers = $state(data.customers); let projects = $state(data.projects); let catalog = $state(data.catalog); let orders = $state(data.orders);
+  let customerId = $state(''); let projectId = $state(''); let catalogId = $state(''); let serviceName = $state(''); let quantity = $state(1); let unit = $state('项');
+  let quoteAmount = $state(''); let costAmount = $state(''); let orderDate = $state(new Date().toISOString().slice(0, 10)); let createdBy = $state('当前用户'); let note = $state('');
+  let newCustomer = $state(''); let newProject = $state(''); let newOwner = $state(''); let showProjectForm = $state(false); let busy = $state(false); let message = $state(''); let error = $state('');
+  let search = $state(''); let catalogSearch = $state(''); let catalogCategory = $state(''); let filterCustomer = $state(''); let filterProject = $state(''); let filterOwner = $state(''); let filterCreator = $state(''); let filterFrom = $state(''); let filterTo = $state('');
+  let showExport = $state(false); let selectedOrderIds = $state<string[]>([]); let selectedColumns = $state(['code','order_date','customer_name','project_name','project_owner','service_name','quantity','quote_amount','cost_amount','created_by']);
+  const exportColumns = [['code','订单编号'],['order_date','订单日期'],['customer_name','客户'],['project_name','项目'],['project_owner','项目负责人'],['service_name','订单内容'],['quantity','数量'],['unit','单位'],['quote_amount','报价'],['cost_amount','成本'],['created_by','录入人'],['status','状态'],['note','备注']];
+  const money = (c: number) => `¥${(c / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}`;
+  const filteredProjects = $derived(projects.filter((p) => !customerId || p.customer_id === customerId));
+  const visibleCatalog = $derived(catalog.filter((item) => (!catalogSearch || `${item.name} ${item.category} ${item.customer_name || ''} ${item.project_name || ''}`.toLowerCase().includes(catalogSearch.toLowerCase())) && (!catalogCategory || item.category === catalogCategory)));
+  const catalogCategories = $derived([...new Set(catalog.map((item) => item.category).filter(Boolean))]);
+  const selectedCatalog = $derived(catalog.find((item) => item.id === catalogId));
+  const selectedCustomer = $derived(customers.find((item) => item.id === customerId)?.name || '');
+  const selectedProject = $derived(projects.find((item) => item.id === projectId)?.name || '');
+  const catalogSuggestions = $derived(catalog.filter((item) => {
+    const keyword = serviceName.trim().toLowerCase();
+    const text = `${item.name} ${item.category}`.toLowerCase();
+    const keywordMatch = !keyword || text.includes(keyword);
+    const customerMatch = !item.customer_name || item.customer_name === selectedCustomer;
+    const projectMatch = !item.project_name || item.project_name === selectedProject;
+    return keywordMatch && customerMatch && projectMatch;
+  }).slice(0, 8));
+  const filteredOrders = $derived(orders.filter((o) => (!search || `${o.code}${o.customer_name}${o.project_name}${o.service_name}`.toLowerCase().includes(search.toLowerCase())) && (!filterCustomer || o.customer_id === filterCustomer) && (!filterProject || o.project_id === filterProject) && (!filterOwner || o.project_owner === filterOwner) && (!filterCreator || o.created_by === filterCreator) && (!filterFrom || o.order_date >= filterFrom) && (!filterTo || o.order_date <= filterTo)));
+  const projectStats = $derived(projects.map((project) => { const items = orders.filter((order) => order.project_id === project.id); return { ...project, orderCount: items.length, quote: items.reduce((sum, item) => sum + item.quote_amount, 0), cost: items.reduce((sum, item) => sum + item.cost_amount, 0) }; }).filter((project) => project.orderCount > 0));
+  const allFilteredSelected = $derived(filteredOrders.length > 0 && filteredOrders.every((order) => selectedOrderIds.includes(order.id)));
+  const totalQuote = $derived(filteredOrders.reduce((sum, item) => sum + item.quote_amount, 0));
+  const totalCost = $derived(filteredOrders.reduce((sum, item) => sum + item.cost_amount, 0));
+  const owners = $derived([...new Set(orders.map((o) => o.project_owner).filter(Boolean))]);
+  const creators = $derived([...new Set(orders.map((o) => o.created_by).filter(Boolean))]);
 
-  async function createProject(event: SubmitEvent) {
-    event.preventDefault();
-    busy = true; errorMessage = '';
-    try {
-      const result = await api.post<{ data?: { code?: string } }>('/api/orders', {
-        customer, name, owner, contract_amount: contractAmount, budget_cost: budgetCost
-      });
-      if (result.data?.code) await goto(`/workspace/${encodeURIComponent(result.data.code)}/quotes`);
-    } catch (reason) {
-      errorMessage = reason instanceof Error ? reason.message : '项目创建失败';
-    } finally { busy = false; }
+  function notify(text: string, isError = false) { message = isError ? '' : text; error = isError ? text : ''; setTimeout(() => { message = ''; error = ''; }, 3500); }
+  function applyCatalog() { if (!selectedCatalog) return; serviceName = selectedCatalog.name; unit = selectedCatalog.unit; quoteAmount = String((selectedCatalog.quote_unit * quantity / 100).toFixed(2)); costAmount = String((selectedCatalog.cost_unit * quantity / 100).toFixed(2)); }
+  function applySuggestion(item: Catalog) { catalogId = item.id; unit = item.unit; quoteAmount = String((item.quote_unit * quantity / 100).toFixed(2)); costAmount = String((item.cost_unit * quantity / 100).toFixed(2)); }
+  function onCustomerChange() { projectId = ''; }
+  function onQuantityChange() { if (selectedCatalog) applyCatalog(); }
+  async function refresh() { const [o, c, p, k] = await Promise.all([api.get<{data: Order[]}>('/api/orders'), api.get<{data: Customer[]}>('/api/customers'), api.get<{data: Project[]}>('/api/projects'), api.get<{data: Catalog[]}>('/api/catalog')]); orders = o.data; customers = c.data; projects = p.data; catalog = k.data; }
+  async function submitOrder(event: SubmitEvent) { event.preventDefault(); busy = true; try { await api.post('/api/orders', { project_id: projectId, catalog_id: catalogId, service_name: serviceName, quantity, unit, quote_amount: quoteAmount, cost_amount: costAmount, order_date: orderDate, created_by: createdBy, note }); await refresh(); notify('订单已录入'); view = 'overview'; serviceName = ''; quoteAmount = ''; costAmount = ''; note = ''; catalogId = ''; } catch (e) { notify(e instanceof Error ? e.message : '订单保存失败', true); } finally { busy = false; } }
+  async function submitProject() { if (!newCustomer.trim() || !newProject.trim()) return; busy = true; try { const result = await api.post<{data: Project}>('/api/projects', { customer: newCustomer, name: newProject, owner: newOwner }); await refresh(); customerId = result.data.customer_id; projectId = result.data.id; newCustomer = ''; newProject = ''; newOwner = ''; showProjectForm = false; notify('项目已创建'); } catch (e) { notify(e instanceof Error ? e.message : '项目创建失败', true); } finally { busy = false; } }
+  async function importFile(event: Event) { const file = (event.currentTarget as HTMLInputElement).files?.[0]; if (!file) return; busy = true; try { const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' }); const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[workbook.SheetNames[0]]); const result = await api.post<{data: number}>('/api/catalog', { rows }); await refresh(); notify(`已导入 ${result.data} 条报价成本记录`); } catch (e) { notify(e instanceof Error ? e.message : '文件导入失败', true); } finally { busy = false; (event.currentTarget as HTMLInputElement).value = ''; } }
+  function toggleOrder(id: string) { selectedOrderIds = selectedOrderIds.includes(id) ? selectedOrderIds.filter((item) => item !== id) : [...selectedOrderIds, id]; }
+  function toggleFilteredOrders() { const ids = new Set(selectedOrderIds); if (allFilteredSelected) filteredOrders.forEach((order) => ids.delete(order.id)); else filteredOrders.forEach((order) => ids.add(order.id)); selectedOrderIds = [...ids]; }
+  function openExport() { selectedOrderIds = filteredOrders.map((order) => order.id); showExport = true; }
+  function downloadExport() { const params = new URLSearchParams({ from: filterFrom, to: filterTo, creator: filterCreator, owner: filterOwner, customer: filterCustomer, project: filterProject, ids: selectedOrderIds.join(','), columns: selectedColumns.join(',') }); window.location.href = `/api/orders/export?${params}`; showExport = false; }
+  function toggleColumn(key: string) { selectedColumns = selectedColumns.includes(key) ? selectedColumns.filter((item) => item !== key) : [...selectedColumns, key]; }
+  async function deleteOrder(order: Order) {
+    if (!window.confirm(`确认删除订单“${order.service_name}”（${order.code}）？删除后不可恢复。`)) return;
+    busy = true;
+    try { await api.delete(`/api/orders/${encodeURIComponent(order.id)}`); selectedOrderIds = selectedOrderIds.filter((id) => id !== order.id); await refresh(); notify('订单已删除'); }
+    catch (e) { notify(e instanceof Error ? e.message : '订单删除失败', true); }
+    finally { busy = false; }
   }
 </script>
 
-<svelte:head><title>ORBIT OA · 新建项目</title></svelte:head>
-
-<main class="empty-large" style="min-height: 100vh;">
-  <FolderKanban size={34} />
-  <b>还没有项目</b>
-  <p>创建第一个项目后即可开始业务闭环。</p>
-  <form class="panel standalone-form" onsubmit={createProject} style="width: min(440px, 100%); text-align: left;">
-    <label>客户名称 <span class="required-mark">必填</span><input bind:value={customer} placeholder="例如：华东科技有限公司" required /></label>
-    <label>项目名称 <span class="required-mark">必填</span><input bind:value={name} placeholder="例如：办公楼弱电改造项目" required /></label>
-    <label>项目负责人 <span class="optional-mark">选填</span><input bind:value={owner} placeholder="例如：张三" /></label>
-    <label>合同金额（元） <span class="required-mark">必填</span><input bind:value={contractAmount} type="number" min="0.01" step="0.01" placeholder="0.00" required /></label>
-    <label>预算成本（元） <span class="required-mark">必填</span><input bind:value={budgetCost} type="number" min="0.01" step="0.01" placeholder="0.00" required /></label>
-    {#if errorMessage}<div class="notice error" role="alert">{errorMessage}</div>{/if}
-    <Button type="submit" variant="primary" disabled={busy}><Plus size={16} />创建项目</Button>
-  </form>
-</main>
+<svelte:head><title>企业订单工作台</title><meta name="description" content="快捷录入和总览企业订单信息" /></svelte:head>
+<div class:sidebar-collapsed={sidebarCollapsed} class="order-app">
+  <aside class="order-sidebar"><button class="sidebar-toggle" title={sidebarCollapsed ? '展开菜单' : '收起菜单'} aria-label={sidebarCollapsed ? '展开菜单' : '收起菜单'} onclick={() => sidebarCollapsed = !sidebarCollapsed}><Menu size={18}/><span>{sidebarCollapsed ? '展开' : '收起菜单'}</span></button>
+    <div class="order-brand"><div class="brand-mark-small">O</div><div><b>ORBIT OA</b><span>订单工作台</span></div></div>
+    <div class="side-caption">工作台</div>
+    <button class:active={view === 'overview'} onclick={() => view = 'overview'}><LayoutDashboard size={17}/>订单总览</button>
+    <button class:active={view === 'entry'} onclick={() => view = 'entry'}><Plus size={17}/>录入订单</button>
+    <button class:active={view === 'catalog'} onclick={() => view = 'catalog'}><FileSpreadsheet size={17}/>报价成本库</button>
+    <div class="sidebar-note"><b>当前账号</b><span>企业运营团队</span><small>用于记录订单和项目经营数据</small></div>
+  </aside>
+  <main class="order-main">
+    <header class="order-topbar"><div><span class="top-eyebrow">ENTERPRISE ORDER DESK</span><h1>{view === 'overview' ? '订单总览' : view === 'entry' ? '快捷录入订单' : '报价 / 成本库'}</h1></div><div class="top-actions"><button class="icon-control" title="刷新数据" onclick={() => refresh()}><RefreshCw size={17}/></button><button class="outline-action" onclick={openExport}><Download size={16}/>导出订单</button><button class="primary-action" onclick={() => view = 'entry'}><Plus size={16}/>录入订单</button></div></header>
+    {#if message}<div class="flash success">{message}</div>{/if}{#if error}<div class="flash error">{error}</div>{/if}
+    {#if view === 'overview'}
+      <section class="page-section">
+        <div class="section-heading"><div><p class="section-kicker">OPERATIONS</p><h2>全部订单</h2><span>按订单日期、客户和项目负责人快速定位信息</span></div><div class="heading-count">{filteredOrders.length}<small>笔订单</small></div></div>
+        <div class="summary-row"><div><span>订单数</span><b>{filteredOrders.length}</b></div><div><span>报价合计</span><b>{money(totalQuote)}</b></div><div><span>成本合计</span><b>{money(totalCost)}</b></div><div><span>预计毛利</span><b class="positive">{money(totalQuote - totalCost)}</b></div></div><div class="project-stats"><div class="stats-title"><b>项目报价 / 成本汇总</b><span>不受列表筛选影响，统计每个项目的全部订单</span></div><div class="stats-grid">{#each projectStats as project}<div class="project-stat"><b>{project.name}</b><small>{project.customer_name} · {project.orderCount} 笔订单</small><div><span>全部报价 <strong>{money(project.quote)}</strong></span><span>全部成本 <strong class="cost">{money(project.cost)}</strong></span></div><em>预计毛利 {money(project.quote - project.cost)}</em></div>{:else}<span class="muted">暂无可统计项目</span>{/each}</div></div>
+        <div class="filter-bar"><label class="search-field"><Search size={16}/><input bind:value={search} placeholder="搜索订单号、客户、项目或订单内容" /></label><select bind:value={filterCustomer}><option value="">全部客户</option>{#each customers as customer}<option value={customer.id}>{customer.name}</option>{/each}</select><select bind:value={filterProject}><option value="">全部项目</option>{#each projects.filter((item) => !filterCustomer || item.customer_id === filterCustomer) as project}<option value={project.id}>{project.name}</option>{/each}</select><select bind:value={filterOwner}><option value="">全部负责人</option>{#each owners as owner}<option value={owner}>{owner}</option>{/each}</select><select bind:value={filterCreator}><option value="">全部录入人</option>{#each creators as creator}<option value={creator}>{creator}</option>{/each}</select><label class="date-field"><span>从</span><input type="date" bind:value={filterFrom}/></label><label class="date-field"><span>至</span><input type="date" bind:value={filterTo}/></label><button class="filter-icon" title="导出当前筛选结果" onclick={openExport}><ListFilter size={17}/></button></div>
+        <div class="table-panel"><div class="table-scroll"><table><thead><tr><th>导出</th><th>订单信息</th><th>客户 / 项目</th><th>负责人</th><th>报价</th><th>成本</th><th>录入人</th><th>日期</th><th>状态</th><th>操作</th></tr></thead><tbody>{#each filteredOrders as order}<tr><td><input type="checkbox" aria-label={`选择导出 ${order.service_name}`} checked={selectedOrderIds.includes(order.id)} onchange={() => toggleOrder(order.id)} /></td><td><b>{order.service_name}</b><small>{order.code} · {order.quantity}{order.unit}</small></td><td><b>{order.customer_name}</b><small>{order.project_name}</small></td><td>{order.project_owner || '未分配'}</td><td class="money">{money(order.quote_amount)}</td><td class="money cost">{money(order.cost_amount)}</td><td>{order.created_by}</td><td>{order.order_date}</td><td><span class="status-dot">{order.status}</span></td><td><button class="delete-action" title="删除订单" aria-label={`删除订单 ${order.service_name}`} disabled={busy} onclick={() => deleteOrder(order)}><Trash2 size={15}/></button></td></tr>{:else}<tr><td colspan="10"><div class="empty-table">没有匹配的订单，先录入一笔订单吧。</div></td></tr>{/each}</tbody></table></div></div>
+      </section>
+    {:else if view === 'entry'}
+      <section class="entry-layout"><form class="order-form"
+ onsubmit={submitOrder}><div class="form-title"><div><h3>订单信息</h3><span>带 * 的字段为必填项</span></div><span class="form-step">STEP 1 / 1</span></div><div class="form-grid"><label>客户 <em>*</em><select bind:value={customerId} onchange={onCustomerChange} required><option value="">请选择客户</option>{#each customers as customer}<option value={customer.id}>{customer.name}</option>{/each}</select></label><label>项目 <em>*</em><select bind:value={projectId} required disabled={!customerId}><option value="">{customerId ? '请选择项目' : '先选择客户'}</option>{#each filteredProjects as project}<option value={project.id}>{project.name} · {project.owner || '未分配负责人'}</option>{/each}</select></label><div class="full inline-create"><span>没有找到对应项目？</span><button type="button" onclick={() => showProjectForm = !showProjectForm}><Plus size={14}/>新建项目</button></div>{#if showProjectForm}<div class="project-create full"><input bind:value={newCustomer} placeholder="客户名称"/><input bind:value={newProject} placeholder="项目名称"/><input bind:value={newOwner} placeholder="项目负责人"/><button type="button" class="primary-action" onclick={submitProject} disabled={busy}>保存项目</button></div>{/if}<label class="full order-content-field">订单内容 <em>*</em><input bind:value={serviceName} placeholder="直接输入订单内容，系统会实时推荐报价成本库条目" required/><small class="field-hint">已选客户：{selectedCustomer || '未选择'} · 已选项目：{selectedProject || '未选择'}</small>{#if serviceName.trim() && catalogSuggestions.length}<div class="catalog-suggestions"><span>报价成本库推荐</span>{#each catalogSuggestions as item}<button type="button" onclick={() => applySuggestion(item)}><b>{item.name}</b><small>{item.category || '未分类'}{item.customer_name ? ` · ${item.customer_name}` : ''}{item.project_name ? ` · ${item.project_name}` : ''}</small><strong>{money(item.quote_unit)} / {money(item.cost_unit)} · {item.unit}</strong></button>{/each}</div>{:else if serviceName.trim()}<small class="field-hint">没有匹配的库内条目，可继续手动填写。</small>{/if}</label><label>数量 <input type="number" min="0.01" step="0.01" bind:value={quantity} onchange={onQuantityChange}/></label><label>单位 <input bind:value={unit} placeholder="项、套、人天"/></label><label>报价（元） <em>*</em><input type="number" min="0" step="0.01" bind:value={quoteAmount} placeholder="0.00" required/></label><label>成本（元） <em>*</em><input type="number" min="0" step="0.01" bind:value={costAmount} placeholder="0.00" required/></label><label>报价成本库 <span class="optional-mark">输入订单内容后自动推荐</span><select bind:value={catalogId} onchange={applyCatalog}><option value="">不使用推荐条目</option>{#each catalog as item}<option value={item.id}>{item.category ? `${item.category} / ` : ''}{item.name} · 报价 {money(item.quote_unit)} / {item.unit}</option>{/each}</select></label><label>数量 <input type="number" min="0.01" step="0.01" bind:value={quantity} onchange={onQuantityChange}/></label><label>单位 <input bind:value={unit} placeholder="项、套、人天"/></label><label>报价（元） <em>*</em><input type="number" min="0" step="0.01" bind:value={quoteAmount} placeholder="0.00" required/></label><label>成本（元） <em>*</em><input type="number" min="0" step="0.01" bind:value={costAmount} placeholder="0.00" required/></label><label>订单日期 <input type="date" bind:value={orderDate}/></label><label>录入人 <input bind:value={createdBy}/></label><label class="full">备注 <textarea bind:value={note} placeholder="补充交付说明、来源或其他需要留痕的信息"></textarea></label></div><div class="form-footer"><span>录入后可在订单总览中筛选和导出</span><button type="submit" class="primary-action" disabled={busy || !projectId}>{busy ? '保存中...' : '保存订单'}<Plus size={16}/></button></div></form>
+      </section>
+    {:else}
+      <section class="page-section"><div class="section-heading"><div><p class="section-kicker">REFERENCE DATA</p><h2>报价 / 成本库</h2><span>查看已导入的报价和成本条目，也可在录入订单时实时匹配推荐</span></div><label class="upload-action"><Upload size={16}/>导入 Excel<input type="file" accept=".xlsx,.xls,.csv" onchange={importFile}/></label></div><div class="catalog-guide"><FileSpreadsheet size={18}/><span>支持 Excel 或 CSV。导入后内容会保存在报价 / 成本库中，可按名称、分类、客户或项目查看。</span></div><div class="catalog-filters"><label class="search-field"><Search size={16}/><input bind:value={catalogSearch} placeholder="搜索名称、分类、客户或项目" /></label><select bind:value={catalogCategory}><option value="">全部分类</option>{#each catalogCategories as category}<option value={category}>{category}</option>{/each}</select><span>共 {visibleCatalog.length} 条</span></div><div class="table-panel"><div class="table-scroll"><table><thead><tr><th>分类</th><th>服务名称</th><th>适用客户</th><th>适用项目</th><th>单位</th><th>报价单价</th><th>成本单价</th><th>预估毛利</th></tr></thead><tbody>{#each visibleCatalog as item}<tr><td><span class="category-label">{item.category || '未分类'}</span></td><td><b>{item.name}</b></td><td>{item.customer_name || '通用'}</td><td>{item.project_name || '通用'}</td><td>{item.unit}</td><td class="money">{money(item.quote_unit)}</td><td class="money cost">{money(item.cost_unit)}</td><td class="money positive">{money(item.quote_unit - item.cost_unit)}</td></tr>{:else}<tr><td colspan="8"><div class="empty-table">报价成本库为空，请导入 Excel。</div></td></tr>{/each}</tbody></table></div></div></section>
+    {/if}
+  </main>
+</div>
+{#if showExport}<div class="drawer-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) showExport = false; }}><section class="export-drawer" role="dialog" aria-modal="true"><div class="drawer-head"><div><p class="section-kicker">EXPORT</p><h2>导出订单</h2><span>当前筛选条件会一并应用到导出结果</span></div><button class="icon-control" onclick={() => showExport = false}><X size={17}/></button></div><div class="drawer-body"><div class="export-selection"><div class="picker-head"><b>选择导出订单</b><span>已选 {selectedOrderIds.length} 条</span></div><label><input type="checkbox" checked={allFilteredSelected} onchange={toggleFilteredOrders}/> 全选当前筛选结果</label><div class="selection-list">{#each filteredOrders as order}<label><input type="checkbox" checked={selectedOrderIds.includes(order.id)} onchange={() => toggleOrder(order.id)}/><span>{order.service_name} · {order.project_name} <small>{order.code}</small></span></label>{:else}<span class="muted">当前筛选无订单</span>{/each}</div></div><div class="drawer-filter-grid"><label>开始日期<input type="date" bind:value={filterFrom}/></label><label>结束日期<input type="date" bind:value={filterTo}/></label><label>客户<select bind:value={filterCustomer}><option value="">全部客户</option>{#each customers as customer}<option value={customer.id}>{customer.name}</option>{/each}</select></label><label>项目<select bind:value={filterProject}><option value="">全部项目</option>{#each projects.filter((item) => !filterCustomer || item.customer_id === filterCustomer) as project}<option value={project.id}>{project.name}</option>{/each}</select></label><label>项目负责人<select bind:value={filterOwner}><option value="">全部负责人</option>{#each owners as owner}<option value={owner}>{owner}</option>{/each}</select></label><label>录入人<select bind:value={filterCreator}><option value="">全部录入人</option>{#each creators as creator}<option value={creator}>{creator}</option>{/each}</select></label></div><div class="column-picker"><div class="picker-head"><b>导出列</b><span>已选 {selectedColumns.length} 列</span></div><div class="column-list">{#each exportColumns as [key, label]}<label><input type="checkbox" checked={selectedColumns.includes(key)} onchange={() => toggleColumn(key)}/><span>{label}</span></label>{/each}</div></div></div><div class="drawer-footer"><span>预计导出 {selectedOrderIds.length} 条记录</span><button class="primary-action" disabled={!selectedColumns.length || !selectedOrderIds.length} onclick={downloadExport}><Download size={16}/>下载 CSV</button></div></section></div>{/if}

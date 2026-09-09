@@ -1,5 +1,6 @@
 export interface OrderSummary {
   id: string;
+  is_extra?: number;
   code: string;
   customer: string;
   name: string;

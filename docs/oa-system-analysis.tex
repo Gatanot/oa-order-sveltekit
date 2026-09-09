@@ -1,0 +1,397 @@
+\documentclass[UTF8,a4paper,11pt]{ctexart}
+\usepackage[a4paper,margin=2.2cm,headheight=14pt]{geometry}
+\usepackage{booktabs,longtable,tabularx,array,multirow}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit,calc}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{fancyhdr}
+\usepackage{listings}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{amssymb,amsmath}
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue,citecolor=blue}
+\definecolor{navy}{HTML}{17313C}
+\definecolor{teal}{HTML}{1CA47D}
+\definecolor{lightblue}{HTML}{EAF2FF}
+\definecolor{lightgreen}{HTML}{E2F5EE}
+\definecolor{lightorange}{HTML}{FFF2DF}
+\definecolor{lightgray}{HTML}{F4F6F7}
+\definecolor{codegray}{HTML}{F7F7F7}
+\setlist{nosep,leftmargin=2em}
+\setlength{\parindent}{2em}
+\setlength{\parskip}{0.35em}
+\sloppy
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{ORBIT OA 项目经营闭环}
+\rhead{系统调研与数据字典}
+\cfoot{\thepage}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcommand{\code}[1]{\texttt{\detokenize{#1}}}
+\newcommand{\money}{人民币分（integer）}
+\newcommand{\status}[1]{\textbf{#1}}
+\lstset{basicstyle=\ttfamily\small,backgroundcolor=\color{codegray},frame=single,breaklines=true,columns=fullflexible}
+
+\title{ORBIT OA 项目经营闭环\par\large 系统层次、业务流程、数据流与数据库表结构调研报告}
+\author{基于当前代码仓库的实现级调研}
+\date{\today}
+
+\begin{document}
+\maketitle
+\begin{abstract}
+本文基于当前仓库 \code{oa-order-sveltekit} 的 SvelteKit 前后端代码、better-sqlite3 数据库初始化与迁移代码、API 路由、工作流服务及前端页面进行实现级梳理。报告回答四个问题：系统由哪些层次构成；项目从报价到回款如何流转；每个业务环节需要和产出什么数据；底层 SQLite 表和字段分别承担什么责任。文中将“当前代码确实实现的行为”和“数据库已预留但尚未形成完整业务能力的部分”分开说明，便于后续产品化、权限化和集成化。
+\end{abstract}
+\tableofcontents
+\newpage
+
+\section{调研范围与结论摘要}
+\subsection{调研对象}
+当前系统是一个以订单/项目为唯一经营主对象的项目工作台。主要技术构成为：
+\begin{itemize}
+  \item 前端：SvelteKit、Svelte 5，页面位于 \code{src/routes/workspace/[order]} 与 \code{src/lib/components/workspace}；
+  \item 服务端：SvelteKit server routes，业务写入通过 \code{src/routes/api} 完成；
+  \item 数据库：better-sqlite3 + SQLite，数据库默认路径为 \code{./data/oa.db}，启用 WAL 与外键；
+  \item 工作流：\code{src/lib/server/workflow.ts} 负责订单阶段、验收、结算、财务和费用状态的服务端约束；
+  \item 版本：schema meta 当前标记为 \code{10-acceptance-lifecycle}。
+\end{itemize}
+
+\subsection{核心结论}
+\begin{enumerate}
+  \item \textbf{订单是聚合根。} 所有报价、物料、采购、费用、验收问题、附件、成本、发票、回款、任务和审计记录均通过 \code{order_id} 回到订单。
+  \item \textbf{订单主状态是六段式经营闭环：} 报价中 $\rightarrow$ 执行中 $\rightarrow$ 待复验 $\rightarrow$ 已验收 $\rightarrow$ 待回款 $\rightarrow$ 已回款；验收阶段可以退回执行中。
+  \item \textbf{金额使用分存储。} API 将元转换为整数分，订单主表的合同额、预算成本、实际成本，以及各明细金额均使用 SQLite INTEGER。
+  \item \textbf{成本有事件流水和汇总字段两层。} 物料/采购预算形成预计成本，采购定标形成承诺成本，费用审核通过形成实际成本；有效成本流水汇总后回写 \code{orders.actual_cost}。
+  \item \textbf{当前是单体 MVP。} 已有模块化路由和清晰的数据边界，但登录鉴权、细粒度权限、真实文件存储、供应商主数据、正式采购单、审批引擎和外部集成尚未成为完整可用链路。
+\end{enumerate}
+
+\section{系统宏观层次}
+\subsection{分层构成}
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=7mm and 12mm, every node/.style={font=\small}, box/.style={draw,rounded corners=2pt,align=center,minimum height=9mm,text width=34mm}, arrow/.style={-{Latex[length=2mm]},thick}]
+  \node[box,fill=lightblue] (ui) {工作台 UI\\订单、报价、采购、验收、财务、费用};
+  \node[box,fill=lightgreen,right=of ui] (api) {HTTP/API 命令层\\订单与子资源路由};
+  \node[box,fill=lightorange,right=of api] (domain) {领域服务层\\workflow.ts、成本、审计};
+  \node[box,fill=white,right=of domain] (db) {持久化层\\better-sqlite3 / SQLite};
+  \draw[arrow] (ui)--(api);
+  \draw[arrow] (api)--(domain);
+  \draw[arrow] (domain)--(db);
+  \draw[arrow,dashed] (db.south) to[bend right=25] node[below,font=\scriptsize]{查询聚合详情} (ui.south);
+\end{tikzpicture}
+\caption{当前系统的逻辑分层}
+\end{figure}
+
+\subsection{按职责划分的模块}
+\begin{longtable}{p{0.19\textwidth}p{0.27\textwidth}p{0.45\textwidth}}
+\toprule
+层/模块 & 代码位置 & 主要责任 \\
+\midrule
+\endhead
+表现层 & \code{src/routes/workspace}、\code{src/lib/components/workspace} & 展示订单聚合详情，发起新增、确认、定标、验收、财务等动作。 \\
+接口层 & \code{src/routes/api} & 解析请求、校验必要字段、定位订单、开启数据库事务，返回 JSON 结果。 \\
+领域层 & \code{src/lib/server/workflow.ts} & 维护订单状态迁移，检查报价、验收、结算、开票和回款前置条件；处理费用状态。 \\
+数据服务层 & \code{src/lib/server/db.ts} & 建库/迁移/种子数据、金额转换、成本记账、审计、订单聚合查询。 \\
+数据库层 & SQLite 表与索引 & 保存当前状态、业务事实流水、状态历史、操作审计与组织基础资料。 \\
+\bottomrule
+\end{longtable}
+
+\subsection{一次典型请求的数据路径}
+以“供应商定标”为例：前端在采购页面提交 \code{offer\_id}，请求 \code{POST /api/procurement-items/[id]/award}；接口读取采购项和供应商报价，更新采购项及报价状态，更新项目采购工作流，写入一条承诺成本，重新计算实际成本汇总，并写入审计日志。成功后前端重新加载订单聚合详情。可抽象为：
+\[
+\text{用户动作}\rightarrow\text{API 命令}\rightarrow\text{事务}\rightarrow\text{事实表更新}
+\rightarrow\text{成本/状态派生}\rightarrow\text{审计}\rightarrow\text{聚合查询返回}
+\]
+
+\section{业务对象与数据流}
+\subsection{订单聚合模型}
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=5mm and 10mm, every node/.style={font=\scriptsize}, center/.style={draw,fill=navy,text=white,rounded corners,minimum width=30mm,minimum height=12mm,align=center}, child/.style={draw,rounded corners,fill=lightgray,minimum width=25mm,minimum height=9mm,align=center}, arrow/.style={-{Latex[length=1.8mm]},thick}]
+\node[center] (order) {orders\\订单/项目主表};
+\node[child,above left=of order] (quote) {quote\_versions\\报价版本};
+\node[child,left=of order] (material) {material\_lines\\物料成本};
+\node[child,below left=of order] (expense) {expenses\\费用报销};
+\node[child,above right=of order] (procure) {procurement\_items\\procurement\_offers};
+\node[child,right=of order] (accept) {acceptance\_issues\\验收整改};
+\node[child,below right=of order] (finance) {invoices / payments\\开票回款};
+\node[child,below=15mm of order] (cross) {cost\_entries / status\_history / audit\_logs\\横向事实与留痕};
+\foreach \x in {quote,material,expense,procure,accept,finance,cross}{\draw[arrow] (\x)--(order);}
+\end{tikzpicture}
+\caption{订单聚合及其从属数据}
+\end{figure}
+
+\subsection{数据流的四条主线}
+\begin{longtable}{p{0.17\textwidth}p{0.34\textwidth}p{0.37\textwidth}}
+\toprule
+数据主线 & 输入与处理 & 主要输出 \\
+\midrule
+商务主线 & 客户、项目名称、报价版本、报价金额、预计成本、客户确认凭证。报价确认时旧的已确认版本作废。 & 合同额、已确认报价、毛利率基础、执行阶段准入。 \\
+交付与成本主线 & 物料行、采购需求、供应商报价、定标金额、费用单据。不同来源写入预计/承诺/实际成本。 & 预算成本、承诺成本、实际成本、超预算风险。 \\
+交付验收主线 & 验收问题、责任人、截止日期、整改说明、复验结果。 & 验收提交标记、问题状态、订单待复验/已验收状态。 \\
+资金闭环主线 & 结算动作、开票金额、付款金额、日期、发票号/流水号。 & 待回款或已回款状态、未回款余额、财务事实明细。 \\
+\bottomrule
+\end{longtable}
+
+\section{端到端订单流程}
+\subsection{主状态机}
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=8mm and 7mm, every node/.style={font=\small}, state/.style={draw,rounded corners=2pt,fill=lightblue,minimum width=22mm,minimum height=10mm,align=center}, arrow/.style={-{Latex[length=2mm]},thick}]
+\node[state] (a) {报价中};\node[state,right=of a] (b) {执行中};\node[state,right=of b] (c) {待复验};\node[state,right=of c] (d) {已验收};\node[state,right=of d] (e) {待回款};\node[state,right=of e] (f) {已回款};
+\draw[arrow] (a)--node[above,font=\scriptsize]{确认报价} (b);
+\draw[arrow] (b)--node[above,font=\scriptsize]{提交复验} (c);
+\draw[arrow] (c)--node[above,font=\scriptsize]{问题关闭/复验通过} (d);
+\draw[arrow] (d)--node[above,font=\scriptsize]{结算} (e);
+\draw[arrow] (e)--node[above,font=\scriptsize]{开票足额+回款足额} (f);
+\draw[arrow] (c.south) to[bend right=45] node[below,font=\scriptsize]{退回整改} (b.south);
+\end{tikzpicture}
+\caption{订单主状态迁移}
+\end{figure}
+
+\subsection{阶段一：创建项目与报价}
+\paragraph{输入数据} 客户名称 \code{customer}、项目/订单名称 \code{name}、负责人 \code{owner}、合同额、预算成本；创建报价还需要版本号、报价总额、预计成本和客户确认凭证。
+\paragraph{持久化} 创建订单写入 \code{orders}，同时初始化 \code{order\_workflows}，阶段固定为“报价中”。创建报价写入 \code{quote\_versions}，初始状态为“草稿”。
+\paragraph{转阶段条件} 只能在“报价中”确认草稿报价；确认凭证不能为空。确认后当前版本变为“已确认”，其他已确认版本变为“已作废”，订单转为“执行中”。
+\paragraph{关键风险} 当前报价总额与订单 \code{contract\_amount} 并非在确认接口中重新同步，订单合同额由创建项目时传入。因此产品正式化时应明确“合同额来自报价”还是“订单合同额独立维护”。
+
+\subsection{阶段二：执行、物料与任务}
+\paragraph{输入数据} 任务标题；物料的场地、名称、描述、规格、数量、单位、成本单价/总额、供应商和备注。
+\paragraph{处理} 物料写入 \code{material\_lines}，同时生成来源为 \code{material} 的“预计”成本流水；任务写入 \code{tasks}。物料成本用于预算/预计成本分析，不会自动成为实际成本。
+\paragraph{输出} 订单详情可以聚合出物料清单、任务完成情况和风险检查；任务未完成会产生风险原因。
+
+\subsection{阶段三：采购询价与定标}
+\paragraph{输入数据} 采购需求名称和预算；供应商名称、报价金额、报价凭证。
+\paragraph{处理} 采购需求写入 \code{procurement\_items}，初始状态“待询价”，预算会生成“预计”成本；供应商报价写入 \code{procurement\_offers}。定标时选择一条报价，采购项变为“已定标”，其他报价变为“未选定”，并写入“承诺”成本。
+\paragraph{前置与约束} 当前界面建议至少三家供应商，但数据库没有强制三家；超预算定标需要前端二次确认并传入批准标记；采购工作流按全部采购项的定标数量派生“待选择/待定标/部分定标/已定标”。
+\paragraph{输出} 供应商、定标金额、定标时间、采购状态、承诺成本和超预算审计记录。
+
+\subsection{阶段四：费用与报销}
+\paragraph{输入数据} 费用类别、金额、支付方式、垫付人、发生日期、凭证、备注。新费用初始为“待审核”。
+\paragraph{状态机} \code{待审核 $\rightarrow$ 待报销 $\rightarrow$ 已报销}；任意前一阶段可转“已驳回”（具体由状态规则约束），已驳回补齐凭证后可重新回到待审核。
+\paragraph{成本规则} 转为“待报销”或“已报销”时生成实际成本；驳回时冲销该来源的有效成本流水。费用表保存审核人/时间、驳回原因、报销人/时间。
+\paragraph{注意} 当前“待报销”即会进入实际成本，实际成本口径是“审核通过/进入报销队列”的成本，不严格等同于资金已经支付。财务制度需要决定是否调整为“已报销”才记实际成本。
+
+\subsection{阶段五：验收、整改与复验}
+\paragraph{输入数据} 验收问题描述、责任人、截止日期；整改完成时填写整改说明；复验时填写复验说明。
+\paragraph{处理} 问题状态为“待整改 $\rightarrow$ 已整改 $\rightarrow$ 已验收”，每次变化写入 \code{status\_history}，同时更新解决人/时间、复验人/时间和版本号。
+\paragraph{订单条件} 执行中只有在不存在“待整改”问题时才能提交复验；提交后订单进入“待复验”。待复验时，所有问题必须达到“已验收”才能把订单推进到“已验收”；也可以退回执行中重新整改。
+
+\subsection{阶段六：项目结算}
+\paragraph{输入数据} 结算命令，当前实现以 \code{settled=true} 表达。
+\paragraph{处理} 只允许“已验收”项目结算，更新 \code{order\_workflows.settled=1} 并推进到“待回款”。如果此前开票已经足额且回款已经足额，结算动作会直接继续推进到“已回款”。
+\paragraph{管理含义} 结算是交付完成到应收管理之间的闸门；当前没有独立的结算单、结算金额、结算确认人和结算凭证表。
+
+\subsection{阶段七：开票与回款}
+\paragraph{输入数据} 本次开票金额、本次回款金额，或累计开票/回款金额；支付日期、流水号由当前服务端自动/部分生成。
+\paragraph{约束} 开票累计金额不得超过合同额；回款累计金额不得超过已开票金额；累计金额不可减少；项目已回款后财务关闭。每次增量写入独立的 \code{invoices} 或 \code{payments} 记录。
+\paragraph{完成条件} 在“待回款”阶段，累计开票达到合同额且累计回款不低于开票额时，项目转为“已回款”。
+
+\section{环节与数据需求矩阵}
+\begin{longtable}{p{0.12\textwidth}p{0.25\textwidth}p{0.31\textwidth}p{0.22\textwidth}}
+\toprule
+环节 & 必要输入 & 关键校验 & 主要落库/产出 \\
+\midrule
+\endhead
+立项 & 客户、项目名、负责人、合同额、预算成本、操作人 & 金额合法、名称非空、订单编号唯一 & 订单主表、工作流初始化、创建审计 \\
+报价 & 版本、报价总额、预计成本、客户确认凭证 & 草稿状态、报价中阶段、凭证非空 & 报价版本、确认时间、订单转执行中 \\
+执行 & 任务、物料、交付上下文 & 数量大于零、金额非负 & 任务、物料、预计成本流水 \\
+采购 & 需求名、预算、供应商、报价、凭证 & 报价金额大于零；定标需报价存在；超预算需批准 & 采购需求、供应商报价、承诺成本 \\
+费用 & 类别、金额、支付方式、发生日期、凭证 & 金额大于零；驳回必须有原因；重提必须有凭证 & 费用单、状态历史、实际/冲销成本 \\
+验收登记 & 问题、责任人、期限 & 执行中或待复验；整改说明非空 & 验收问题、状态历史 \\
+提交复验 & 提交命令、操作人 & 当前执行中；不存在待整改问题 & workflow.submitted、订单待复验 \\
+复验通过 & 复验说明、操作人 & 待复验；问题全部已验收 & 订单已验收 \\
+结算 & 结算命令、可选财务金额 & 当前已验收；不可重复结算 & workflow.settled、订单待回款 \\
+开票回款 & 本次或累计金额、操作人 & 开票不超合同、回款不超开票 & 发票/回款事实、订单已回款 \\
+\bottomrule
+\end{longtable}
+
+\section{数据库表结构详解}
+\subsection{字段约定}
+\begin{itemize}
+  \item 主键普遍为 UUID 文本；业务编号另有唯一约束，例如订单号、费用单号、发票号。
+  \item 金额字段统一为整数分，展示层再除以 100；数量 \code{quantity} 为 NUMERIC，可表示非整数数量。
+  \item 时间通常为 ISO 8601 文本；日期字段如 \code{occurred\_on}、\code{issued\_on}、\code{paid\_on} 为 \code{YYYY-MM-DD}。
+  \item 核心表普遍有版本号、创建/更新人或归档字段，但当前 API 对用户身份的传入仍以请求中的 \code{actor} 字段为主。
+\end{itemize}
+
+\subsection{组织与身份表}
+\begin{longtable}{p{0.18\textwidth}p{0.28\textwidth}p{0.43\textwidth}}
+\toprule
+表 & 主要字段 & 责任与关系 \\
+\midrule
+\endhead
+\code{departments} & \code{id}, \code{name}, \code{parent\_id}, \code{status}, \code{created\_at}, \code{updated\_at} & 部门树；\code{parent\_id} 自关联。当前主要是权限基础设施，业务路由尚未用它做数据隔离。 \\
+\code{users} & \code{id}, \code{username}, \code{display\_name}, \code{department\_id}, \code{email}, \code{phone}, \code{status}, \code{archived\_at} & 用户主数据，用户名唯一；部门外键。 \\
+\code{roles} & \code{id}, \code{code}, \code{name}, \code{created\_at} & 角色字典，代码和名称唯一。 \\
+\code{user\_roles} & \code{user\_id}, \code{role\_id}, \code{created\_at} & 用户与角色多对多关系，联合主键。 \\
+\code{order\_members} & \code{id}, \code{order\_id}, \code{user\_id}, \code{role}, \code{is\_primary}, \code{created\_at} & 项目成员及项目内职责；当前负责人仍在订单文本字段 \code{owner} 中，尚未完全迁移到该表。 \\
+\bottomrule
+\end{longtable}
+
+\subsection{项目主数据与横向留痕}
+\begin{longtable}{p{0.18\textwidth}p{0.30\textwidth}p{0.41\textwidth}}
+\toprule
+表 & 字段分组 & 说明 \\
+\midrule
+\endhead
+\code{orders} & 标识：\code{id}, \code{code}；业务：\code{customer}, \code{name}, \code{owner}, \code{stage}；金额：\code{contract\_amount}, \code{budget\_cost}, \code{actual\_cost}；治理：创建/更新时间、人、\code{version}, \code{archived\_at} & 项目经营主表。\code{stage} 有六个 CHECK 值。\code{actual\_cost} 是有效实际成本流水的派生汇总。 \\
+\code{order\_workflows} & \code{order\_id}, \code{submitted}, \code{selected\_supplier}, \code{procurement\_status}, \code{settled} & 保存验收提交、采购概况、结算标记等当前工作流事实；开票与回款金额通过查询发票/回款表派生。 \\
+\code{tasks} & \code{id}, \code{order\_id}, \code{title}, \code{done}, \code{created\_at} & 项目行动项；完成状态为 0/1。 \\
+\code{status\_history} & \code{id}, \code{order\_id}, \code{entity\_type}, \code{entity\_id}, \code{from\_status}, \code{to\_status}, \code{action}, \code{actor}, \code{reason}, \code{created\_at} & 不可变状态变化记录，可同时记录订单、费用、验收问题等实体。 \\
+\code{audit\_logs} & \code{id}, \code{order\_id}, \code{action}, \code{actor}, \code{payload}, \code{created\_at} & 通用操作日志；\code{payload} 为 JSON 文本，适合审计上下文，不替代结构化状态历史。 \\
+\code{attachments} & \code{id}, \code{order\_id}, \code{name}, \code{kind}, \code{related\_type}, \code{related\_id}, \code{uploaded\_by}, \code{created\_at} & 附件元数据和业务关联。当前保存文件名/类型等信息，未保存对象存储 URL、文件哈希、大小和实际文件内容。 \\
+\bottomrule
+\end{longtable}
+
+\subsection{商务、交付与采购表}
+\begin{longtable}{p{0.19\textwidth}p{0.30\textwidth}p{0.40\textwidth}}
+\toprule
+表 & 字段分组 & 说明 \\
+\midrule
+\endhead
+\code{quote\_versions} & \code{id}, \code{order\_id}, \code{version}, \code{status}, \code{total}, \code{estimated\_cost}, \code{confirmed\_at}, \code{proof}, \code{created\_at} & 报价版本。状态为草稿、已确认、已作废；订单与版本联合唯一。\code{proof} 是客户确认凭证的文本描述。 \\
+\code{material\_lines} & \code{place}, \code{name}, \code{description}, \code{size}, \code{quantity}, \code{unit}, \code{quote\_unit/total}, \code{cost\_unit/total}, \code{supplier}, \code{note} & 物料/制作成本行，粒度为项目下的一行明细；当前新增 API 主要使用成本字段，报价字段可作为扩展。 \\
+\code{procurement\_items} & \code{id}, \code{order\_id}, \code{name}, \code{budget}, \code{status}, \code{supplier}, \code{awarded\_amount}, \code{awarded\_at} & 采购需求；状态为待询价/已定标。定标结果直接回写采购项。 \\
+\code{procurement\_offers} & \code{id}, \code{item\_id}, \code{supplier}, \code{amount}, \code{proof}, \code{status}, \code{created\_at} & 某采购需求下的供应商询价。状态为待选定、已定标、未选定。当前没有供应商主数据外键。 \\
+\bottomrule
+\end{longtable}
+
+\subsection{费用、成本与财务表}
+\begin{longtable}{p{0.18\textwidth}p{0.31\textwidth}p{0.40\textwidth}}
+\toprule
+表 & 字段分组 & 说明 \\
+\midrule
+\endhead
+\code{expenses} & 标识/项目：\code{id}, \code{order\_id}, \code{expense\_no}；业务：\code{category}, \code{amount}, \code{payment\_type}, \code{payer}, \code{occurred\_on}, \code{note}；审核：\code{status}, \code{proof}, \code{reviewed\_*}, \code{reject\_reason}, \code{reimbursed\_*} & 项目费用和报销单。费用单号唯一；状态为待审核、待报销、已驳回、已报销。 \\
+\code{cost\_entries} & \code{source\_type}, \code{source\_id}, \code{cost\_type}, \code{amount}, \code{tax\_amount}, \code{status}, \code{occurred\_on}, \code{reversal\_of}, \code{created\_by}, \code{created\_at} & 成本事实流水。成本类型为预计、承诺、实际、冲销；状态为有效/已冲销；来源以多态文本关联物料、采购、费用等业务对象。 \\
+\code{invoices} & \code{id}, \code{order\_id}, \code{invoice\_no}, \code{amount}, \code{status}, \code{issued\_on}, \code{created\_by}, \code{created\_at} & 发票事实；发票号唯一；状态为草稿、已开具、已作废。 \\
+\code{payments} & \code{id}, \code{order\_id}, \code{amount}, \code{paid\_on}, \code{reference\_no}, \code{created\_by}, \code{created\_at} & 客户回款事实；当前金额正数约束，流水号可空。 \\
+\bottomrule
+\end{longtable}
+
+\subsection{集成与 schema 管理表}
+\begin{longtable}{p{0.18\textwidth}p{0.31\textwidth}p{0.40\textwidth}}
+\toprule
+表 & 字段 & 说明 \\
+\midrule
+\endhead
+\code{integration\_events} & \code{provider}, \code{event\_type}, \code{external\_id}, \code{idempotency\_key}, \code{payload}, \code{status}, \code{error\_message}, \code{received\_at}, \code{processed\_at} & 外部系统事件接收表，支持幂等键和处理状态；当前为表结构预留，仓库中尚未形成完整外部回调处理链路。 \\
+\code{schema\_meta} & \code{key}, \code{value} & 当前 schema 标识，现值为 \code{10-acceptance-lifecycle}。 \\
+\code{schema\_migrations} & \code{version}, \code{name}, \code{applied\_at} & 记录迁移版本 5--10 及名称；启动时在事务内执行迁移。 \\
+\bottomrule
+\end{longtable}
+
+\section{成本与财务口径}
+\subsection{成本生命周期}
+成本不是只存在于订单主表，而是由来源事实驱动：
+\begin{enumerate}
+  \item 物料新增：按物料总额写入来源为 \code{material} 的预计成本；
+  \item 采购需求新增：按采购预算写入来源为 \code{procurement\_item} 的预计成本；
+  \item 采购定标：按定标金额写入来源为 \code{procurement} 的承诺成本；
+  \item 费用审核进入待报销或已报销：写入费用来源的实际成本；
+  \item 费用驳回或人工确认调整：将有效成本标为已冲销，必要时生成实际成本记录；
+  \item 汇总：只累计状态为有效的流水，按成本类型聚合，并把实际成本回写到 \code{orders.actual\_cost}。
+\end{enumerate}
+
+\[
+\text{预计成本}=\sum(\text{物料预计})+\sum(\text{采购预算})
+\]
+\[
+\text{承诺成本}=\sum(\text{已定标采购})
+\]
+\[
+\text{实际成本}=\sum(\text{有效实际成本流水})
+\]
+\[
+\text{毛利基础}=\text{合同额}-\text{实际成本},\qquad
+\text{预算差异}=\text{实际成本}-\text{预算成本}
+\]
+
+\subsection{财务闭环口径}
+开票和回款不是工作流表中的单个可覆盖数字，而是发票与付款事实的累加：
+\[
+\text{累计开票}=\sum(\text{status=已开具 的 invoice.amount})
+\]
+\[
+\text{累计回款}=\sum(\text{payment.amount})
+\]
+\[
+\text{待回款}=\text{累计开票}-\text{累计回款}
+\]
+系统完成条件还要求累计开票达到合同额，并且累计回款不低于累计开票。当前付款不能超过已开票金额，因而正常数据下待回款非负。
+
+\section{接口与操作清单}
+\begin{longtable}{p{0.36\textwidth}p{0.22\textwidth}p{0.29\textwidth}}
+\toprule
+接口/动作 & 作用 & 主要写入 \\
+\midrule
+\endhead
+\code{POST /api/orders} & 创建项目 & \code{orders}, \code{order\_workflows}, 审计 \\
+\code{POST /api/orders/[order]/quotes} & 创建报价草稿 & \code{quote\_versions} \\
+\code{POST /api/quotes/[id]/confirm} & 确认报价并转执行 & 报价状态、\code{orders.stage}、状态历史、审计 \\
+\code{POST /api/orders/[order]/materials} & 新增物料成本 & \code{material\_lines}, \code{cost\_entries}, 订单汇总、审计 \\
+\code{POST /api/orders/[order]/procurement-items} & 新增采购需求 & \code{procurement\_items}, 预计成本、工作流、审计 \\
+\code{POST /api/procurement-items/[id]/offers} & 新增供应商报价 & \code{procurement\_offers} \\
+\code{POST /api/procurement-items/[id]/award} & 采购定标 & 采购项/报价状态、承诺成本、工作流、审计 \\
+\code{POST /api/orders/[order]/expenses} & 新增费用 & \code{expenses} \\
+\code{POST /api/expenses/[id]/status} & 审核/驳回/报销 & 费用状态、成本流水、状态历史、审计 \\
+\code{POST /api/orders/[order]/acceptance-issues} & 登记验收问题 & \code{acceptance\_issues} \\
+\code{POST /api/acceptance-issues/[id]/close} & 完成整改/复验问题 & 问题状态、状态历史、审计 \\
+\code{POST /api/orders/[order]/workflow} & 提交复验、退回、结算、财务 & 工作流、订单状态、发票/回款、审计 \\
+\code{POST /api/orders/[order]/stage} & 直接更新允许的订单阶段 & 订单、状态历史、审计；仍受领域前置条件约束 \\
+\code{POST /api/orders/[order]/tasks}、\code{/api/tasks/[id]/toggle} & 管理任务 & \code{tasks} \\
+\code{POST /api/orders/[order]/attachments} & 登记附件 & \code{attachments}，当前不上传文件内容 \\
+\code{GET /api/orders/[order]/export} & 导出订单聚合信息 & 读取订单及子表，生成导出响应 \\
+\bottomrule
+\end{longtable}
+
+\section{当前实现边界与风险}
+\subsection{已实现的可靠性机制}
+\begin{itemize}
+  \item 关键写操作使用数据库事务；
+  \item 外键开启，删除订单时从属记录具有级联删除设计；
+  \item 状态转移由服务端检查，不依赖前端按钮是否可见；
+  \item 重要状态变更同时写结构化状态历史与通用审计；
+  \item 金额使用整数分，并检查负数、超合同、超开票等异常；
+  \item 成本流水使用来源唯一约束，避免重复记账；
+  \item 数据库使用 WAL 和 busy timeout，适合当前单体本地/小规模部署。
+\end{itemize}
+
+\subsection{需要在正式上线前明确的事项}
+\begin{enumerate}
+  \item \textbf{身份与权限：} 当前 API 中 actor 主要来自请求体默认值，组织、角色和项目成员表尚未形成鉴权中间件与数据权限闭环。
+  \item \textbf{文件管理：} attachments 只记录元数据，必须补充文件存储地址、哈希、大小、MIME、访问授权和病毒扫描策略。
+  \item \textbf{供应商主数据：} 当前供应商是文本，难以统一名称、税号、账户、黑名单和历史合作评价。
+  \item \textbf{采购正式单据：} 采购需求和报价直接落到定标，缺少采购订单、合同、收货/交付、对账和付款申请。
+  \item \textbf{结算模型：} 结算只用布尔值表示，缺少结算单、结算金额、折扣/变更、确认人、确认时间和客户结算凭证。
+  \item \textbf{审批模型：} 费用和报价虽然有状态，但审批链、审批节点、代理人、超时和通知尚未抽象成通用审批实例。
+  \item \textbf{并发与版本：} 表中已有 version 字段，但多数更新语句未使用乐观锁条件，应补充“读取版本并按版本更新”。
+  \item \textbf{金额一致性：} 报价总额、订单合同额、结算金额之间需要确定唯一来源，并增加跨表一致性检查。
+  \item \textbf{测试与运维：} 应为每条阶段迁移、费用状态、成本冲销、超预算定标和财务边界建立集成测试，并补充备份、恢复、迁移回滚预案。
+\end{enumerate}
+
+\section{建议的后续演进路线}
+\begin{longtable}{p{0.13\textwidth}p{0.35\textwidth}p{0.40\textwidth}}
+\toprule
+优先级 & 建议 & 目标 \\
+\midrule
+P0 & 接入真实登录、服务端会话和角色权限；actor 不再信任请求体 & 解决审计真实性和数据越权风险 \\
+P0 & 将订单状态迁移、费用状态、验收状态整理为可测试命令；补齐集成测试 & 保证经营闭环的核心约束可回归 \\
+P0 & 明确合同额/报价/结算的主数据来源，增加一致性校验 & 避免财务和毛利口径分裂 \\
+P1 & 建立供应商、客户、部门、用户等主数据管理 & 消除文本字段造成的重复和歧义 \\
+P1 & 增加采购订单、合同、结算单和审批实例 & 从演示型工作台走向正式经营系统 \\
+P1 & 完善附件对象存储与访问控制 & 让凭证真正可追溯、可下载、可留存 \\
+P2 & 接入企业微信/邮件通知和 \code{integration\_events} 消费者 & 支持审批提醒、回款提醒和外部系统同步 \\
+P2 & 把成本流水扩展为可追溯的成本台账与利润分析模型 & 支持项目预测、偏差分析和经营报表 \\
+\bottomrule
+\end{longtable}
+
+\section{附录：当前种子数据所表达的业务样例}
+系统首次初始化时建立一个示例项目：订单号 \code{ORD-2026-018}，客户为中石油广东销售分公司，项目为英九茶庄采茶活动，阶段为“执行中”。示例数据包含：一份已确认报价和一份草稿报价、多条物料成本、两笔费用、一项采购需求、一条待整改验收问题、一张已开具发票、一笔客户回款、项目任务和附件元数据。该种子数据说明系统的页面和数据模型是围绕真实项目经营场景设计的，但它不代表生产业务数据，也不应被当作正式测试基线。
+
+\section{结语}
+当前 OA 的骨架已经形成：订单作为聚合根，工作流负责阶段约束，明细表记录商务/交付/采购/费用/验收/财务事实，成本流水、状态历史和审计日志构成横向追踪能力。宏观上它是一条从“报价承诺”到“交付验收”再到“现金回款”的项目经营闭环；微观上它采用关系表保存当前状态、事实明细和可追溯记录。下一阶段的重点不应是继续增加页面数量，而应优先完成身份权限、审批实例、真实附件、主数据、结算/采购正式单据和测试体系，使当前清晰的 MVP 数据边界成为可长期运行的业务系统边界。
+
+\end{document}

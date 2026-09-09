@@ -24,5 +24,8 @@ export const api = {
   get<T>(path: string) { return request<T>(path); },
   post<T>(path: string, body: JsonRecord = {}) {
     return request<T>(path, { method: 'POST', body: JSON.stringify(body) });
+  },
+  delete<T>(path: string) {
+    return request<T>(path, { method: 'DELETE' });
   }
 };
