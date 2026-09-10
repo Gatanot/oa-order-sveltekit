@@ -466,10 +466,11 @@ export function createOrderDesk(data: Data) {
   }
   async function submitOrder(event: SubmitEvent) {
     event.preventDefault();
-    const hasName = (value: string) => value.trim().length > 0;
+    const hasName = (value: string) => String(value || '').trim().length > 0;
     const validProducts = products.filter((item) => hasName(item.name));
     const validCosts = costs.filter((item) => hasName(item.name));
-    const validAdvances = advances.filter((item) => hasName(item.item));
+    // 垫付行填写了物品名或金额大于 0 均视为有效（金额可先记，物品名后补）
+    const validAdvances = advances.filter((item) => hasName(item.item) || Number(item.amount) > 0);
     if (!validProducts.length && !validCosts.length && !validAdvances.length) {
       notify("请至少填写一项产品、固定成本或员工垫付", true);
       return;

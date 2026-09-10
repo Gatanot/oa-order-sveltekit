@@ -17,9 +17,14 @@ function lineTotalYuan(item: Record<string, unknown>): number {
   return Math.round(Number(item.quantity || 0) * Number(item.unit_price || 0) * 100) / 100;
 }
 
-/** 过滤掉关键名称为空的行（用户点了“添加”但未填写），再检查是否至少有一行有效。 */
+/** 过滤掉关键名称为空且金额也为 0/空的行（用户点了“添加”但未填写），再检查是否至少有一行有效。 */
 function sanitizeLines(lines: Array<Record<string, unknown>>, nameKey: string): Array<Record<string, unknown>> {
   return lines.filter((item) => text(item[nameKey]));
+}
+
+/** 垫付行：物品名或金额任一有值即保留。 */
+function sanitizeAdvances(lines: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return lines.filter((item) => text(item.item) || Number(item.amount) > 0);
 }
 
 /** 明细为空时的回退解析：空/缺省金额视为 0，非法值仍然报错。 */
@@ -234,10 +239,10 @@ export function createOrder(data: Record<string, unknown>) {
   if (!project) throw new Error('请选择项目');
   const products = sanitizeLines(Array.isArray(data.products) ? data.products as Array<Record<string, unknown>> : [], 'name');
   const costs = sanitizeLines(Array.isArray(data.costs) ? data.costs as Array<Record<string, unknown>> : [], 'name');
-  const advances = sanitizeLines(Array.isArray(data.advances) ? data.advances as Array<Record<string, unknown>> : [], 'item');
+  const advances = sanitizeAdvances(Array.isArray(data.advances) ? data.advances as Array<Record<string, unknown>> : []);
   if (!products.length && !costs.length && !advances.length) throw new Error('请至少填写一项产品、固定成本或员工垫付');
   const primary = products[0] || costs[0] || advances[0];
-  const serviceName = String(data.service_name || products.map((item) => text(item.name)).filter(Boolean).join('、') || costs.map((item) => text(item.name)).filter(Boolean).join('、') || advances.map((item) => text(item.item)).filter(Boolean).join('、') || primary.name || primary.item).trim();
+  const serviceName = String(data.service_name || products.map((item) => text(item.name)).filter(Boolean).join('、') || costs.map((item) => text(item.name)).filter(Boolean).join('、') || advances.map((item) => text(item.item) || '员工垫付').filter(Boolean).join('、') || primary.name || primary.item || '员工垫付').trim();
   if (!serviceName) throw new Error('请填写订单内容');
   const quantity = Number(data.quantity || products[0]?.quantity || 1);
   if (!Number.isFinite(quantity) || quantity <= 0) throw new Error('数量必须大于 0');
@@ -259,7 +264,7 @@ export function updateOrder(id: string, data: Record<string, unknown>) {
   if (!existing) throw new Error('ORDER_NOT_FOUND');
   const products = Array.isArray(data.products) ? data.products as Array<Record<string, unknown>> : parseList(existing.products_json);
   const costs = Array.isArray(data.costs) ? data.costs as Array<Record<string, unknown>> : parseList(existing.costs_json);
-  const advances = Array.isArray(data.advances) ? sanitizeLines(data.advances as Array<Record<string, unknown>>, 'item') : parseList(existing.advances_json);
+  const advances = Array.isArray(data.advances) ? sanitizeAdvances(data.advances as Array<Record<string, unknown>>) : parseList(existing.advances_json);
   if (!products.length && !costs.length && !advances.length) throw new Error('请至少保留一项产品、固定成本或员工垫付');
   const quote = products.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0);
   const cost = costs.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0);
