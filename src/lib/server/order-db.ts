@@ -17,6 +17,11 @@ function lineTotalYuan(item: Record<string, unknown>): number {
   return Math.round(Number(item.quantity || 0) * Number(item.unit_price || 0) * 100) / 100;
 }
 
+/** 过滤掉关键名称为空的行（用户点了“添加”但未填写），再检查是否至少有一行有效。 */
+function sanitizeLines(lines: Array<Record<string, unknown>>, nameKey: string): Array<Record<string, unknown>> {
+  return lines.filter((item) => text(item[nameKey]));
+}
+
 /** 明细为空时的回退解析：空/缺省金额视为 0，非法值仍然报错。 */
 function optionalMoneyToCents(value: unknown): number {
   if (value === '' || value === null || value === undefined) return 0;
@@ -186,7 +191,8 @@ function hydrateOrder(row: Record<string, unknown>) {
   const products = parseList(row.products_json);
   const costs = parseList(row.costs_json);
   const advances = parseList(row.advances_json);
-  if (!products.length && row.service_name) products.push({ name: row.service_name, specification: row.specification || '', quantity: row.quantity, unit: row.unit, unit_price: Number(row.quote_amount || 0) / Math.max(Number(row.quantity || 1), 1) / 100, subtotal: Number(row.quote_amount || 0) / 100 });
+  // 旧版单产品订单没有 products_json，用主字段合成展示行；新版空产品行不再合成（可能只有成本/垫付）
+  if (!products.length && !costs.length && !advances.length && row.service_name) products.push({ name: row.service_name, specification: row.specification || '', quantity: row.quantity, unit: row.unit, unit_price: Number(row.quote_amount || 0) / Math.max(Number(row.quantity || 1), 1) / 100, subtotal: Number(row.quote_amount || 0) / 100 });
   return { ...row, products, costs, advances };
 }
 
@@ -226,11 +232,13 @@ export function createOrder(data: Record<string, unknown>) {
   const projectId = String(data.project_id || '');
   const project = db.prepare('SELECT * FROM projects_simple WHERE id=?').get(projectId) as { id: string; customer_id: string } | undefined;
   if (!project) throw new Error('请选择项目');
-  const products = Array.isArray(data.products) ? data.products as Array<Record<string, unknown>> : [];
-  const costs = Array.isArray(data.costs) ? data.costs as Array<Record<string, unknown>> : [];
-  const advances = Array.isArray(data.advances) ? data.advances as Array<Record<string, unknown>> : [];
-  const serviceName = String(data.service_name || products.map((item) => text(item.name)).filter(Boolean).join('、')).trim();
-  if (!serviceName) throw new Error('请至少添加一项产品');
+  const products = sanitizeLines(Array.isArray(data.products) ? data.products as Array<Record<string, unknown>> : [], 'name');
+  const costs = sanitizeLines(Array.isArray(data.costs) ? data.costs as Array<Record<string, unknown>> : [], 'name');
+  const advances = sanitizeLines(Array.isArray(data.advances) ? data.advances as Array<Record<string, unknown>> : [], 'item');
+  if (!products.length && !costs.length && !advances.length) throw new Error('请至少填写一项产品、固定成本或员工垫付');
+  const primary = products[0] || costs[0] || advances[0];
+  const serviceName = String(data.service_name || products.map((item) => text(item.name)).filter(Boolean).join('、') || costs.map((item) => text(item.name)).filter(Boolean).join('、') || advances.map((item) => text(item.item)).filter(Boolean).join('、') || primary.name || primary.item).trim();
+  if (!serviceName) throw new Error('请填写订单内容');
   const quantity = Number(data.quantity || products[0]?.quantity || 1);
   if (!Number.isFinite(quantity) || quantity <= 0) throw new Error('数量必须大于 0');
   const id = uuid();
@@ -251,10 +259,11 @@ export function updateOrder(id: string, data: Record<string, unknown>) {
   if (!existing) throw new Error('ORDER_NOT_FOUND');
   const products = Array.isArray(data.products) ? data.products as Array<Record<string, unknown>> : parseList(existing.products_json);
   const costs = Array.isArray(data.costs) ? data.costs as Array<Record<string, unknown>> : parseList(existing.costs_json);
-  const advances = Array.isArray(data.advances) ? data.advances as Array<Record<string, unknown>> : parseList(existing.advances_json);
+  const advances = Array.isArray(data.advances) ? sanitizeLines(data.advances as Array<Record<string, unknown>>, 'item') : parseList(existing.advances_json);
+  if (!products.length && !costs.length && !advances.length) throw new Error('请至少保留一项产品、固定成本或员工垫付');
   const quote = products.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0);
   const cost = costs.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0);
-  const service = products.map((item) => text(item.name)).filter(Boolean).join('、') || text(data.service_name) || String(existing.service_name);
+  const service = products.map((item) => text(item.name)).filter(Boolean).join('、') || costs.map((item) => text(item.name)).filter(Boolean).join('、') || advances.map((item) => text(item.item)).filter(Boolean).join('、') || text(data.service_name) || String(existing.service_name);
   const targetProject = text(data.project_id || existing.project_id);
   db.prepare(`UPDATE orders_simple SET project_id=?,customer_id=(SELECT customer_id FROM projects_simple WHERE id=?),service_name=?,quantity=?,unit=?,quote_amount=?,cost_amount=?,order_date=?,delivery_date=?,contact=?,created_by=?,status=?,payment_status=?,note=?,specification=?,products_json=?,costs_json=?,advances_json=?,reimbursement_status=? WHERE id=?`).run(targetProject, targetProject, service, Number(products[0]?.quantity || existing.quantity), text(products[0]?.unit || existing.unit), quote, cost, text(data.order_date || existing.order_date), text(data.delivery_date), text(data.contact), text(data.created_by || existing.created_by), text(data.status || existing.status), text(data.payment_status || existing.payment_status), text(data.note), text(products[0]?.specification || existing.specification), JSON.stringify(products), JSON.stringify(costs), JSON.stringify(advances), advances.length ? (text(data.reimbursement_status) || '待核验') : '无需报销', id);
   return hydrateOrder(db.prepare(`SELECT o.*,c.name customer_name,p.name project_name,p.owner project_owner FROM orders_simple o JOIN customers_simple c ON c.id=o.customer_id JOIN projects_simple p ON p.id=o.project_id WHERE o.id=?`).get(id) as Record<string, unknown>);

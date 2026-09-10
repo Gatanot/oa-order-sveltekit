@@ -466,9 +466,17 @@ export function createOrderDesk(data: Data) {
   }
   async function submitOrder(event: SubmitEvent) {
     event.preventDefault();
+    const hasName = (value: string) => value.trim().length > 0;
+    const validProducts = products.filter((item) => hasName(item.name));
+    const validCosts = costs.filter((item) => hasName(item.name));
+    const validAdvances = advances.filter((item) => hasName(item.item));
+    if (!validProducts.length && !validCosts.length && !validAdvances.length) {
+      notify("请至少填写一项产品、固定成本或员工垫付", true);
+      return;
+    }
     busy = true;
     try {
-      const payload = { project_id: projectId, catalog_id: catalogId, service_name: serviceName, quantity, unit, quote_amount: quoteAmount, cost_amount: costAmount, order_date: orderDate, delivery_date: deliveryDate, contact, payment_status: paymentStatus, status, created_by: createdBy, note, specification, products, costs, advances, submit_reimbursement: submitMode === "reimburse" };
+      const payload = { project_id: projectId, catalog_id: catalogId, service_name: serviceName, quantity, unit, quote_amount: quoteAmount, cost_amount: costAmount, order_date: orderDate, delivery_date: deliveryDate, contact, payment_status: paymentStatus, status, created_by: createdBy, note, specification, products: validProducts, costs: validCosts, advances: validAdvances, submit_reimbursement: submitMode === "reimburse" };
       const result = editingOrderId
         ? await api.patch<{ data: Order }>(`/api/orders/${editingOrderId}`, payload)
         : await api.post<{ data: Order }>("/api/orders", payload);
