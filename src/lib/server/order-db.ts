@@ -72,6 +72,12 @@ export function getOrderDb() {
     // Keep existing databases compatible, while retaining every business field from the Excel sheets.
     const fields = instance.prepare('PRAGMA table_info(orders_simple)').all() as Array<{ name: string }>;
     if (!fields.some((field) => field.name === 'is_extra')) instance.exec("ALTER TABLE orders_simple ADD COLUMN is_extra INTEGER NOT NULL DEFAULT 0");
+    const orderAdditions: Record<string, string> = {
+      delivery_date: "TEXT NOT NULL DEFAULT ''", contact: "TEXT NOT NULL DEFAULT ''",
+      payment_status: "TEXT NOT NULL DEFAULT '未结款'", products_json: "TEXT NOT NULL DEFAULT '[]'",
+      costs_json: "TEXT NOT NULL DEFAULT '[]'", advances_json: "TEXT NOT NULL DEFAULT '[]'"
+    };
+    for (const [name, type] of Object.entries(orderAdditions)) if (!fields.some((field) => field.name === name)) instance.exec(`ALTER TABLE orders_simple ADD COLUMN ${name} ${type}`);
     const catalogFields = instance.prepare('PRAGMA table_info(catalog_items)').all() as Array<{ name: string }>;
     const additions: Record<string, string> = {
       source_file: "TEXT NOT NULL DEFAULT ''", source_sheet: "TEXT NOT NULL DEFAULT ''", source_type: "TEXT NOT NULL DEFAULT 'manual'",
@@ -159,8 +165,21 @@ export function listCatalog() {
   return getOrderDb().prepare('SELECT * FROM catalog_items WHERE active=1 ORDER BY category,name').all();
 }
 
+function parseList(value: unknown): Array<Record<string, unknown>> {
+  try { const parsed = JSON.parse(String(value || '[]')); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
+}
+
+function hydrateOrder(row: Record<string, unknown>) {
+  const products = parseList(row.products_json);
+  const costs = parseList(row.costs_json);
+  const advances = parseList(row.advances_json);
+  if (!products.length && row.service_name) products.push({ name: row.service_name, specification: row.specification || '', quantity: row.quantity, unit: row.unit, unit_price: Number(row.quote_amount || 0) / Math.max(Number(row.quantity || 1), 1) / 100, subtotal: Number(row.quote_amount || 0) / 100 });
+  return { ...row, products, costs, advances };
+}
+
 export function listOrders() {
-  return getOrderDb().prepare(`SELECT o.*, c.name AS customer_name, p.name AS project_name, p.owner AS project_owner, ci.category AS catalog_category FROM orders_simple o JOIN customers_simple c ON c.id=o.customer_id JOIN projects_simple p ON p.id=o.project_id LEFT JOIN catalog_items ci ON ci.id=o.catalog_id ORDER BY o.order_date DESC,o.created_at DESC`).all();
+  const rows = getOrderDb().prepare(`SELECT o.*, c.name AS customer_name, c.contact AS customer_contact, p.name AS project_name, p.owner AS project_owner, ci.category AS catalog_category FROM orders_simple o JOIN customers_simple c ON c.id=o.customer_id JOIN projects_simple p ON p.id=o.project_id LEFT JOIN catalog_items ci ON ci.id=o.catalog_id ORDER BY o.order_date DESC,o.created_at DESC`).all() as Array<Record<string, unknown>>;
+  return rows.map(hydrateOrder);
 }
 
 export interface CreateProjectInput {
@@ -194,23 +213,48 @@ export function createOrder(data: Record<string, unknown>) {
   const projectId = String(data.project_id || '');
   const project = db.prepare('SELECT * FROM projects_simple WHERE id=?').get(projectId) as { id: string; customer_id: string } | undefined;
   if (!project) throw new Error('请选择项目');
-  const serviceName = String(data.service_name || '').trim();
-  if (!serviceName) throw new Error('请填写订单内容');
-  const quantity = Number(data.quantity || 1);
+  const products = Array.isArray(data.products) ? data.products as Array<Record<string, unknown>> : [];
+  const costs = Array.isArray(data.costs) ? data.costs as Array<Record<string, unknown>> : [];
+  const advances = Array.isArray(data.advances) ? data.advances as Array<Record<string, unknown>> : [];
+  const serviceName = String(data.service_name || products.map((item) => text(item.name)).filter(Boolean).join('、')).trim();
+  if (!serviceName) throw new Error('请至少添加一项产品');
+  const quantity = Number(data.quantity || products[0]?.quantity || 1);
   if (!Number.isFinite(quantity) || quantity <= 0) throw new Error('数量必须大于 0');
   const id = uuid();
   const created = now();
   const date = String(data.order_date || created.slice(0, 10));
   const code = `ORD-${date.replaceAll('-', '')}-${id.slice(0, 6).toUpperCase()}`;
   const catalogId = data.catalog_id ? String(data.catalog_id) : null;
-  const reimbursementStatus = data.submit_reimbursement ? '待核验' : '无需报销';
-  db.prepare('INSERT INTO orders_simple(id,code,customer_id,project_id,catalog_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,created_by,status,note,created_at,specification,is_extra,reimbursement_status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id, code, project.customer_id, projectId, catalogId, serviceName, quantity, String(data.unit || '项'), moneyToCents(data.quote_amount), moneyToCents(data.cost_amount), date, String(data.created_by || '当前用户'), String(data.status || '待处理'), String(data.note || '').trim(), created, text(data.specification), data.is_extra ? 1 : 0, reimbursementStatus);
-  return db.prepare('SELECT * FROM orders_simple WHERE id=?').get(id);
+  const reimbursementStatus = advances.length || data.submit_reimbursement ? '待核验' : '无需报销';
+  const quoteCents = products.length ? products.reduce((sum, item) => sum + moneyToCents(Number(item.quantity || 0) * Number(item.unit_price || 0)), 0) : moneyToCents(data.quote_amount);
+  const costCents = costs.length ? costs.reduce((sum, item) => sum + moneyToCents(Number(item.quantity || 0) * Number(item.unit_price || 0)), 0) : moneyToCents(data.cost_amount);
+  db.prepare('INSERT INTO orders_simple(id,code,customer_id,project_id,catalog_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,created_by,status,note,created_at,specification,is_extra,reimbursement_status,delivery_date,contact,payment_status,products_json,costs_json,advances_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id, code, project.customer_id, projectId, catalogId, serviceName, quantity, String(data.unit || products[0]?.unit || '项'), quoteCents, costCents, date, String(data.created_by || '当前用户'), String(data.status || '制作中'), String(data.note || '').trim(), created, text(data.specification || products[0]?.specification), data.is_extra ? 1 : 0, reimbursementStatus, text(data.delivery_date), text(data.contact), text(data.payment_status) || '未结款', JSON.stringify(products), JSON.stringify(costs), JSON.stringify(advances));
+  return hydrateOrder(db.prepare('SELECT * FROM orders_simple WHERE id=?').get(id) as Record<string, unknown>);
+}
+
+export function updateOrder(id: string, data: Record<string, unknown>) {
+  const db = getOrderDb();
+  const existing = db.prepare('SELECT * FROM orders_simple WHERE id=?').get(id) as Record<string, unknown> | undefined;
+  if (!existing) throw new Error('ORDER_NOT_FOUND');
+  const products = Array.isArray(data.products) ? data.products as Array<Record<string, unknown>> : parseList(existing.products_json);
+  const costs = Array.isArray(data.costs) ? data.costs as Array<Record<string, unknown>> : parseList(existing.costs_json);
+  const advances = Array.isArray(data.advances) ? data.advances as Array<Record<string, unknown>> : parseList(existing.advances_json);
+  const quote = products.reduce((sum, item) => sum + moneyToCents(Number(item.quantity || 0) * Number(item.unit_price || 0)), 0);
+  const cost = costs.reduce((sum, item) => sum + moneyToCents(Number(item.quantity || 0) * Number(item.unit_price || 0)), 0);
+  const service = products.map((item) => text(item.name)).filter(Boolean).join('、') || text(data.service_name) || String(existing.service_name);
+  const targetProject = text(data.project_id || existing.project_id);
+  db.prepare(`UPDATE orders_simple SET project_id=?,customer_id=(SELECT customer_id FROM projects_simple WHERE id=?),service_name=?,quantity=?,unit=?,quote_amount=?,cost_amount=?,order_date=?,delivery_date=?,contact=?,created_by=?,status=?,payment_status=?,note=?,specification=?,products_json=?,costs_json=?,advances_json=?,reimbursement_status=? WHERE id=?`).run(targetProject, targetProject, service, Number(products[0]?.quantity || existing.quantity), text(products[0]?.unit || existing.unit), quote, cost, text(data.order_date || existing.order_date), text(data.delivery_date), text(data.contact), text(data.created_by || existing.created_by), text(data.status || existing.status), text(data.payment_status || existing.payment_status), text(data.note), text(products[0]?.specification || existing.specification), JSON.stringify(products), JSON.stringify(costs), JSON.stringify(advances), advances.length ? (text(data.reimbursement_status) || '待核验') : '无需报销', id);
+  return hydrateOrder(db.prepare(`SELECT o.*,c.name customer_name,p.name project_name,p.owner project_owner FROM orders_simple o JOIN customers_simple c ON c.id=o.customer_id JOIN projects_simple p ON p.id=o.project_id WHERE o.id=?`).get(id) as Record<string, unknown>);
+}
+
+export function deleteOrder(id: string) {
+  const result = getOrderDb().prepare('DELETE FROM orders_simple WHERE id=?').run(id);
+  if (!result.changes) throw new Error('ORDER_NOT_FOUND');
 }
 
 export function listReimbursementOrders(filters: Record<string, string> = {}) {
   const db = getOrderDb();
-  const where = ["o.catalog_id IS NULL", "o.reimbursement_status <> '无需报销'"];
+  const where = ["o.reimbursement_status <> '无需报销'"];
   const values: string[] = [];
   if (filters.project) { where.push('o.project_id=?'); values.push(filters.project); }
   if (filters.person) { where.push('o.created_by=?'); values.push(filters.person); }

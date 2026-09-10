@@ -18,7 +18,7 @@
   <div>
     <span class="top-eyebrow">ENTERPRISE ORDER DESK</span>
     <h1>
-      {desk.view === "overdesk.view"
+      {desk.view === "overview"
         ? "订单总览"
         : desk.view === "entry"
           ? "快捷录入订单"
@@ -32,7 +32,7 @@
       ><RefreshCw size={17} /></button
     ><button class="outline-action" onclick={desk.openExport}
       ><Download size={16} />导出订单</button
-    ><button class="primary-action" onclick={() => (desk.view = "entry")}
+    ><button class="primary-action" onclick={desk.startNewOrder}
       ><Plus size={16} />录入订单</button
     >
   </div>

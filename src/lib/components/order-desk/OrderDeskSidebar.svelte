@@ -29,13 +29,13 @@
   </div>
   <div class="side-caption">工作台</div>
   <button
-    class:active={desk.view === "overdesk.view"}
-    onclick={() => (desk.view = "overdesk.view")}
+    class:active={desk.view === "overview"}
+    onclick={() => (desk.view = "overview")}
     ><LayoutDashboard size={17} />订单总览</button
   >
   <button
     class:active={desk.view === "entry"}
-    onclick={() => (desk.view = "entry")}><Plus size={17} />录入订单</button
+    onclick={desk.startNewOrder}><Plus size={17} />录入订单</button
   >
   <button
     class:active={desk.view === "catalog"}

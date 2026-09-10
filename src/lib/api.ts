@@ -26,6 +26,9 @@ export const api = {
   post<T>(path: string, body: JsonRecord = {}) {
     return request<T>(path, { method: 'POST', body: JSON.stringify(body) });
   },
+  patch<T>(path: string, body: JsonRecord = {}) {
+    return request<T>(path, { method: 'PATCH', body: JSON.stringify(body) });
+  },
   delete<T>(path: string) {
     return request<T>(path, { method: 'DELETE' });
   }

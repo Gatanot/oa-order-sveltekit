@@ -1,0 +1,904 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>广告订单 OA · 可操作 Demo</title>
+  <style>
+    .repeat-row {
+      grid-template-columns: 2fr 90px 100px 120px 120px 120px 40px !important
+    }
+
+    .repeat-row textarea {
+      height: 58px;
+      resize: vertical;
+      line-height: 1.4
+    }
+
+    .repeat-row input[readonly] {
+      background: #f3f6f7;
+      color: #536a75
+    }
+
+    :root {
+      --ink: #20313b;
+      --muted: #6b7e87;
+      --line: #dce6e9;
+      --bg: #f4f7f8;
+      --panel: #fff;
+      --nav: #123442;
+      --blue: #1679aa;
+      --green: #218461;
+      --orange: #b86b16;
+      --red: #b54949
+    }
+
+    * {
+      box-sizing: border-box
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", Arial, sans-serif
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 228px 1fr;
+      min-height: 100vh
+    }
+
+    .side {
+      background: var(--nav);
+      color: #d8e8ed;
+      padding: 22px 14px
+    }
+
+    .brand {
+      font-size: 19px;
+      font-weight: 700;
+      color: #fff;
+      padding: 5px 10px 24px
+    }
+
+    .brand small {
+      display: block;
+      font-size: 11px;
+      color: #8eabb5;
+      font-weight: 400;
+      margin-top: 4px
+    }
+
+    .nav button {
+      display: block;
+      width: 100%;
+      border: 0;
+      background: transparent;
+      color: #b9d0d8;
+      text-align: left;
+      padding: 12px 13px;
+      border-radius: 8px;
+      margin: 5px 0;
+      cursor: pointer;
+      font-size: 14px
+    }
+
+    .nav button:hover,
+    .nav button.active {
+      background: #20586b;
+      color: #fff
+    }
+
+    .main {
+      padding: 26px;
+      max-width: 1440px;
+      width: 100%;
+      margin: auto
+    }
+
+    .view {
+      display: none
+    }
+
+    .view.active {
+      display: block
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 21px;
+      margin-bottom: 18px;
+      box-shadow: 0 2px 10px #20313b08
+    }
+
+    .head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px
+    }
+
+    .head h1 {
+      margin: 0 0 4px
+    }
+
+    .sub {
+      color: var(--muted);
+      font-size: 12px
+    }
+
+    .btn {
+      border: 0;
+      border-radius: 7px;
+      padding: 9px 14px;
+      cursor: pointer;
+      font-weight: 600
+    }
+
+    .blue {
+      background: var(--blue);
+      color: #fff
+    }
+
+    .gray {
+      background: #edf2f4;
+      color: #3d555f
+    }
+
+    .danger {
+      background: #fff0f0;
+      color: var(--red)
+    }
+
+    .filters {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(110px, 1fr));
+      gap: 10px;
+      padding: 15px;
+      background: #f7fafb;
+      border-radius: 9px;
+      margin: 18px 0 10px
+    }
+
+    .field {
+      display: grid;
+      gap: 4px
+    }
+
+    .field label {
+      font-size: 12px;
+      color: #58707a
+    }
+
+    .field input,
+    .field select,
+    .field textarea {
+      width: 100%;
+      min-height: 36px;
+      border: 1px solid #c9d8dd;
+      border-radius: 6px;
+      padding: 7px 9px;
+      background: #fff;
+      color: var(--ink)
+    }
+
+    .field textarea {
+      min-height: 76px;
+      resize: vertical
+    }
+
+    .filter-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 15px
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 10px;
+      margin: 14px 0
+    }
+
+    .metric {
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #fbfcfc
+    }
+
+    .metric small {
+      color: var(--muted);
+      display: block
+    }
+
+    .metric b {
+      font-size: 20px;
+      display: block;
+      margin-top: 3px
+    }
+
+    .table-wrap {
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      overflow: auto
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 13px
+    }
+
+    th,
+    td {
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line);
+      white-space: nowrap;
+      text-align: left
+    }
+
+    th {
+      background: #f0f5f6;
+      color: #516a74;
+      font-weight: 600
+    }
+
+    tbody tr.click {
+      cursor: pointer
+    }
+
+    tbody tr.click:hover {
+      background: #f1f8fa
+    }
+
+    .tag {
+      display: inline-block;
+      border-radius: 99px;
+      padding: 3px 8px;
+      font-size: 12px;
+      background: #eaf6f0;
+      color: var(--green)
+    }
+
+    .tag.unpaid {
+      background: #fff2dd;
+      color: var(--orange)
+    }
+
+    .tag.work {
+      background: #eaf2fb;
+      color: #28688f
+    }
+
+    .empty {
+      text-align: center;
+      color: var(--muted);
+      padding: 28px
+    }
+
+    .column-box {
+      display: none;
+      position: absolute;
+      right: 0;
+      top: 38px;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      box-shadow: 0 5px 18px #20313b22;
+      z-index: 3
+    }
+
+    .column-box.show {
+      display: grid;
+      gap: 7px
+    }
+
+    .column-box label {
+      white-space: nowrap
+    }
+
+    .relative {
+      position: relative
+    }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      overflow: hidden;
+      margin-top: 16px
+    }
+
+    .info-cell {
+      padding: 12px;
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line)
+    }
+
+    .info-cell small {
+      display: block;
+      color: var(--muted);
+      margin-bottom: 3px
+    }
+
+    .detail-actions {
+      display: flex;
+      gap: 8px
+    }
+
+    .section-title {
+      margin: 22px 0 10px;
+      font-size: 15px
+    }
+
+    .line-items {
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      overflow: auto
+    }
+
+    .line-items table td,
+    .line-items table th {
+      padding: 9px
+    }
+
+    .total-row {
+      display: flex;
+      justify-content: flex-end;
+      gap: 32px;
+      padding: 13px;
+      font-weight: 700;
+      background: #f7fafb
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px
+    }
+
+    .form-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      margin-top: 18px
+    }
+
+    .repeat-row {
+      display: grid;
+      grid-template-columns: 2fr 110px 130px 1.5fr 40px;
+      gap: 8px;
+      margin: 8px 0;
+      align-items: center
+    }
+
+    .repeat-row input,
+    .repeat-row select {
+      height: 36px;
+      border: 1px solid #c9d8dd;
+      border-radius: 6px;
+      padding: 6px 8px
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 12px;
+      margin: 6px 0
+    }
+
+    .file-link {
+      color: var(--blue);
+      text-decoration: underline;
+      cursor: pointer
+    }
+
+    .library-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px
+    }
+
+    .library-card {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 16px
+    }
+
+    .library-card h3 {
+      margin: 0 0 12px
+    }
+
+    .library-card table {
+      margin-top: 12px
+    }
+
+    .reim-summary {
+      display: flex;
+      gap: 18px;
+      color: var(--muted);
+      margin: 14px 0
+    }
+
+    .reim-summary b {
+      color: var(--ink);
+      font-size: 20px
+    }
+
+    .modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: #0b202b88;
+      align-items: center;
+      justify-content: center;
+      z-index: 20
+    }
+
+    .modal.show {
+      display: flex
+    }
+
+    .modal-card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 20px;
+      width: min(560px, 92vw);
+      max-height: 88vh;
+      overflow: auto
+    }
+
+    .preview {
+      border: 1px dashed #a9c2cb;
+      border-radius: 8px;
+      text-align: center;
+      padding: 42px;
+      margin-top: 15px;
+      background: #f8fbfc
+    }
+
+    .toast {
+      position: fixed;
+      right: 22px;
+      bottom: 22px;
+      background: #20313b;
+      color: #fff;
+      padding: 11px 16px;
+      border-radius: 8px;
+      display: none;
+      z-index: 30
+    }
+
+    .toast.show {
+      display: block
+    }
+
+    @media(max-width:1000px) {
+      .app {
+        grid-template-columns: 1fr
+      }
+
+      .side {
+        padding: 12px
+      }
+
+      .brand {
+        padding: 4px 10px 10px
+      }
+
+      .nav button {
+        display: inline-block;
+        width: auto;
+        margin: 2px
+      }
+
+      .main {
+        padding: 14px
+      }
+
+      .filters {
+        grid-template-columns: repeat(3, 1fr)
+      }
+
+      .summary {
+        grid-template-columns: repeat(3, 1fr)
+      }
+
+      .info-grid,
+      .form-grid {
+        grid-template-columns: repeat(2, 1fr)
+      }
+
+      .library-grid {
+        grid-template-columns: 1fr
+      }
+    }
+
+    @media(max-width:620px) {
+      .filters {
+        grid-template-columns: 1fr 1fr
+      }
+
+      .summary {
+        grid-template-columns: 1fr 1fr
+      }
+
+      .info-grid,
+      .form-grid {
+        grid-template-columns: 1fr
+      }
+
+      .repeat-row {
+        grid-template-columns: 1fr 1fr
+      }
+
+      .repeat-row .remove {
+        grid-column: span 2
+      }
+    }
+  </style>
+  <link rel="stylesheet" href="assets/catsco-standard-footer.css">
+  <style id="artifact-responsive-fix">
+    @media(max-width:1000px) {
+      .app {
+        display: block !important;
+        width: 100% !important;
+        min-width: 0 !important
+      }
+
+      .side {
+        width: 100% !important;
+        max-width: 100% !important;
+        overflow: hidden !important
+      }
+
+      .main {
+        width: 100% !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+        overflow: hidden !important
+      }
+
+      .brand {
+        max-width: 100% !important;
+        white-space: nowrap;
+        overflow: hidden
+      }
+
+      .nav {
+        max-width: 100% !important;
+        overflow: hidden
+      }
+
+      .panel {
+        max-width: 100% !important;
+        min-width: 0 !important
+      }
+
+      .filters {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        min-width: 0 !important
+      }
+
+      .summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        min-width: 0 !important
+      }
+
+      .repeat-row {
+        grid-template-columns: 1fr 1fr !important;
+        min-width: 0 !important
+      }
+
+      .repeat-row>* {
+        min-width: 0 !important
+      }
+
+      .repeat-row textarea {
+        grid-column: 1/-1 !important
+      }
+    }
+
+    @media(max-width:620px) {
+
+      .filters,
+      .summary {
+        grid-template-columns: 1fr 1fr !important
+      }
+
+      .repeat-row {
+        grid-template-columns: 1fr !important
+      }
+
+      .repeat-row .remove {
+        grid-column: 1 !important
+      }
+
+      .repeat-row textarea {
+        grid-column: 1 !important
+      }
+    }
+  </style>
+  <script src="assets/catsco-artifact-context-bridge.js" data-catsco-artifact-context-bridge="v1" defer></script>
+</head>
+
+<body>
+  <div class="app">
+    <aside class="side">
+      <div class="brand">广告订单 OA<small>可操作业务 Demo · 内部使用</small></div>
+      <nav class="nav"><button class="active" data-view="orders">订单列表</button><button
+          data-view="reimburse">报销中心</button><button data-view="libraries">报价库与成本库</button></nav>
+    </aside>
+    <main class="main">
+      <section id="orders" class="view active">
+        <div class="panel">
+          <div class="head">
+            <div>
+              <h1>订单列表</h1>
+              <div class="sub">点击任意订单进入查看；需要修改时再点击“编辑”</div>
+            </div><button id="newOrder" class="btn blue">＋新增订单</button>
+          </div>
+          <div class="filters">
+            <div class="field"><label>开始日期</label><input id="fStart" type="date"></div>
+            <div class="field"><label>结束日期</label><input id="fEnd" type="date"></div>
+            <div class="field"><label>客户</label><select id="fClient">
+                <option value="">全部客户</option>
+              </select></div>
+            <div class="field"><label>设计师</label><select id="fDesigner">
+                <option value="">全部设计师</option>
+              </select></div>
+            <div class="field"><label>结款状态</label><select id="fPayment">
+                <option value="">全部</option>
+                <option>已结款</option>
+                <option>未结款</option>
+              </select></div>
+            <div class="field"><label>排序</label><select id="fSort">
+                <option value="new">日期：新到旧</option>
+                <option value="old">日期：旧到新</option>
+                <option value="amount">销售额：高到低</option>
+              </select></div>
+            <div class="field"><label>关键词</label><input id="fKeyword" placeholder="订单/产品/联系人"></div>
+          </div>
+          <div class="filter-actions"><button id="applyFilter" class="btn gray">筛选</button><button id="resetFilter"
+              class="btn gray">重置</button>
+            <div class="relative"><button id="columnBtn" class="btn gray">显示字段 ▾</button>
+              <div id="columnBox" class="column-box"><label><input type="checkbox" data-col="dept" checked>
+                  部门</label><label><input type="checkbox" data-col="contact" checked> 联系人</label><label><input
+                    type="checkbox" data-col="designer" checked> 设计师</label><label><input type="checkbox"
+                    data-col="state" checked> 制作状态</label><label><input type="checkbox" data-col="payment" checked>
+                  结款状态</label><label><input type="checkbox" data-col="cost"> 制作成本</label></div>
+            </div><span id="resultHint" class="sub"></span>
+          </div>
+          <div class="summary">
+            <div class="metric"><small>销售总额</small><b id="sumSales">¥0.00</b></div>
+            <div class="metric"><small>制作成本</small><b id="sumCost">¥0.00</b></div>
+            <div class="metric"><small>员工垫付</small><b id="sumAdvance">¥0.00</b></div>
+            <div class="metric"><small>预计毛利</small><b id="sumProfit">¥0.00</b></div>
+            <div class="metric"><small>未结款金额</small><b id="sumUnpaid">¥0.00</b></div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead id="orderHead"></thead>
+              <tbody id="orderBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+      <section id="detail" class="view">
+        <div class="panel">
+          <div class="head">
+            <div>
+              <h1 id="detailTitle">订单详情</h1>
+              <div id="detailSub" class="sub"></div>
+            </div>
+            <div class="detail-actions"><button id="backToList" class="btn gray">返回列表</button><button id="editOrder"
+                class="btn blue">编辑</button></div>
+          </div>
+          <div id="detailContent"></div>
+        </div>
+      </section>
+      <section id="entry" class="view">
+        <div class="panel">
+          <div class="head">
+            <div>
+              <h1 id="entryTitle">新增订单</h1>
+              <div class="sub">订单保存后会出现在订单列表，可继续查看或编辑</div>
+            </div><button id="cancelEntry" class="btn gray">取消</button>
+          </div>
+          <form id="orderForm">
+            <div class="section-title">基础信息</div>
+            <div class="form-grid">
+              <div class="field"><label>客户名称 *</label><select id="eClient" required></select></div>
+              <div class="field"><label>客户部门 *</label><input id="eDept" required placeholder="如：市场部"></div>
+              <div class="field"><label>联系人 / 下单人 *</label><input id="eContact" required placeholder="可输入历史联系人"
+                  list="contactList"></div>
+              <div class="field"><label>下单日期 *</label><input id="eDate" type="date" required></div>
+              <div class="field"><label>交货日期 *</label><input id="eDelivery" type="date" required></div>
+              <div class="field"><label>指定设计师 *</label><input id="eDesigner" required list="designerList"
+                  placeholder="输入或选择"></div>
+              <div class="field"><label>开单员（登录账号）</label><input id="eOperator" value="当前登录：演示账号"></div>
+              <div class="field"><label>订单状态</label><select id="eState">
+                  <option>制作中</option>
+                  <option>已完成</option>
+                  <option>待确认</option>
+                </select></div>
+            </div><datalist id="contactList">
+              <option value="杨艾铭">
+              <option value="陈宇航">
+              <option value="周敏">
+              <option value="李海明">
+            </datalist><datalist id="designerList">
+              <option value="林晓雯">
+              <option value="周启明">
+              <option value="陈思远">
+              <option value="何嘉怡">
+            </datalist>
+            <div class="section-title">产品明细 <span class="hint">输入关键词可快速匹配当前客户报价库；选择后自动带出制作要求和销售单价</span></div>
+            <div id="productRows"></div><button type="button" id="addProduct" class="btn gray">＋添加产品</button>
+            <div class="section-title">固定厂商成本 <span class="hint">可从对应供应商成本库选择，也可以手工输入；供应商和单价会自动带出</span></div>
+            <div id="costRows"></div><button type="button" id="addCost" class="btn gray">＋添加成本项目</button>
+            <div class="section-title">员工垫付 <span class="hint">可添加多条零碎采购，并上传发票附件</span></div>
+            <div id="advanceRows"></div><button type="button" id="addAdvance" class="btn gray">＋添加员工垫付</button>
+            <div class="form-actions"><button type="button" id="cancelEntry2" class="btn gray">取消</button><button
+                class="btn blue">保存订单</button></div>
+          </form>
+        </div>
+      </section>
+      <section id="reimburse" class="view">
+        <div class="panel">
+          <div class="head">
+            <div>
+              <h1>报销中心</h1>
+              <div class="sub">按员工和时间筛选，网页先查看，确认后再导出当前结果</div>
+            </div><button id="exportReim" class="btn blue">导出当前结果</button>
+          </div>
+          <div class="filters">
+            <div class="field"><label>开始日期</label><input id="rStart" type="date"></div>
+            <div class="field"><label>结束日期</label><input id="rEnd" type="date"></div>
+            <div class="field"><label>员工</label><select id="rEmployee">
+                <option value="">全部员工</option>
+              </select></div>
+            <div class="field"><label>状态</label><select id="rStatus">
+                <option value="">全部</option>
+                <option>待审核</option>
+                <option>已报销</option>
+              </select></div>
+          </div>
+          <div class="filter-actions"><button id="applyReim" class="btn gray">筛选</button><button id="resetReim"
+              class="btn gray">重置</button></div>
+          <div class="reim-summary"><span>报销条数 <b id="reimCount">0</b></span><span>报销总额 <b
+                id="reimTotal">¥0.00</b></span></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>日期</th>
+                  <th>员工</th>
+                  <th>来源订单</th>
+                  <th>物品</th>
+                  <th>金额</th>
+                  <th>发票附件</th>
+                  <th>状态</th>
+                </tr>
+              </thead>
+              <tbody id="reimBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+      <section id="libraries" class="view">
+        <div class="panel">
+          <div class="head">
+            <div>
+              <h1>报价库与成本库</h1>
+              <div class="sub">每个报价文件绑定一个客户；每个成本文件绑定一个工厂 / 供应商</div>
+            </div>
+          </div>
+          <div class="library-grid">
+            <div class="library-card">
+              <h3>客户报价库</h3>
+              <div class="field"><label>客户</label><select id="libClient"></select></div>
+              <div class="field" style="margin-top:10px"><label>上传该客户报价文件</label><input id="quoteFile" type="file"
+                  accept=".xls,.xlsx,.csv"></div>
+              <div id="quoteFileName" class="hint"></div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>客户</th>
+                      <th>文件</th>
+                      <th>产品数</th>
+                    </tr>
+                  </thead>
+                  <tbody id="quoteLibBody"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="library-card">
+              <h3>供应商成本库</h3>
+              <div class="field"><label>工厂 / 供应商</label><select id="libVendor"></select></div>
+              <div class="field" style="margin-top:10px"><label>上传该供应商成本文件</label><input id="costFile" type="file"
+                  accept=".xls,.xlsx,.csv"></div>
+              <div id="costFileName" class="hint"></div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>供应商</th>
+                      <th>文件</th>
+                      <th>成本项目数</th>
+                    </tr>
+                  </thead>
+                  <tbody id="costLibBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <div id="invoiceModal" class="modal">
+    <div class="modal-card">
+      <div class="head"><b>发票附件</b><button id="closeInvoice" class="btn gray">关闭</button></div>
+      <div class="preview">
+        <div style="font-size:38px">🧾</div><strong id="invoiceName">发票.pdf</strong>
+        <p class="sub">演示预览：实际系统将打开上传的 PDF 或图片</p><button id="downloadInvoice" class="btn blue">下载附件</button>
+      </div>
+    </div>
+  </div>
+  <div id="toast" class="toast"></div>
+  <datalist id="productList"></datalist>
+  <script>
+    const $ = id => document.getElementById(id), money = n => '¥' + Number(n || 0).toFixed(2), esc = s => String(s ?? '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+    const quoteLibrary = { '广东省瑜鹏传媒科技有限公司': [{ name: '单张设计', unit: 'P', requirement: '根据需求方提供文字素材提供文案策划、文字编辑、主体创意和整体设计。', price: 400 }, { name: '海报设计', unit: 'P', requirement: '根据需求方提供文字素材提供文案策划、文字编辑、主体创意和整体设计。', price: 420 }, { name: '活动主画面/活动签到画面/墙报/黑板报设计', unit: 'P', requirement: '6㎡以上，50㎡以内的平面设计，包含活动背景板。', price: 530 }, { name: '展架/易拉宝设计', unit: 'P', requirement: '根据需求方提供文字素材进行主体创意和整体设计。', price: 420 }, { name: 'EPG广告设计', unit: '套', requirement: '首页广告：高清+网关。', price: 280 }, { name: '场地布置设计', unit: 'P', requirement: '包含主题视觉的空间设计及零星空间布置设计。', price: 280 }, { name: '户外墙报', unit: '㎡', requirement: '户外背胶喷画，含喷画及安装。', price: 85 }, { name: 'X展架', unit: '套', requirement: '门型展架80×180cm，塑钢或铁盒底座+PVC直喷画。', price: 160 }, { name: '横幅', unit: 'm', requirement: '宽度≤0.75m，含制作安装丝布和设计排版费。', price: 35 }, { name: '桁架租赁服务', unit: '㎡', requirement: '活动期间提供桁架。', price: 80 }, { name: '笔记本定制加彩页', unit: '本', requirement: '32K封面烫金PU皮，含10P彩页。', price: 32 }] };
+    const costLibrary = { 硕达: [{ name: '背胶过膜', unit: '元/㎡', price: 10.4 }, { name: 'PP过膜', unit: '元/㎡', price: 10.4 }, { name: '相纸过膜', unit: '元/㎡', price: 10.4 }, { name: '灯片', unit: '元/㎡', price: 19.2 }, { name: '室内背胶裱KT板', unit: '元/㎡', price: 24 }, { name: '户内背胶过膜双面裱KT板', unit: '元/㎡', price: 35.2 }, { name: '室内背胶裱光亮板', unit: '元/㎡', price: 26.4 }, { name: '可移白底背胶', unit: '元/㎡', price: 19.2 }, { name: '直喷PVC+过膜', unit: '元/㎡', price: 17.6 }, { name: '油画布', unit: '元/㎡', price: 25.6 }, { name: '3.2米户外白底灯布520', unit: '元/㎡', price: 8 }, { name: '3.2米户外白底灯布550（加厚）', unit: '元/㎡', price: 10.4 }, { name: '5米户外黑底灯布550#', unit: '元/㎡', price: 16 }], 印客邦: [{ name: '背胶裱KT板', unit: '元/㎡', price: 26 }, { name: '户外灯布', unit: '元/㎡', price: 12 }, { name: '写真喷绘', unit: '元/㎡', price: 18 }, { name: 'X展架成品', unit: '元/套', price: 72 }] };
+    // 其余客户先以演示报价库填充，实际开发时可在“报价库与成本库”上传后替换
+    quoteLibrary['广东省广播电视网络股份有限公司佛山分公司'] = quoteLibrary['广东省瑜鹏传媒科技有限公司'].map(x => ({ ...x, price: x.price }));
+    quoteLibrary['华南视觉中心'] = quoteLibrary['广东省瑜鹏传媒科技有限公司'].map(x => ({ ...x, price: Math.round(x.price * 0.95) }));
+    quoteLibrary['青禾商业地产'] = quoteLibrary['广东省瑜鹏传媒科技有限公司'].map(x => ({ ...x, price: Math.round(x.price * 1.08) }));
+    quoteLibrary['星河科技园'] = quoteLibrary['广东省瑜鹏传媒科技有限公司'].map(x => ({ ...x, price: Math.round(x.price * 0.92) }));
+    let orders = [{ no: 'AD-260901', date: '2026-09-01', delivery: '2026-09-03', client: '华南视觉中心', dept: '市场部', contact: '周敏', designer: '林晓雯', operator: '演示账号', state: '已完成', payment: '未结款', products: [{ name: '海报设计', unit: 'P', qty: 3, price: 420, requirement: '根据需求方提供文字素材提供文案策划、文字编辑、主体创意和整体设计。' }], costs: [{ name: '室内背胶裱KT板', vendor: '硕达', unit: '元/㎡', qty: 8, price: 24 }], advances: [{ employee: '林晓雯', item: '打车前往客户现场', amount: 86.5, date: '2026-09-01', invoice: '打车发票.pdf', status: '待审核' }] }, { no: 'AD-260902', date: '2026-09-02', delivery: '2026-09-05', client: '青禾商业地产', dept: '品牌部', contact: '陈宇航', designer: '周启明', operator: '演示账号', state: '制作中', payment: '已结款', products: [{ name: '场地布置设计', unit: 'P', qty: 1, price: 280, requirement: '包含主题视觉的空间设计及零星空间布置设计。' }, { name: '桁架租赁服务', unit: '㎡', qty: 16.8, price: 80, requirement: '活动期间提供桁架。' }], costs: [{ name: '3.2米户外白底灯布520', vendor: '硕达', unit: '元/㎡', qty: 16.8, price: 8 }], advances: [{ employee: '周启明', item: '现场辅材采购', amount: 68, date: '2026-09-02', invoice: '辅材采购.jpg', status: '已报销' }] }, { no: 'AD-260903', date: '2026-08-26', delivery: '2026-08-28', client: '广东省广播电视网络股份有限公司佛山分公司', dept: '市场营销部', contact: '杨艾铭', designer: '陈思远', operator: '演示账号', state: '已完成', payment: '未结款', products: [{ name: '活动主画面/活动签到画面/墙报/黑板报设计', unit: 'P', qty: 6, price: 530, requirement: '6㎡以上，50㎡以内的平面设计，包含活动背景板。' }, { name: '海报设计', unit: 'P', qty: 8, price: 420, requirement: '根据已经设计好的画面进行尺寸、文字等小修改。' }], costs: [{ name: '室内背胶裱KT板', vendor: '硕达', unit: '元/㎡', qty: 12, price: 24 }, { name: '背胶过膜', vendor: '硕达', unit: '元/㎡', qty: 22, price: 10.4 }], advances: [{ employee: '陈思远', item: '现场耗材', amount: 120, date: '2026-08-26', invoice: '现场耗材发票.png', status: '待审核' }] }, { no: 'AD-260904', date: '2026-08-18', delivery: '2026-08-20', client: '广东省广播电视网络股份有限公司佛山分公司', dept: '市场营销部', contact: '杨艾铭', designer: '林晓雯', operator: '演示账号', state: '已完成', payment: '已结款', products: [{ name: '户外墙报', unit: '㎡', qty: 42, price: 85, requirement: '户外背胶喷画，含喷画及安装。' }], costs: [{ name: '5米户外黑底灯布550#', vendor: '硕达', unit: '元/㎡', qty: 42, price: 16 }], advances: [] }, { no: 'AD-260905', date: '2026-08-12', delivery: '2026-08-15', client: '星河科技园', dept: '行政部', contact: '何莉', designer: '何嘉怡', operator: '演示账号', state: '制作中', payment: '未结款', products: [{ name: '单张设计', unit: 'P', qty: 17, price: 400, requirement: '根据需求方提供文字素材提供文案策划、文字编辑、主体创意和整体设计。' }], costs: [], advances: [{ employee: '何嘉怡', item: '快递寄送样品', amount: 45, date: '2026-08-12', invoice: '快递发票.pdf', status: '待审核' }] }, { no: 'AD-260906', date: '2026-07-30', delivery: '2026-08-02', client: '华南视觉中心', dept: '市场部', contact: '周敏', designer: '周启明', operator: '演示账号', state: '已完成', payment: '已结款', products: [{ name: 'X展架', unit: '套', qty: 10, price: 160, requirement: '门型展架80×180cm，PVC直喷画。' }], costs: [{ name: '直喷PVC+过膜', vendor: '硕达', unit: '元/㎡', qty: 12, price: 17.6 }], advances: [] }, { no: 'AD-260907', date: '2026-07-22', delivery: '2026-07-25', client: '青禾商业地产', dept: '品牌部', contact: '陈宇航', designer: '林晓雯', operator: '演示账号', state: '已完成', payment: '未结款', products: [{ name: '展架/易拉宝设计', unit: 'P', qty: 4, price: 420, requirement: '根据需求方提供文字素材进行主体创意和整体设计。' }], costs: [], advances: [{ employee: '林晓雯', item: '打印打样', amount: 36, date: '2026-07-22', invoice: '打印发票.pdf', status: '已报销' }] }, { no: 'AD-260908', date: '2026-07-11', delivery: '2026-07-14', client: '星河科技园', dept: '行政部', contact: '何莉', designer: '陈思远', operator: '演示账号', state: '已完成', payment: '已结款', products: [{ name: '笔记本定制加彩页', unit: '本', qty: 200, price: 32, requirement: '32K封面烫金PU皮，含10P彩页。' }], costs: [{ name: '背胶过膜', vendor: '硕达', unit: '元/㎡', qty: 10, price: 10.4 }], advances: [] }, { no: 'AD-260909', date: '2026-06-29', delivery: '2026-07-02', client: '广东省广播电视网络股份有限公司佛山分公司', dept: '市场营销部', contact: '杨艾铭', designer: '周启明', operator: '演示账号', state: '已完成', payment: '未结款', products: [{ name: '横幅', unit: 'm', qty: 19, price: 35, requirement: '宽度≤0.75m，含制作安装和设计排版费。' }], costs: [{ name: '3.2米户外白底灯布520', vendor: '硕达', unit: '元/㎡', qty: 14, price: 8 }], advances: [{ employee: '周启明', item: '现场胶带及扎带', amount: 28, date: '2026-06-29', invoice: '零星采购.jpg', status: '待审核' }] }, { no: 'AD-260910', date: '2026-06-15', delivery: '2026-06-18', client: '华南视觉中心', dept: '市场部', contact: '周敏', designer: '何嘉怡', operator: '演示账号', state: '已完成', payment: '已结款', products: [{ name: 'EPG广告设计', unit: '套', qty: 2, price: 280, requirement: '首页广告：高清+网关。' }], costs: [], advances: [] }];
+    let quoteFiles = [{ client: '广东省广播电视网络股份有限公司佛山分公司', file: '瑜鹏传媒报价表（2023-2025）.xls', count: 62 }, { client: '华南视觉中心', file: '华南视觉中心报价库.xlsx', count: 28 }, { client: '青禾商业地产', file: '青禾年度报价库.xlsx', count: 19 }], costFiles = [{ vendor: '硕达', file: '硕达2026年喷画结算价.xlsx', count: 42 }, { vendor: '印客邦', file: '印客邦常用物料成本表.xlsx', count: 26 }], editingNo = null;
+    function totals(o) { let sales = o.products.reduce((s, x) => s + x.qty * x.price, 0), cost = o.costs.reduce((s, x) => s + x.qty * x.price, 0), advance = o.advances.reduce((s, x) => s + Number(x.amount || 0), 0); return { sales, cost, advance, profit: sales - cost - advance } } function unique(k) { return [...new Set(orders.map(o => o[k]).filter(Boolean))] } function fillSelect(id, a, f) { $(id).innerHTML = '<option value="">' + f + '</option>' + a.map(x => '<option>' + esc(x) + '</option>').join('') } function updateProductList() { let a = quoteLibrary[$('eClient').value] || []; $('productList').innerHTML = a.map(x => '<option value="' + esc(x.name) + '">').join('') } function renderFilters() { fillSelect('fClient', unique('client'), '全部客户'); fillSelect('fDesigner', unique('designer'), '全部设计师'); fillSelect('rEmployee', [...new Set(orders.flatMap(o => o.advances.map(a => a.employee)))], '全部员工'); fillSelect('eClient', Object.keys(quoteLibrary), '请选择客户'); fillSelect('libClient', Object.keys(quoteLibrary), '请选择客户'); fillSelect('libVendor', Object.keys(costLibrary), '请选择供应商'); updateProductList() }
+    function filteredOrders() { let a = orders.filter(o => (!$('fStart').value || o.date >= $('fStart').value) && (!$('fEnd').value || o.date <= $('fEnd').value) && (!$('fClient').value || o.client === $('fClient').value) && (!$('fDesigner').value || o.designer === $('fDesigner').value) && (!$('fPayment').value || o.payment === $('fPayment').value) && (!$('fKeyword').value || [o.no, o.product, o.contact, ...o.products.map(x => x.name)].join('').includes($('fKeyword').value))); let s = $('fSort').value; if (s === 'old') a.sort((x, y) => x.date.localeCompare(y.date)); else if (s === 'amount') a.sort((x, y) => totals(y).sales - totals(x).sales); else a.sort((x, y) => y.date.localeCompare(x.date)); return a } function statusTag(v) { return '<span class="tag ' + (v === '未结款' ? 'unpaid' : v === '制作中' ? 'work' : '') + '">' + esc(v) + '</span>' }
+    function renderOrders() { let a = filteredOrders(), cols = [...document.querySelectorAll('[data-col]:checked')].map(x => x.dataset.col), head = ['订单编号', '日期', '客户', '产品']; if (cols.includes('dept')) head.push('部门'); if (cols.includes('contact')) head.push('联系人'); if (cols.includes('designer')) head.push('设计师'); head.push('销售金额'); if (cols.includes('cost')) head.push('制作成本'); if (cols.includes('state')) head.push('制作状态'); if (cols.includes('payment')) head.push('结款状态'); $('orderHead').innerHTML = '<tr>' + head.map(x => '<th>' + x + '</th>').join('') + '</tr>'; $('orderBody').innerHTML = a.length ? a.map(o => { let t = totals(o), c = [o.no, o.date, o.client, o.products.map(p => p.name).join('、')]; if (cols.includes('dept')) c.push(o.dept); if (cols.includes('contact')) c.push(o.contact); if (cols.includes('designer')) c.push(o.designer); c.push(money(t.sales)); if (cols.includes('cost')) c.push(money(t.cost)); if (cols.includes('state')) c.push(statusTag(o.state)); if (cols.includes('payment')) c.push(statusTag(o.payment)); return '<tr class="click" data-no="' + o.no + '">' + c.map(x => '<td>' + x + '</td>').join('') + '</tr>' }).join('') : '<tr><td colspan="12" class="empty">暂无符合条件的订单</td></tr>'; let sum = a.reduce((z, o) => { let t = totals(o); z.sales += t.sales; z.cost += t.cost; z.advance += t.advance; z.profit += t.profit; if (o.payment === '未结款') z.unpaid += t.sales; return z }, { sales: 0, cost: 0, advance: 0, profit: 0, unpaid: 0 }); $('sumSales').textContent = money(sum.sales); $('sumCost').textContent = money(sum.cost); $('sumAdvance').textContent = money(sum.advance); $('sumProfit').textContent = money(sum.profit); $('sumUnpaid').textContent = money(sum.unpaid); $('resultHint').textContent = '当前显示 ' + a.length + ' 条；汇总与筛选结果同步'; document.querySelectorAll('#orderBody .click').forEach(tr => tr.onclick = () => showDetail(tr.dataset.no)) }
+    function showView(id) { document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === id)); document.querySelectorAll('.nav button').forEach(b => b.classList.toggle('active', b.dataset.view === id)); window.scrollTo(0, 0) } function showDetail(no) { let o = orders.find(x => x.no === no); if (!o) return; editingNo = no; $('detailTitle').textContent = '订单详情 · ' + o.no; $('detailSub').textContent = '当前为查看模式；点击“编辑”后才可修改'; let t = totals(o); $('detailContent').innerHTML = '<div class="info-grid">' + [['订单编号', o.no], ['客户', o.client], ['部门', o.dept], ['联系人', o.contact], ['设计师', o.designer], ['开单员', o.operator], ['下单日期', o.date], ['交货日期', o.delivery], ['订单状态', statusTag(o.state)], ['结款状态', statusTag(o.payment)], ['销售总额', money(t.sales)], ['预计毛利', money(t.profit)]].map(x => '<div class="info-cell"><small>' + x[0] + '</small><span>' + x[1] + '</span></div>').join('') + '</div><h3 class="section-title">产品明细</h3><div class="line-items"><table><thead><tr><th>产品名称</th><th>单位</th><th>数量</th><th>制作要求</th><th>销售单价</th><th>小计</th></tr></thead><tbody>' + o.products.map(p => '<tr><td>' + esc(p.name) + '</td><td>' + esc(p.unit) + '</td><td>' + p.qty + '</td><td>' + esc(p.requirement) + '</td><td>' + money(p.price) + '</td><td>' + money(p.qty * p.price) + '</td></tr>').join('') + '</tbody></table></div><h3 class="section-title">固定厂商成本</h3><div class="line-items"><table><thead><tr><th>成本项目</th><th>供应商</th><th>单位</th><th>数量</th><th>成本单价</th><th>小计</th></tr></thead><tbody>' + (o.costs.length ? o.costs.map(c => '<tr><td>' + esc(c.name) + '</td><td>' + esc(c.vendor) + '</td><td>' + c.unit + '</td><td>' + c.qty + '</td><td>' + money(c.price) + '</td><td>' + money(c.qty * c.price) + '</td></tr>').join('') : '<tr><td colspan="6" class="empty">无固定厂商成本</td></tr>') + '</tbody></table><div class="total-row">制作成本：' + money(t.cost) + '</div></div><h3 class="section-title">员工垫付与发票</h3><div class="line-items"><table><thead><tr><th>员工</th><th>物品</th><th>日期</th><th>金额</th><th>发票附件</th><th>报销状态</th></tr></thead><tbody>' + (o.advances.length ? o.advances.map(a => '<tr><td>' + esc(a.employee) + '</td><td>' + esc(a.item) + '</td><td>' + a.date + '</td><td>' + money(a.amount) + '</td><td><span class="file-link invoice-link" data-invoice="' + esc(a.invoice || '附件') + '">' + esc(a.invoice || '查看附件') + '</span></td><td>' + statusTag(a.status) + '</td></tr>').join('') : '<tr><td colspan="6" class="empty">无员工垫付</td></tr>') + '</tbody></table><div class="total-row">员工垫付：' + money(t.advance) + '</div></div>'; showView('detail'); document.querySelectorAll('.invoice-link').forEach(x => x.onclick = e => openInvoice(e.target.dataset.invoice)) }
+    function productRow(p = {}) { let opts = (quoteLibrary[$('eClient').value] || []).map(x => '<option value="' + esc(x.name) + '">' + esc(x.name) + '</option>').join(''); return '<div class="repeat-row product-row"><input class="pname" list="productList" value="' + esc(p.name || '') + '" placeholder="输入关键词匹配报价库"><select class="pselect"><option value="">选择报价库产品</option>' + opts + '</select><input class="pqty" type="number" min="0" value="' + (p.qty || 1) + '" placeholder="数量"><input class="pprice" type="number" min="0" step="0.01" value="' + (p.price || '') + '" placeholder="销售单价"><button type="button" class="btn danger remove">×</button><div class="hint preq" style="grid-column:1/-1">制作要求：' + esc(p.requirement || '选择报价库产品后自动带出') + '</div></div>' } function costRow(c = {}) { let opts = Object.entries(costLibrary).flatMap(([v, a]) => a.map(x => '<option data-vendor="' + v + '" data-unit="' + x.unit + '" data-price="' + x.price + '" value="' + esc(x.name) + '">' + esc(x.name) + ' · ' + v + ' · ' + money(x.price) + '</option>')).join(''); return '<div class="repeat-row cost-row"><select class="cselect"><option value="">从成本库选择项目</option>' + opts + '</select><input class="cname" value="' + esc(c.name || '') + '" placeholder="或手工输入"><input class="cqty" type="number" min="0" value="' + (c.qty || 1) + '" placeholder="数量"><input class="cprice" type="number" min="0" step="0.01" value="' + (c.price || '') + '" placeholder="成本单价"><button type="button" class="btn danger remove">×</button><div class="hint csource" style="grid-column:1/-1">供应商来源：' + esc(c.vendor || '选择项目后自动显示') + '</div></div>' } function advanceRow(a = {}) { return '<div class="repeat-row advance-row"><input class="aname" value="' + esc(a.item || '') + '" placeholder="垫付物品名称"><input class="aamount" type="number" min="0" step="0.01" value="' + (a.amount || '') + '" placeholder="金额"><input class="adate" type="date" value="' + (a.date || $('eDate').value || '') + '"><input class="afile" type="file" accept=".pdf,.jpg,.jpeg,.png"><button type="button" class="btn danger remove">×</button><div class="hint afilename" style="grid-column:1/-1">' + esc(a.invoice || '未上传发票') + '</div></div>' }
+    function setupEntry(o) { editingNo = o?.no || null; $('entryTitle').textContent = o ? '编辑订单 · ' + o.no : '新增订单'; $('eClient').value = o?.client || Object.keys(quoteLibrary)[0]; $('eDept').value = o?.dept || ''; $('eContact').value = o?.contact || ''; $('eDate').value = o?.date || new Date().toISOString().slice(0, 10); $('eDelivery').value = o?.delivery || ''; $('eDesigner').value = o?.designer || ''; $('eOperator').value = o?.operator || '当前登录：演示账号'; $('eState').value = o?.state || '制作中'; $('productRows').innerHTML = ''; $('costRows').innerHTML = ''; $('advanceRows').innerHTML = ''; (o?.products || [{}]).forEach(p => $('productRows').insertAdjacentHTML('beforeend', productRow(p))); (o?.costs || []).forEach(c => $('costRows').insertAdjacentHTML('beforeend', costRow(c))); (o?.advances || []).forEach(a => $('advanceRows').insertAdjacentHTML('beforeend', advanceRow(a))); bindRows(); showView('entry') } function bindRows() { document.querySelectorAll('.pname').forEach(x => x.oninput = () => matchProduct(x)); document.querySelectorAll('.pselect').forEach(x => x.onchange = () => pickProduct(x)); document.querySelectorAll('.cselect').forEach(x => x.onchange = () => pickCost(x)); document.querySelectorAll('.remove').forEach(x => x.onclick = () => x.closest('.repeat-row').remove()); document.querySelectorAll('.afile').forEach(x => x.onchange = () => x.closest('.advance-row').querySelector('.afilename').textContent = x.files[0]?.name || '未上传发票') } function matchProduct(input) { let p = (quoteLibrary[$('eClient').value] || []).find(x => x.name.includes(input.value) || input.value.includes(x.name)); if (p) { let r = input.closest('.product-row'); r.querySelector('.pselect').value = p.name; r.querySelector('.pprice').value = p.price; r.querySelector('.preq').textContent = '制作要求：' + p.requirement } } function pickProduct(sel) { let p = (quoteLibrary[$('eClient').value] || []).find(x => x.name === sel.value), r = sel.closest('.product-row'); if (p) { r.querySelector('.pname').value = p.name; r.querySelector('.pprice').value = p.price; r.querySelector('.preq').textContent = '制作要求：' + p.requirement } } function pickCost(sel) { let o = sel.options[sel.selectedIndex], r = sel.closest('.cost-row'); if (o?.dataset.price) { r.querySelector('.cname').value = o.value; r.querySelector('.cprice').value = o.dataset.price; r.querySelector('.csource').textContent = '供应商来源：' + o.dataset.vendor + '（' + o.dataset.unit + '）' } }
+    function readForm() { let products = [...document.querySelectorAll('.product-row')].map(r => { let p = (quoteLibrary[$('eClient').value] || []).find(x => x.name === r.querySelector('.pname').value); return { name: r.querySelector('.pname').value.trim(), unit: p?.unit || '件', qty: Number(r.querySelector('.pqty').value || 0), price: Number(r.querySelector('.pprice').value || 0), requirement: r.querySelector('.preq').textContent.replace('制作要求：', '') } }).filter(x => x.name); let costs = [...document.querySelectorAll('.cost-row')].map(r => { let o = r.querySelector('.cselect').selectedOptions[0]; return { name: r.querySelector('.cname').value.trim(), vendor: o?.dataset.vendor || '手工录入', unit: o?.dataset.unit || '项', qty: Number(r.querySelector('.cqty').value || 0), price: Number(r.querySelector('.cprice').value || 0) } }).filter(x => x.name); let advances = [...document.querySelectorAll('.advance-row')].map(r => ({ employee: $('eDesigner').value, item: r.querySelector('.aname').value.trim(), amount: Number(r.querySelector('.aamount').value || 0), date: r.querySelector('.adate').value, invoice: r.querySelector('.afile').files[0]?.name || r.querySelector('.afilename').textContent, status: '待审核' })).filter(x => x.item); return { client: $('eClient').value, dept: $('eDept').value, contact: $('eContact').value, date: $('eDate').value, delivery: $('eDelivery').value, designer: $('eDesigner').value, operator: $('eOperator').value, state: $('eState').value, payment: '未结款', products, costs, advances } } function saveForm(e) { e.preventDefault(); let f = readForm(); if (!f.products.length) { toast('请至少添加一项产品'); return } if (editingNo) { let old = orders.find(x => x.no === editingNo); Object.assign(old, f); showDetail(editingNo); toast('订单已保存') } else { f.no = 'AD-' + String(Date.now()).slice(-6); orders.unshift(f); renderFilters(); renderOrders(); showDetail(f.no); toast('订单已新增并保存') } }
+    function renderReim() { let a = orders.flatMap(o => o.advances.map(x => ({ ...x, no: o.no }))).filter(x => (!$('rStart').value || x.date >= $('rStart').value) && (!$('rEnd').value || x.date <= $('rEnd').value) && (!$('rEmployee').value || x.employee === $('rEmployee').value) && (!$('rStatus').value || x.status === $('rStatus').value)); $('reimBody').innerHTML = a.length ? a.map(x => '<tr><td>' + x.date + '</td><td>' + esc(x.employee) + '</td><td>' + x.no + '</td><td>' + esc(x.item) + '</td><td>' + money(x.amount) + '</td><td><span class="file-link invoice-link" data-invoice="' + esc(x.invoice) + '">' + esc(x.invoice) + '</span></td><td>' + statusTag(x.status) + '</td></tr>').join('') : '<tr><td colspan="7" class="empty">暂无符合条件的报销</td></tr>'; $('reimCount').textContent = a.length; $('reimTotal').textContent = money(a.reduce((s, x) => s + Number(x.amount || 0), 0)); document.querySelectorAll('#reimBody .invoice-link').forEach(x => x.onclick = e => openInvoice(e.target.dataset.invoice)); return a } function renderLibraries() { $('quoteLibBody').innerHTML = quoteFiles.map(x => '<tr><td>' + esc(x.client) + '</td><td>' + esc(x.file) + '</td><td>' + x.count + '</td></tr>').join(''); $('costLibBody').innerHTML = costFiles.map(x => '<tr><td>' + esc(x.vendor) + '</td><td>' + esc(x.file) + '</td><td>' + x.count + '</td></tr>').join('') } function openInvoice(n) { $('invoiceName').textContent = n || '发票附件'; $('invoiceModal').classList.add('show') } function toast(m) { $('toast').textContent = m; $('toast').classList.add('show'); setTimeout(() => $('toast').classList.remove('show'), 2200) } function csvExport(rows) { let csv = '日期,员工,来源订单,物品,金额,发票,状态\n' + rows.map(x => [x.date, x.employee, x.no, x.item, x.amount, x.invoice, x.status].map(v => '"' + String(v || '').replaceAll('"', '""') + '"').join(',')).join('\n'); let a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv' })); a.download = '报销明细.csv'; a.click(); URL.revokeObjectURL(a.href) }
+    document.querySelectorAll('.nav button').forEach(b => b.onclick = () => { showView(b.dataset.view); if (b.dataset.view === 'orders') renderOrders(); if (b.dataset.view === 'reimburse') renderReim(); if (b.dataset.view === 'libraries') renderLibraries() }); $('applyFilter').onclick = renderOrders; $('resetFilter').onclick = () => { ['fStart', 'fEnd', 'fClient', 'fDesigner', 'fPayment', 'fKeyword'].forEach(id => $(id).value = ''); $('fSort').value = 'new'; renderOrders() }; $('columnBtn').onclick = () => $('columnBox').classList.toggle('show'); document.querySelectorAll('[data-col]').forEach(x => x.onchange = renderOrders); $('newOrder').onclick = () => setupEntry(); $('backToList').onclick = () => { showView('orders'); renderOrders() }; $('editOrder').onclick = () => setupEntry(orders.find(x => x.no === editingNo)); $('cancelEntry').onclick = $('cancelEntry2').onclick = () => { showView('orders'); renderOrders() }; $('orderForm').onsubmit = saveForm; $('eClient').onchange = () => { document.querySelectorAll('.product-row').forEach(r => { r.querySelector('.pselect').innerHTML = '<option value="">选择报价库产品</option>' + (quoteLibrary[$('eClient').value] || []).map(x => '<option>' + esc(x.name) + '</option>').join('') }) }; $('addProduct').onclick = () => { $('productRows').insertAdjacentHTML('beforeend', productRow()); bindRows() }; $('addCost').onclick = () => { $('costRows').insertAdjacentHTML('beforeend', costRow()); bindRows() }; $('addAdvance').onclick = () => { $('advanceRows').insertAdjacentHTML('beforeend', advanceRow()); bindRows() }; $('applyReim').onclick = renderReim; $('resetReim').onclick = () => { ['rStart', 'rEnd', 'rEmployee', 'rStatus'].forEach(id => $(id).value = ''); renderReim() }; $('exportReim').onclick = () => { let a = renderReim(); if (a.length) csvExport(a); else toast('当前筛选没有可导出的记录') }; $('closeInvoice').onclick = () => $('invoiceModal').classList.remove('show'); $('downloadInvoice').onclick = () => toast('已触发附件下载'); $('quoteFile').onchange = e => { let f = e.target.files[0]; if (f) { $('quoteFileName').textContent = '已选择：' + f.name; let c = $('libClient').value; if (c) { quoteFiles.unshift({ client: c, file: f.name, count: '待解析' }); renderLibraries(); toast('报价文件已绑定客户：' + c) } } }; $('costFile').onchange = e => { let f = e.target.files[0]; if (f) { $('costFileName').textContent = '已选择：' + f.name; let v = $('libVendor').value; if (v) { costFiles.unshift({ vendor: v, file: f.name, count: '待解析' }); renderLibraries(); toast('成本文件已绑定供应商：' + v) } } }; renderFilters(); renderOrders(); renderReim(); renderLibraries();
+  </script>
+  <script>
+    // 交互增强：产品名称使用单一可输入联想框，数量变化时自动计算小计
+    (function () {
+      function ensureList(id) { let x = document.getElementById(id); if (!x) { x = document.createElement('datalist'); x.id = id; document.body.appendChild(x) } return x }
+      function refreshLists() { let pl = ensureList('productList'), cl = ensureList('costList'); pl.innerHTML = (quoteLibrary[$('eClient').value] || []).map(x => '<option value="' + esc(x.name) + '">').join(''); cl.innerHTML = Object.entries(costLibrary).flatMap(([v, a]) => a.map(x => '<option value="' + esc(x.name) + '">')).join('') }
+      function calc(row) { let q = Number(row.querySelector('.pqty,.cqty')?.value || 0), p = Number(row.querySelector('.pprice,.cprice')?.value || 0), out = row.querySelector('.psubtotal,.csubtotal'); if (out) out.value = (q * p).toFixed(2) }
+      function productRow2(p = {}) { let lib = (quoteLibrary[$('eClient').value] || []), match = lib.find(x => x.name === p.name), unit = p.unit || match?.unit || '', req = p.requirement || match?.requirement || ''; return '<div class="repeat-row product-row"><input class="pname" list="productList" value="' + esc(p.name || '') + '" placeholder="输入关键词，选择报价库产品"><input class="punit" value="' + esc(unit) + '" placeholder="单位" readonly><input class="pqty" type="number" min="0" value="' + (p.qty || 1) + '" placeholder="数量"><input class="pprice" type="number" min="0" step="0.01" value="' + (p.price || match?.price || '') + '" placeholder="报价单价"><input class="psubtotal" value="' + (p.qty && p.price ? (p.qty * p.price).toFixed(2) : '') + '" placeholder="小计" readonly><button type="button" class="btn danger remove">×</button><textarea class="preq" style="grid-column:1/-1" placeholder="规格及技术要求（选择产品后自动带出）">' + esc(req) + '</textarea></div>' }
+      function costRow2(c = {}) { return '<div class="repeat-row cost-row"><input class="cname" list="costList" value="' + esc(c.name || '') + '" placeholder="输入关键词，选择成本项目"><input class="cqty" type="number" min="0" value="' + (c.qty || 1) + '" placeholder="数量"><input class="cprice" type="number" min="0" step="0.01" value="' + (c.price || '') + '" placeholder="成本单价"><input class="csubtotal" value="' + (c.qty && c.price ? (c.qty * c.price).toFixed(2) : '') + '" placeholder="小计" readonly><button type="button" class="btn danger remove">×</button><div class="hint csource" style="grid-column:1/-1">供应商来源：' + esc(c.vendor || '输入或选择成本项目后自动显示') + '</div></div>' }
+      function bindRows2() {
+        document.querySelectorAll('.pname').forEach(x => x.oninput = () => { let p = (quoteLibrary[$('eClient').value] || []).find(z => z.name === x.value || z.name.includes(x.value)); if (p) { let r = x.closest('.product-row'); r.querySelector('.punit').value = p.unit || ''; r.querySelector('.pprice').value = p.price; r.querySelector('.preq').value = p.requirement || ''; calc(r) } });
+        document.querySelectorAll('.cname').forEach(x => x.oninput = () => { let found; for (let [v, a] of Object.entries(costLibrary)) { let z = a.find(k => k.name === x.value || k.name.includes(x.value)); if (z) { found = { ...z, v }; break } } if (found) { let r = x.closest('.cost-row'); r.querySelector('.cprice').value = found.price; r.querySelector('.csource').textContent = '供应商来源：' + found.v + '（' + found.unit + '）'; calc(r) } });
+        document.querySelectorAll('.pqty,.pprice,.cqty,.cprice').forEach(x => x.oninput = () => calc(x.closest('.repeat-row')));
+        document.querySelectorAll('.remove').forEach(x => x.onclick = () => x.closest('.repeat-row').remove());
+        document.querySelectorAll('.afile').forEach(x => x.onchange = () => x.closest('.advance-row').querySelector('.afilename').textContent = x.files[0]?.name || '未上传发票');
+      }
+      function setupEntry2(o) { editingNo = o?.no || null; refreshLists(); $('entryTitle').textContent = o ? '编辑订单 · ' + o.no : '新增订单'; $('eClient').value = o?.client || Object.keys(quoteLibrary)[0]; refreshLists(); $('eDept').value = o?.dept || ''; $('eContact').value = o?.contact || ''; $('eDate').value = o?.date || new Date().toISOString().slice(0, 10); $('eDelivery').value = o?.delivery || ''; $('eDesigner').value = o?.designer || ''; $('eOperator').value = o?.operator || '当前登录：演示账号'; $('eState').value = o?.state || '制作中'; $('productRows').innerHTML = (o?.products || [{}]).map(productRow2).join(''); $('costRows').innerHTML = (o?.costs || []).map(costRow2).join(''); $('advanceRows').innerHTML = (o?.advances || []).map(advanceRow).join(''); bindRows2(); showView('entry') }
+      function readForm2() { let products = [...document.querySelectorAll('.product-row')].map(r => { let p = (quoteLibrary[$('eClient').value] || []).find(x => x.name === r.querySelector('.pname').value); return { name: r.querySelector('.pname').value.trim(), unit: r.querySelector('.punit').value.trim() || p?.unit || '件', qty: Number(r.querySelector('.pqty').value || 0), price: Number(r.querySelector('.pprice').value || 0), requirement: r.querySelector('.preq').value.trim() } }).filter(x => x.name); let costs = [...document.querySelectorAll('.cost-row')].map(r => { let found; for (let [v, a] of Object.entries(costLibrary)) { let z = a.find(k => k.name === r.querySelector('.cname').value); if (z) { found = { ...z, v }; break } } return { name: r.querySelector('.cname').value.trim(), vendor: found?.v || '手工录入', unit: found?.unit || '项', qty: Number(r.querySelector('.cqty').value || 0), price: Number(r.querySelector('.cprice').value || 0) } }).filter(x => x.name); let advances = [...document.querySelectorAll('.advance-row')].map(r => ({ employee: $('eDesigner').value, item: r.querySelector('.aname').value.trim(), amount: Number(r.querySelector('.aamount').value || 0), date: r.querySelector('.adate').value, invoice: r.querySelector('.afile').files[0]?.name || r.querySelector('.afilename').textContent, status: '待审核' })).filter(x => x.item); return { client: $('eClient').value, dept: $('eDept').value, contact: $('eContact').value, date: $('eDate').value, delivery: $('eDelivery').value, designer: $('eDesigner').value, operator: $('eOperator').value, state: $('eState').value, payment: '未结款', products, costs, advances } }
+      function saveForm2(e) { e.preventDefault(); let f = readForm2(); if (!f.products.length) { toast('请至少添加一项产品'); return } if (editingNo) { Object.assign(orders.find(x => x.no === editingNo), f); showDetail(editingNo); toast('订单已保存') } else { f.no = 'AD-' + String(Date.now()).slice(-6); orders.unshift(f); renderFilters(); renderOrders(); showDetail(f.no); toast('订单已新增并保存') } }
+      $('newOrder').onclick = () => setupEntry2(); $('editOrder').onclick = () => setupEntry2(orders.find(x => x.no === editingNo)); $('orderForm').onsubmit = saveForm2; $('eClient').onchange = () => { refreshLists(); document.querySelectorAll('.pname').forEach(x => x.value = ''); document.querySelectorAll('.pprice,.psubtotal').forEach(x => x.value = ''); document.querySelectorAll('.preq').forEach(x => x.textContent = '制作要求：输入或选择产品后自动带出') }; $('addProduct').onclick = () => { $('productRows').insertAdjacentHTML('beforeend', productRow2()); bindRows2() }; $('addCost').onclick = () => { $('costRows').insertAdjacentHTML('beforeend', costRow2()); bindRows2() }; $('addAdvance').onclick = () => { $('advanceRows').insertAdjacentHTML('beforeend', advanceRow()); bindRows2() }; refreshLists();
+    })();
+  </script>
+</body>
+
+</html>

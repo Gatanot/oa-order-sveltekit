@@ -1,203 +1,50 @@
 <script lang="ts">
+  import { Plus, Trash2 } from "lucide-svelte";
   import { getContext } from "svelte";
-  import { Plus } from "lucide-svelte";
   const desk = getContext<any>("order-desk");
+  function productTotal(p: any) { return (Number(p.quantity || 0) * Number(p.unit_price || 0)).toFixed(2); }
+  function costTotal(p: any) { return (Number(p.quantity || 0) * Number(p.unit_price || 0)).toFixed(2); }
+  function productMatches(name: string) {
+    const keyword = name.trim().toLowerCase();
+    if (!keyword) return [];
+    return desk.catalog.filter((item: any) => item.quote_unit > 0 && (!item.customer_name || item.customer_name === desk.selectedCustomer) && (!item.project_name || item.project_name === desk.selectedProject) && item.name.toLowerCase().includes(keyword)).slice(0, 6);
+  }
+  function costMatches(name: string) {
+    const keyword = name.trim().toLowerCase();
+    if (!keyword) return [];
+    return desk.catalog.filter((item: any) => item.cost_unit > 0 && (!item.quote_unit || item.source_type === "supplier_cost") && item.name.toLowerCase().includes(keyword)).slice(0, 6);
+  }
 </script>
 
 <section class="entry-layout">
   <form class="order-form" onsubmit={desk.submitOrder}>
-    <div class="form-title">
-      <div>
-        <h3>订单信息</h3>
-        <span>带 * 的字段为必填项</span>
-      </div>
-      <span class="form-step">STEP 1 / 1</span>
-    </div>
+    <div class="form-title"><div><h3>{desk.editingOrderId ? "编辑订单" : "新增订单"}</h3><span>订单保存后可在总览中查看、筛选和再次编辑</span></div><span class="form-step">ORDER</span></div>
     <div class="form-grid">
-      <label
-        >客户 <em>*</em><select
-          bind:value={desk.customerId}
-          onchange={desk.onCustomerChange}
-          required
-          ><option value="">请选择客户</option
-          >{#each desk.customers as customer}<option value={customer.id}
-              >{customer.name}</option
-            >{/each}</select
-        ></label
-      ><label
-        >项目 <em>*</em><select
-          bind:value={desk.projectId}
-          required
-          disabled={!desk.customerId}
-          ><option value=""
-            >{desk.customerId ? "请选择项目" : "先选择客户"}</option
-          >{#each desk.filteredProjects as project}<option value={project.id}
-              >{project.name} · {project.owner || "未分配负责人"}</option
-            >{/each}</select
-        ></label
-      >
-      <div class="full inline-create">
-        <span>没有找到对应项目？</span><button
-          type="button"
-          onclick={() => (desk.showProjectForm = true)}
-          ><Plus size={14} />新建项目</button
-        >
-      </div>
-      <label class="full order-content-field"
-        >订单内容 <em>*</em><input
-          bind:value={desk.serviceName}
-          oninput={desk.onServiceInput}
-          placeholder="直接输入订单内容，系统会实时推荐报价成本库条目"
-          required
-        /><small class="field-hint"
-          >已选客户：{desk.selectedCustomer || "未选择"} · 已选项目：{desk.selectedProject ||
-            "未选择"}</small
-        >{#if desk.serviceName.trim() && desk.catalogSuggestions.length}<div
-            class="catalog-suggestions"
-          >
-            <span>报价成本库推荐</span
-            >{#each desk.catalogSuggestions as item}<button
-                type="button"
-                onclick={() => desk.applySuggestion(item)}
-                ><b>{item.name}</b><small
-                  >{item.category || "未分类"}{item.customer_name
-                    ? ` · ${item.customer_name}`
-                    : ""}{item.project_name
-                    ? ` · ${item.project_name}`
-                    : ""}</small
-                ><strong
-                  >{desk.money(item.quote_unit)} / {desk.money(item.cost_unit)} ·
-                  {item.unit}</strong
-                ></button
-              >{/each}
-          </div>{:else if desk.serviceName.trim()}<small class="field-hint"
-            >没有匹配的库内条目，可继续手动填写。</small
-          >{/if}</label
-      ><label
-        >数量 <input
-          type="number"
-          min="0.01"
-          step="0.01"
-          bind:value={desk.quantity}
-          onchange={desk.onQuantityChange}
-        /></label
-      ><label
-        >单位 <input bind:value={desk.unit} placeholder="项、套、人天" /></label
-      ><label
-        >单位报价（元） <em>*</em><input
-          type="number"
-          min="0"
-          step="0.01"
-          bind:value={desk.unitQuote}
-          oninput={desk.syncTotals}
-          placeholder="0.00"
-          required
-        /></label
-      ><label
-        >单位成本（元） <em>*</em><input
-          type="number"
-          min="0"
-          step="0.01"
-          bind:value={desk.unitCost}
-          oninput={desk.syncTotals}
-          placeholder="0.00"
-          required
-        /></label
-      ><label>总报价（元） <input value={desk.quoteAmount} readonly /></label
-      ><label>总成本（元） <input value={desk.costAmount} readonly /></label
-      ><label class="full"
-        >规格和技术要求 <textarea
-          bind:value={desk.specification}
-          placeholder="选择报价成本库后自动填充，也可以留空"
-        ></textarea></label
-      ><label
-        >报价成本库 <span class="optional-mark">输入订单内容后自动推荐</span
-        ><select bind:value={desk.catalogId} onchange={desk.applyCatalog}
-          ><option value="">不使用推荐条目</option
-          >{#each desk.catalog as item}<option value={item.id}
-              >{item.category ? `${item.category} / ` : ""}{item.name} · 报价
-              {desk.money(item.quote_unit)} / {item.unit}</option
-            >{/each}</select
-        ></label
-      ><label>订单日期 <input type="date" bind:value={desk.orderDate} /></label
-      ><label
-        >录入人 <input
-          bind:value={desk.createdBy}
-          placeholder={desk.creatorName || "请设置或填写名字"}
-        /><small class="field-hint"
-          >{desk.creatorName
-            ? "已自动填入浏览器中保存的名字，可按本单修改。"
-            : "可在左下角“设置填写人”中保存常用名字。"}</small
-        ></label
-      ><label class="full"
-        >备注 <textarea
-          bind:value={desk.note}
-          placeholder="补充交付说明、来源或其他需要留痕的信息"
-        ></textarea><small class="field-hint"
-          >未选择报价成本库的订单会进入报销核验。</small
-        ></label
-      ><label class="full upload-desk.note-field"
-        ><span
-          >备注附件 <small class="optional-mark">空实现，仅保存文件元数据</small
-          ></span
-        ><input
-          type="file"
-          multiple
-          onchange={(event) => {
-            desk.noteFiles = [
-              ...((event.currentTarget as HTMLInputElement).files || []),
-            ];
-          }}
-        /><small class="field-hint"
-          >{desk.noteFiles.length
-            ? `已选择 ${desk.noteFiles.length} 个文件：${desk.noteFiles.map((file: File) => file.name).join("、")}`
-            : "可选择发票、付款截图等文件，当前不会上传文件内容。"}</small
-        ></label
-      >
+      <label>客户 <em>*</em><select bind:value={desk.customerId} onchange={desk.onCustomerChange} required><option value="">请选择客户</option>{#each desk.customers as c}<option value={c.id}>{c.name}</option>{/each}</select></label>
+      <label>项目 <em>*</em><select bind:value={desk.projectId} required disabled={!desk.customerId}><option value="">请选择项目</option>{#each desk.filteredProjects as p}<option value={p.id}>{p.name} · {p.owner || "未分配"}</option>{/each}</select></label>
+      <div class="full inline-create"><span>没有找到对应项目？</span><button type="button" onclick={() => desk.showProjectForm = true}><Plus size={14}/>新建项目</button></div>
+      <label>联系人 / 下单人<input bind:value={desk.contact} placeholder="客户联系人" /></label>
+      <label>订单日期<input type="date" bind:value={desk.orderDate} required /></label>
+      <label>交货日期<input type="date" bind:value={desk.deliveryDate} /></label>
+      <label>订单状态<select bind:value={desk.status}><option>制作中</option><option>待确认</option><option>已完成</option></select></label>
+      <label>录入人<input bind:value={desk.createdBy} placeholder="请设置填写人" /></label>
+      <label>结款状态<select bind:value={desk.paymentStatus}><option>未结款</option><option>已结款</option></select></label>
     </div>
-    <div class="form-footer">
-      <span>提交报销的订单会在订单总览标记“需报销”，并同步到报销核验。</span>
-      <div class="submit-dropdown" class:open={desk.submitMenuOpen}>
-        <div class="submit-group">
-          <button
-            type="submit"
-            class="primary-action"
-            disabled={desk.busy || !desk.projectId}
-            >{desk.busy
-              ? "保存中..."
-              : desk.submitMode === "reimburse"
-                ? "提交报销"
-                : "保存订单"}</button
-          ><button
-            type="button"
-            class="submit-caret"
-            aria-label="选择订单提交方式"
-            aria-haspopup="menu"
-            aria-expanded={desk.submitMenuOpen}
-            onclick={(event) => {
-              event.stopPropagation();
-              desk.submitMenuOpen = !desk.submitMenuOpen;
-            }}><span></span></button
-          >
-        </div>
-        {#if desk.submitMenuOpen}<div class="submit-menu" role="menu">
-            <button
-              type="button"
-              role="menuitem"
-              onclick={() => {
-                desk.submitMode = "save";
-                desk.closeSubmitMenu();
-              }}>保存订单</button
-            ><button
-              type="button"
-              role="menuitem"
-              onclick={() => {
-                desk.submitMode = "reimburse";
-                desk.closeSubmitMenu();
-              }}>提交报销</button
-            >
-          </div>{/if}
-      </div>
+
+    <div class="detail-editor"><div class="editor-heading"><h3>产品明细</h3><button type="button" class="outline-action" onclick={desk.addProduct}><Plus size={15}/>添加产品</button></div>
+      {#each desk.products as product, i}
+        <div class="repeat-row editor-row"><div class="autocomplete-field"><input value={product.name} oninput={(e) => desk.updateProduct(i, 'name', e.currentTarget.value)} placeholder="输入名称，选择报价库产品" required />{#if product.name && productMatches(product.name).length}<div class="suggestion-menu">{#each productMatches(product.name) as item}<button type="button" onclick={() => desk.applyProductCatalog(i, item.name)}><span>{item.name}</span><small>{item.unit} · ¥{(item.quote_unit / 100).toFixed(2)} · {item.category || "报价库"}</small></button>{/each}</div>{/if}</div><input value={product.unit} oninput={(e) => desk.updateProduct(i, 'unit', e.currentTarget.value)} placeholder="单位" /><input type="number" min="0.01" value={product.quantity} oninput={(e) => desk.updateProduct(i, 'quantity', e.currentTarget.value)} placeholder="数量" /><input type="number" min="0" step="0.01" value={product.unit_price} oninput={(e) => desk.updateProduct(i, 'unit_price', e.currentTarget.value)} placeholder="销售单价" /><input readonly value={productTotal(product)} placeholder="小计" /><button type="button" class="delete-action" onclick={() => desk.removeProduct(i)} aria-label="删除产品"><Trash2 size={15}/></button><textarea value={product.specification || ''} oninput={(e) => desk.updateProduct(i, 'specification', e.currentTarget.value)} placeholder="规格及制作要求"></textarea></div>
+      {:else}<p class="empty-table">请添加至少一项产品</p>{/each}
     </div>
+    <div class="detail-editor"><div class="editor-heading"><h3>固定厂商成本</h3><button type="button" class="outline-action" onclick={desk.addCost}><Plus size={15}/>添加成本项目</button></div>
+      {#each desk.costs as cost, i}<div class="repeat-row editor-row"><div class="autocomplete-field"><input value={cost.name} oninput={(e) => desk.updateCost(i, 'name', e.currentTarget.value)} placeholder="输入名称，选择成本库项目" />{#if cost.name && costMatches(cost.name).length}<div class="suggestion-menu">{#each costMatches(cost.name) as item}<button type="button" onclick={() => desk.applyCostCatalog(i, item.name)}><span>{item.name}</span><small>{item.unit} · ¥{(item.cost_unit / 100).toFixed(2)} · 成本库</small></button>{/each}</div>{/if}</div><input value={cost.vendor} oninput={(e) => desk.updateCost(i, 'vendor', e.currentTarget.value)} placeholder="供应商" /><input type="number" min="0.01" value={cost.quantity} oninput={(e) => desk.updateCost(i, 'quantity', e.currentTarget.value)} placeholder="数量" /><input type="number" min="0" step="0.01" value={cost.unit_price} oninput={(e) => desk.updateCost(i, 'unit_price', e.currentTarget.value)} placeholder="成本单价" /><input readonly value={costTotal(cost)} placeholder="小计" /><button type="button" class="delete-action" onclick={() => desk.removeCost(i)} aria-label="删除成本"><Trash2 size={15}/></button></div>{/each}
+    </div>
+    <div class="detail-editor"><div class="editor-heading"><h3>员工垫付 / 发票</h3><button type="button" class="outline-action" onclick={desk.addAdvance}><Plus size={15}/>添加垫付</button></div>
+      {#each desk.advances as advance, i}<div class="repeat-row editor-row"><input value={advance.item} oninput={(e) => desk.updateAdvance(i, 'item', e.currentTarget.value)} placeholder="垫付物品" /><input type="number" min="0" step="0.01" value={advance.amount} oninput={(e) => desk.updateAdvance(i, 'amount', e.currentTarget.value)} placeholder="金额" /><input type="date" value={advance.date} oninput={(e) => desk.updateAdvance(i, 'date', e.currentTarget.value)} /><input value={advance.invoice} oninput={(e) => desk.updateAdvance(i, 'invoice', e.currentTarget.value)} placeholder="发票文件名" /><span class="field-hint">待审核</span><button type="button" class="delete-action" onclick={() => desk.removeAdvance(i)} aria-label="删除垫付"><Trash2 size={15}/></button></div>{/each}
+    </div>
+    <datalist id="catalog-names">{#each desk.catalog.filter((item: any) => item.quote_unit > 0) as item}<option value={item.name}>{item.category}</option>{/each}</datalist>
+    <datalist id="cost-names">{#each desk.catalog.filter((item: any) => item.cost_unit > 0) as item}<option value={item.name}>{item.category}</option>{/each}</datalist>
+    <div class="form-grid"><label class="full">备注 / 制作要求<textarea bind:value={desk.note} placeholder="补充交付说明、来源或其他需要留痕的信息"></textarea></label></div>
+    <div class="form-footer"><span>含员工垫付的订单会自动进入报销核验。</span><div class="submit-dropdown"><button class="primary-action" disabled={desk.busy || !desk.projectId}>{desk.busy ? "保存中..." : "保存订单"}</button></div></div>
   </form>
 </section>

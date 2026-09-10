@@ -21,6 +21,9 @@ import { api } from "$lib/api";
     specification?: string;
     customer_name?: string;
     project_name?: string;
+    source_type?: string;
+    supplier_remark?: string;
+    raw_data?: string;
   };
   type Order = {
     id: string;
@@ -79,6 +82,15 @@ export function createOrderDesk(data: Data) {
   let createdBy = $state("");
   let note = $state("");
   let noteFiles = $state<File[]>([]);
+  let deliveryDate = $state("");
+  let contact = $state("");
+  let paymentStatus = $state("未结款");
+  let status = $state("制作中");
+  let products = $state<Array<Record<string, any>>>([]);
+  let costs = $state<Array<Record<string, any>>>([]);
+  let advances = $state<Array<Record<string, any>>>([]);
+  let editingOrderId = $state("");
+  let detailOrder = $state<any>(null);
   const creatorNameStorageKey = "orbit-oa-creator-name";
   let creatorName = $state("");
   let creatorNameDraft = $state("");
@@ -352,20 +364,10 @@ export function createOrderDesk(data: Data) {
     event.preventDefault();
     busy = true;
     try {
-      const result = await api.post<{ data: Order }>("/api/orders", {
-        project_id: projectId,
-        catalog_id: catalogId,
-        service_name: serviceName,
-        quantity,
-        unit,
-        quote_amount: quoteAmount,
-        cost_amount: costAmount,
-        order_date: orderDate,
-        created_by: createdBy,
-        note,
-        specification,
-        submit_reimbursement: submitMode === "reimburse",
-      });
+      const payload = { project_id: projectId, catalog_id: catalogId, service_name: serviceName, quantity, unit, quote_amount: quoteAmount, cost_amount: costAmount, order_date: orderDate, delivery_date: deliveryDate, contact, payment_status: paymentStatus, status, created_by: createdBy, note, specification, products, costs, advances, submit_reimbursement: submitMode === "reimburse" };
+      const result = editingOrderId
+        ? await api.patch<{ data: Order }>(`/api/orders/${editingOrderId}`, payload)
+        : await api.post<{ data: Order }>("/api/orders", payload);
       for (const file of noteFiles)
         await fetch(`/api/orders/${result.data.id}/attachments`, {
           method: "POST",
@@ -378,11 +380,16 @@ export function createOrderDesk(data: Data) {
         });
       await refresh();
       notify(
-        submitMode === "reimburse"
+        submitMode === "reimburse" || advances.length
           ? "订单已提交报销，已进入报销核验"
-          : "订单已保存",
+          : editingOrderId ? "订单已更新" : "订单已保存",
       );
       view = "overview";
+      editingOrderId = "";
+      detailOrder = null;
+      products = [];
+      costs = [];
+      advances = [];
       serviceName = "";
       specification = "";
       unitQuote = "";
@@ -393,6 +400,9 @@ export function createOrderDesk(data: Data) {
       catalogId = "";
       noteFiles = [];
       createdBy = creatorName;
+      deliveryDate = "";
+      contact = "";
+      paymentStatus = "未结款";
       submitMode = "save";
       submitMenuOpen = false;
     } catch (e) {
@@ -443,6 +453,71 @@ export function createOrderDesk(data: Data) {
       (event.currentTarget as HTMLInputElement).value = "";
     }
   }
+  function openDetail(order: any) {
+    detailOrder = order;
+  }
+  function editOrder(order: any) {
+    editingOrderId = order.id;
+    customerId = order.customer_id;
+    projectId = order.project_id;
+    serviceName = order.service_name;
+    quantity = Number(order.quantity || 1);
+    unit = order.unit || "项";
+    quoteAmount = (Number(order.quote_amount || 0) / 100).toFixed(2);
+    costAmount = (Number(order.cost_amount || 0) / 100).toFixed(2);
+    orderDate = order.order_date;
+    deliveryDate = order.delivery_date || "";
+    contact = order.contact || "";
+    paymentStatus = order.payment_status || "未结款";
+    status = order.status || "制作中";
+    createdBy = order.created_by || creatorName;
+    specification = order.specification || "";
+    note = order.note || "";
+    products = order.products?.length ? order.products : [{ name: order.service_name, quantity: order.quantity, unit: order.unit, unit_price: Number(order.quote_amount || 0) / 100 / Number(order.quantity || 1), subtotal: Number(order.quote_amount || 0) / 100, specification: order.specification || "" }];
+    costs = order.costs || [];
+    advances = order.advances || [];
+    detailOrder = null;
+    view = "entry";
+  }
+  function addProduct() { products = [...products, { name: "", quantity: 1, unit: "项", unit_price: 0, cost_unit: 0, subtotal: 0, specification: "" }]; }
+  function removeProduct(index: number) { products = products.filter((_, i) => i !== index); }
+  function updateProduct(index: number, key: string, value: unknown) { products[index] = { ...products[index], [key]: value }; products = [...products]; }
+  function findCatalogItem(name: string) {
+    const keyword = name.trim().toLowerCase();
+    if (!keyword) return undefined;
+    const matches = catalog.filter((item) => {
+      const text = item.name.toLowerCase();
+      const customerMatch = !item.customer_name || item.customer_name === selectedCustomer;
+      const projectMatch = !item.project_name || item.project_name === selectedProject;
+      return item.quote_unit > 0 && customerMatch && projectMatch && (text === keyword || text.includes(keyword) || keyword.includes(text));
+    });
+    return matches.sort((a, b) => (a.name.toLowerCase() === keyword ? -1 : 0) - (b.name.toLowerCase() === keyword ? -1 : 0))[0];
+  }
+  function applyProductCatalog(index: number, name: string) {
+    const item = findCatalogItem(name);
+    if (!item) { updateProduct(index, "name", name); return; }
+    products[index] = { ...products[index], name: item.name, unit: item.unit, unit_price: (item.quote_unit / 100).toFixed(2), cost_unit: (item.cost_unit / 100).toFixed(2), specification: item.specification || "", catalog_id: item.id };
+    products = [...products];
+  }
+  function addCost() { costs = [...costs, { name: "", vendor: "手工录入", quantity: 1, unit: "项", unit_price: 0, subtotal: 0 }]; }
+  function removeCost(index: number) { costs = costs.filter((_, i) => i !== index); }
+  function updateCost(index: number, key: string, value: unknown) { costs[index] = { ...costs[index], [key]: value }; costs = [...costs]; }
+  function applyCostCatalog(index: number, name: string) {
+    const keyword = name.trim().toLowerCase();
+    let found: { item: Catalog; vendor: string } | undefined;
+    for (const item of catalog) {
+      const raw = (item.raw_data ? (() => { try { return JSON.parse(item.raw_data as string); } catch { return {}; } })() : {}) as Record<string, unknown>;
+      const vendor = String(raw.vendor || raw.supplier || item.supplier_remark || (item.source_type === "supplier_cost" ? (item as any).source_file?.match(/硕达|印客邦|[^】]+(?=202\d)/)?.[0] || "成本库" : ""));
+      const isCost = item.cost_unit > 0 && (!item.quote_unit || item.source_type === "supplier_cost");
+      if (isCost && (item.name.toLowerCase() === keyword || item.name.toLowerCase().includes(keyword) || keyword.includes(item.name.toLowerCase()))) { found = { item, vendor }; break; }
+    }
+    if (found) { costs[index] = { ...costs[index], name: found.item.name, vendor: found.vendor || "成本库", unit: found.item.unit, unit_price: (found.item.cost_unit / 100).toFixed(2) }; costs = [...costs]; }
+    else updateCost(index, "name", name);
+  }
+  function addAdvance() { advances = [...advances, { item: "", amount: 0, date: orderDate, invoice: "" }]; }
+  function removeAdvance(index: number) { advances = advances.filter((_, i) => i !== index); }
+  function updateAdvance(index: number, key: string, value: unknown) { advances[index] = { ...advances[index], [key]: value }; advances = [...advances]; }
+  function startNewOrder() { editingOrderId = ""; detailOrder = null; products = [{ name: "", quantity: 1, unit: "项", unit_price: 0, cost_unit: 0, subtotal: 0, specification: "" }]; costs = []; advances = []; serviceName = ""; view = "entry"; }
   function toggleOrder(id: string) {
     selectedOrderIds = selectedOrderIds.includes(id)
       ? selectedOrderIds.filter((item) => item !== id)
@@ -522,6 +597,15 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "createdBy", { get: () => createdBy, set: (value) => { createdBy = value; } });
   Object.defineProperty(desk, "note", { get: () => note, set: (value) => { note = value; } });
   Object.defineProperty(desk, "noteFiles", { get: () => noteFiles, set: (value) => { noteFiles = value; } });
+  Object.defineProperty(desk, "deliveryDate", { get: () => deliveryDate, set: (value) => { deliveryDate = value; } });
+  Object.defineProperty(desk, "contact", { get: () => contact, set: (value) => { contact = value; } });
+  Object.defineProperty(desk, "paymentStatus", { get: () => paymentStatus, set: (value) => { paymentStatus = value; } });
+  Object.defineProperty(desk, "status", { get: () => status, set: (value) => { status = value; } });
+  Object.defineProperty(desk, "editingOrderId", { get: () => editingOrderId });
+  Object.defineProperty(desk, "products", { get: () => products, set: (value) => { products = value; } });
+  Object.defineProperty(desk, "costs", { get: () => costs, set: (value) => { costs = value; } });
+  Object.defineProperty(desk, "advances", { get: () => advances, set: (value) => { advances = value; } });
+  Object.defineProperty(desk, "detailOrder", { get: () => detailOrder, set: (value) => { detailOrder = value; } });
   Object.defineProperty(desk, "creatorName", { get: () => creatorName, set: (value) => { creatorName = value; } });
   Object.defineProperty(desk, "creatorNameDraft", { get: () => creatorNameDraft, set: (value) => { creatorNameDraft = value; } });
   Object.defineProperty(desk, "settingsOpen", { get: () => settingsOpen, set: (value) => { settingsOpen = value; } });
@@ -577,6 +661,20 @@ export function createOrderDesk(data: Data) {
   desk.downloadExport = downloadExport;
   desk.toggleColumn = toggleColumn;
   desk.deleteOrder = deleteOrder;
+  desk.openDetail = openDetail;
+  desk.editOrder = editOrder;
+  desk.startNewOrder = startNewOrder;
+  desk.addProduct = addProduct;
+  desk.removeProduct = removeProduct;
+  desk.updateProduct = updateProduct;
+  desk.applyProductCatalog = applyProductCatalog;
+  desk.addCost = addCost;
+  desk.removeCost = removeCost;
+  desk.updateCost = updateCost;
+  desk.applyCostCatalog = applyCostCatalog;
+  desk.addAdvance = addAdvance;
+  desk.removeAdvance = removeAdvance;
+  desk.updateAdvance = updateAdvance;
   desk.closeSubmitMenu = closeSubmitMenu;
   desk.onServiceInput = onServiceInput;
   desk.onCustomerChange = onCustomerChange;

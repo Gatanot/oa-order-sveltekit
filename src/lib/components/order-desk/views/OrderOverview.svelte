@@ -5,6 +5,14 @@
 </script>
 
 <section class="page-section">
+  {#if desk.detailOrder}
+    <div class="detail-card">
+      <div class="section-heading"><div><p class="section-kicker">ORDER DETAIL</p><h2>{desk.detailOrder.code}</h2><span>{desk.detailOrder.customer_name} · {desk.detailOrder.project_name}</span></div><div class="top-actions"><button class="outline-action" onclick={() => desk.detailOrder = null}>返回列表</button><button class="primary-action" onclick={() => desk.editOrder(desk.detailOrder)}>编辑订单</button></div></div>
+      <div class="info-grid"><div><small>联系人</small><b>{desk.detailOrder.contact || "—"}</b></div><div><small>设计 / 负责人</small><b>{desk.detailOrder.project_owner || "—"}</b></div><div><small>下单日期</small><b>{desk.detailOrder.order_date}</b></div><div><small>交货日期</small><b>{desk.detailOrder.delivery_date || "—"}</b></div><div><small>状态</small><b>{desk.detailOrder.status}</b></div><div><small>结款状态</small><b>{desk.detailOrder.payment_status || "未结款"}</b></div><div><small>销售总额</small><b>{desk.money(desk.detailOrder.quote_amount)}</b></div><div><small>制作成本</small><b>{desk.money(desk.detailOrder.cost_amount)}</b></div></div>
+      <h3>产品明细</h3><div class="table-panel"><div class="table-scroll"><table><thead><tr><th>名称</th><th>单位</th><th>数量</th><th>单价</th><th>小计</th><th>制作要求</th></tr></thead><tbody>{#each desk.detailOrder.products as p}<tr><td>{p.name}</td><td>{p.unit}</td><td>{p.quantity}</td><td>{Number(p.unit_price || 0).toFixed(2)}</td><td>{Number(p.subtotal || Number(p.quantity || 0) * Number(p.unit_price || 0)).toFixed(2)}</td><td>{p.specification || "—"}</td></tr>{/each}</tbody></table></div></div>
+      {#if desk.detailOrder.costs?.length}<h3>固定成本</h3><div class="table-panel"><div class="table-scroll"><table><thead><tr><th>项目</th><th>供应商</th><th>数量</th><th>单价</th><th>小计</th></tr></thead><tbody>{#each desk.detailOrder.costs as c}<tr><td>{c.name}</td><td>{c.vendor}</td><td>{c.quantity}</td><td>{c.unit_price}</td><td>{c.subtotal || Number(c.quantity || 0) * Number(c.unit_price || 0)}</td></tr>{/each}</tbody></table></div></div>{/if}
+    </div>
+  {:else}
   <div class="section-heading">
     <div>
       <p class="section-kicker">OPERATIONS</p>
@@ -91,8 +99,7 @@
             ><th>操作</th></tr
           ></thead
         ><tbody
-          >{#each desk.filteredOrders as order}<tr
-              ><td
+          >{#each desk.filteredOrders as order}<tr class="order-click-row" onclick={() => desk.openDetail(order)}><td
                 ><input
                   type="checkbox"
                   aria-label={`选择导出 ${order.service_name}`}
@@ -121,7 +128,7 @@
                   title="删除订单"
                   aria-label={`删除订单 ${order.service_name}`}
                   disabled={desk.busy}
-                  onclick={() => desk.deleteOrder(order)}
+                  onclick={(event) => { event.stopPropagation(); desk.deleteOrder(order); }}
                   ><Trash2 size={15} /></button
                 ></td
               ></tr
@@ -136,4 +143,5 @@
       </table>
     </div>
   </div>
+  {/if}
 </section>
