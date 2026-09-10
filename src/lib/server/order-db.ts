@@ -12,6 +12,17 @@ let instance: Database.Database | undefined;
 const now = () => new Date().toISOString();
 export const uuid = () => randomUUID();
 
+/** 把乘积四舍五入到分，避免浮点误差（如 454×17.4 = 7899.599999999999）。 */
+function lineTotalYuan(item: Record<string, unknown>): number {
+  return Math.round(Number(item.quantity || 0) * Number(item.unit_price || 0) * 100) / 100;
+}
+
+/** 明细为空时的回退解析：空/缺省金额视为 0，非法值仍然报错。 */
+function optionalMoneyToCents(value: unknown): number {
+  if (value === '' || value === null || value === undefined) return 0;
+  return moneyToCents(value);
+}
+
 export function moneyToCents(value: unknown): number {
   if (value === '' || value === null || value === undefined || typeof value === 'boolean') throw new Error('金额格式不正确');
   const raw = String(value).trim();
@@ -228,8 +239,8 @@ export function createOrder(data: Record<string, unknown>) {
   const code = `ORD-${date.replaceAll('-', '')}-${id.slice(0, 6).toUpperCase()}`;
   const catalogId = data.catalog_id ? String(data.catalog_id) : null;
   const reimbursementStatus = advances.length || data.submit_reimbursement ? '待核验' : '无需报销';
-  const quoteCents = products.length ? products.reduce((sum, item) => sum + moneyToCents(Number(item.quantity || 0) * Number(item.unit_price || 0)), 0) : moneyToCents(data.quote_amount);
-  const costCents = costs.length ? costs.reduce((sum, item) => sum + moneyToCents(Number(item.quantity || 0) * Number(item.unit_price || 0)), 0) : moneyToCents(data.cost_amount);
+  const quoteCents = products.length ? products.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0) : optionalMoneyToCents(data.quote_amount);
+  const costCents = costs.length ? costs.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0) : optionalMoneyToCents(data.cost_amount);
   db.prepare('INSERT INTO orders_simple(id,code,customer_id,project_id,catalog_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,created_by,status,note,created_at,specification,is_extra,reimbursement_status,delivery_date,contact,payment_status,products_json,costs_json,advances_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id, code, project.customer_id, projectId, catalogId, serviceName, quantity, String(data.unit || products[0]?.unit || '项'), quoteCents, costCents, date, String(data.created_by || '当前用户'), String(data.status || '制作中'), String(data.note || '').trim(), created, text(data.specification || products[0]?.specification), data.is_extra ? 1 : 0, reimbursementStatus, text(data.delivery_date), text(data.contact), text(data.payment_status) || '未结款', JSON.stringify(products), JSON.stringify(costs), JSON.stringify(advances));
   return hydrateOrder(db.prepare('SELECT * FROM orders_simple WHERE id=?').get(id) as Record<string, unknown>);
 }
@@ -241,8 +252,8 @@ export function updateOrder(id: string, data: Record<string, unknown>) {
   const products = Array.isArray(data.products) ? data.products as Array<Record<string, unknown>> : parseList(existing.products_json);
   const costs = Array.isArray(data.costs) ? data.costs as Array<Record<string, unknown>> : parseList(existing.costs_json);
   const advances = Array.isArray(data.advances) ? data.advances as Array<Record<string, unknown>> : parseList(existing.advances_json);
-  const quote = products.reduce((sum, item) => sum + moneyToCents(Number(item.quantity || 0) * Number(item.unit_price || 0)), 0);
-  const cost = costs.reduce((sum, item) => sum + moneyToCents(Number(item.quantity || 0) * Number(item.unit_price || 0)), 0);
+  const quote = products.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0);
+  const cost = costs.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0);
   const service = products.map((item) => text(item.name)).filter(Boolean).join('、') || text(data.service_name) || String(existing.service_name);
   const targetProject = text(data.project_id || existing.project_id);
   db.prepare(`UPDATE orders_simple SET project_id=?,customer_id=(SELECT customer_id FROM projects_simple WHERE id=?),service_name=?,quantity=?,unit=?,quote_amount=?,cost_amount=?,order_date=?,delivery_date=?,contact=?,created_by=?,status=?,payment_status=?,note=?,specification=?,products_json=?,costs_json=?,advances_json=?,reimbursement_status=? WHERE id=?`).run(targetProject, targetProject, service, Number(products[0]?.quantity || existing.quantity), text(products[0]?.unit || existing.unit), quote, cost, text(data.order_date || existing.order_date), text(data.delivery_date), text(data.contact), text(data.created_by || existing.created_by), text(data.status || existing.status), text(data.payment_status || existing.payment_status), text(data.note), text(products[0]?.specification || existing.specification), JSON.stringify(products), JSON.stringify(costs), JSON.stringify(advances), advances.length ? (text(data.reimbursement_status) || '待核验') : '无需报销', id);
