@@ -44,6 +44,10 @@ button {
 }
 
 .order-sidebar {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
     width: 208px;
     min-width: 208px;
     background: var(--nav);
@@ -666,15 +670,18 @@ button {
 .editor-row { grid-template-columns: 2fr 1fr 90px 110px 110px 38px; }
 .editor-row textarea { grid-column: 1 / -1; min-height: 54px; }
 .repeat-header {
+    display: grid;
+    grid-template-columns: minmax(260px, 2.4fr) minmax(80px, .8fr) minmax(80px, .8fr) minmax(110px, 1fr) minmax(110px, 1fr) 38px;
+    gap: 9px;
+    align-items: center;
     color: var(--muted);
     font-size: 10px;
     font-weight: 600;
     letter-spacing: .02em;
-    margin-bottom: 4px;
+    margin: 10px 0 2px;
 }
 .repeat-header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .repeat-header textarea { display: none; }
-.repeat-header + .repeat-row { margin-top: 2px; }
 .detail-card { background: #fff; border: 1px solid var(--line); border-radius: 7px; padding: 23px; box-shadow: var(--shadow); }
 .table-panel {
     background: #fff;
