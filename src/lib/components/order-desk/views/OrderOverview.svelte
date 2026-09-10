@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getContext } from "svelte";
-  import { ListFilter, Search, Trash2 } from "lucide-svelte";
+  import { ListFilter, Paperclip, Search, Trash2 } from "lucide-svelte";
   const desk = getContext<any>("order-desk");
 </script>
 
@@ -11,6 +11,18 @@
       <div class="info-grid"><div><small>联系人</small><b>{desk.detailOrder.contact || "—"}</b></div><div><small>设计 / 负责人</small><b>{desk.detailOrder.project_owner || "—"}</b></div><div><small>下单日期</small><b>{desk.detailOrder.order_date}</b></div><div><small>交货日期</small><b>{desk.detailOrder.delivery_date || "—"}</b></div><div><small>状态</small><b>{desk.detailOrder.status}</b></div><div><small>结款状态</small><b>{desk.detailOrder.payment_status || "未结款"}</b></div><div><small>销售总额</small><b>{desk.money(desk.detailOrder.quote_amount)}</b></div><div><small>制作成本</small><b>{desk.money(desk.detailOrder.cost_amount)}</b></div></div>
       <h3>产品明细</h3><div class="table-panel"><div class="table-scroll"><table><thead><tr><th>名称</th><th>单位</th><th>数量</th><th>单价</th><th>小计</th><th>制作要求</th></tr></thead><tbody>{#each desk.detailOrder.products as p}<tr><td>{p.name}</td><td>{p.unit}</td><td>{p.quantity}</td><td>{Number(p.unit_price || 0).toFixed(2)}</td><td>{Number(p.subtotal || Number(p.quantity || 0) * Number(p.unit_price || 0)).toFixed(2)}</td><td>{p.specification || "—"}</td></tr>{/each}</tbody></table></div></div>
       {#if desk.detailOrder.costs?.length}<h3>固定成本</h3><div class="table-panel"><div class="table-scroll"><table><thead><tr><th>项目</th><th>供应商</th><th>数量</th><th>单价</th><th>小计</th></tr></thead><tbody>{#each desk.detailOrder.costs as c}<tr><td>{c.name}</td><td>{c.vendor}</td><td>{c.quantity}</td><td>{c.unit_price}</td><td>{c.subtotal || Number(c.quantity || 0) * Number(c.unit_price || 0)}</td></tr>{/each}</tbody></table></div></div>{/if}
+      <h3>备注附件</h3>
+      {#if desk.detailAttachmentsLoading}<p class="empty-table">附件加载中...</p>
+      {:else if desk.detailAttachments.length}
+        <ul class="attachment-list">{#each desk.detailAttachments as file}<li>
+            <a class="attachment-link" href={desk.attachmentUrl(file.id)} target="_blank" rel="noreferrer" title="在新窗口查看附件">
+              <Paperclip size={14} />
+              <span class="attachment-name">{file.file_name}</span>
+              <small>{file.mime_type === "application/pdf" ? "PDF" : "图片"} · {desk.formatFileSize(file.file_size)}</small>
+            </a>
+            <span class="attachment-date">{file.created_at?.slice(0, 10)}</span>
+          </li>{/each}</ul>
+      {:else}<p class="empty-table">本订单暂无附件。</p>{/if}
     </div>
   {:else}
   <div class="section-heading">

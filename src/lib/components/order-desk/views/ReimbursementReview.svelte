@@ -2,6 +2,23 @@
   import { getContext } from "svelte";
   import { Paperclip } from "lucide-svelte";
   const desk = getContext<any>("order-desk");
+
+  let attachmentsByOrder = $state<Record<string, Array<any>>>({});
+  async function showAttachments(item: any) {
+    const orderId = item.id;
+    if (attachmentsByOrder[orderId]) {
+      const next = { ...attachmentsByOrder };
+      delete next[orderId];
+      attachmentsByOrder = next;
+      return;
+    }
+    try {
+      const files = await desk.fetchAttachments(orderId);
+      attachmentsByOrder = { ...attachmentsByOrder, [orderId]: files };
+    } catch {
+      attachmentsByOrder = { ...attachmentsByOrder, [orderId]: [] };
+    }
+  }
 </script>
 
 <section class="page-section">
@@ -56,10 +73,13 @@
               ><td>{item.order_date}</td><td>{item.service_name}</td><td
                 class="money">{desk.money(item.cost_amount)}</td
               ><td
-                ><Paperclip size={14} />
-                {item.attachment_count
-                  ? `${item.attachment_count} 个`
-                  : "未上传"}</td
+                >{#if item.attachment_count}<button
+                    class="attachment-toggle"
+                    title="展开附件列表"
+                    onclick={() => showAttachments(item)}
+                    ><Paperclip size={14} />{item.attachment_count} 个</button
+                  >{:else}<span class="muted attachment-none"><Paperclip size={14} /> 未上传</span
+                  >{/if}</td
               ><td
                 ><span class="status-dot">{item.reimbursement_status}</span></td
               ><td
@@ -73,7 +93,22 @@
                     >标记已报销</button
                   >{:else}<span class="muted">已完成</span>{/if}</td
               ></tr
-            >{:else}<tr
+            >{#if attachmentsByOrder[item.id]?.length}<tr class="attachment-row"
+                ><td colspan="8"
+                  ><ul class="attachment-list">{#each attachmentsByOrder[item.id] as file}<li>
+                        <a
+                          class="attachment-link"
+                          href={desk.attachmentUrl(file.id)}
+                          target="_blank"
+                          rel="noreferrer"
+                          title="在新窗口查看附件"
+                          ><Paperclip size={13} />
+                          <span class="attachment-name">{file.file_name}</span>
+                          <small>{file.mime_type === "application/pdf" ? "PDF" : "图片"} · {desk.formatFileSize(file.file_size)}</small>
+                        </a>
+                      </li>{/each}</ul></td
+                ></tr
+              >{/if}{:else}<tr
               ><td colspan="8"
                 ><div class="empty-table">暂无需要报销核验的订单。</div></td
               ></tr

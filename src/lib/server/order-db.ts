@@ -1,12 +1,12 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname, resolve, join, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import * as XLSX from 'xlsx';
 
 export const databasePath = resolve(process.env.DATABASE_PATH || './data/oa.db');
+export const attachmentDir = resolve(dirname(databasePath), 'attachments');
 let instance: Database.Database | undefined;
 
 const now = () => new Date().toISOString();
@@ -35,7 +35,7 @@ function migrate(db: Database.Database) {
       CREATE TABLE projects_simple(id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, name TEXT NOT NULL, owner TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '进行中', created_at TEXT NOT NULL, UNIQUE(customer_id, name), FOREIGN KEY(customer_id) REFERENCES customers_simple(id) ON DELETE CASCADE);
       CREATE TABLE catalog_items(id TEXT PRIMARY KEY, category TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, unit TEXT NOT NULL DEFAULT '项', quote_unit INTEGER NOT NULL DEFAULT 0, cost_unit INTEGER NOT NULL DEFAULT 0, customer_name TEXT NOT NULL DEFAULT '', project_name TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, source_file TEXT NOT NULL DEFAULT '', source_sheet TEXT NOT NULL DEFAULT '', source_type TEXT NOT NULL DEFAULT 'manual', item_no TEXT NOT NULL DEFAULT '', specification TEXT NOT NULL DEFAULT '', estimated_quantity TEXT NOT NULL DEFAULT '', max_quote_unit INTEGER NOT NULL DEFAULT 0, supplier_remark TEXT NOT NULL DEFAULT '', raw_data TEXT NOT NULL DEFAULT '{}', UNIQUE(category, name, customer_name, project_name));
       CREATE TABLE orders_simple(id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, customer_id TEXT NOT NULL, project_id TEXT NOT NULL, catalog_id TEXT, service_name TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 1, unit TEXT NOT NULL DEFAULT '项', quote_amount INTEGER NOT NULL DEFAULT 0, cost_amount INTEGER NOT NULL DEFAULT 0, order_date TEXT NOT NULL, created_by TEXT NOT NULL, status TEXT NOT NULL DEFAULT '待处理', note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, specification TEXT NOT NULL DEFAULT '', is_extra INTEGER NOT NULL DEFAULT 0, reimbursement_status TEXT NOT NULL DEFAULT '无需报销' CHECK(reimbursement_status IN ('无需报销','待核验','待报销','已报销')), reimbursed_by TEXT NOT NULL DEFAULT '', reimbursed_at TEXT, FOREIGN KEY(customer_id) REFERENCES customers_simple(id), FOREIGN KEY(project_id) REFERENCES projects_simple(id), FOREIGN KEY(catalog_id) REFERENCES catalog_items(id));
-      CREATE TABLE order_attachments(id TEXT PRIMARY KEY, order_id TEXT NOT NULL, file_name TEXT NOT NULL, mime_type TEXT NOT NULL DEFAULT '', file_size INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE);
+      CREATE TABLE order_attachments(id TEXT PRIMARY KEY, order_id TEXT NOT NULL, file_name TEXT NOT NULL, mime_type TEXT NOT NULL DEFAULT '', file_size INTEGER NOT NULL DEFAULT 0, storage_path TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE);
       CREATE INDEX idx_simple_orders_date ON orders_simple(order_date DESC);
       CREATE INDEX idx_simple_orders_customer ON orders_simple(customer_id, project_id);
       CREATE TABLE IF NOT EXISTS schema_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -86,6 +86,8 @@ export function getOrderDb() {
     };
     for (const [name, type] of Object.entries(additions)) if (!catalogFields.some((field) => field.name === name)) instance.exec(`ALTER TABLE catalog_items ADD COLUMN ${name} ${type}`);
     instance.exec('CREATE UNIQUE INDEX IF NOT EXISTS uq_catalog_source_row ON catalog_items(source_file, source_sheet, item_no, name, specification)');
+    const attachmentFields = instance.prepare('PRAGMA table_info(order_attachments)').all() as Array<{ name: string }>;
+    if (!attachmentFields.some((field) => field.name === 'storage_path')) instance.exec("ALTER TABLE order_attachments ADD COLUMN storage_path TEXT NOT NULL DEFAULT ''");
     importBundledExcel(instance);
   }
   return instance;
@@ -248,8 +250,11 @@ export function updateOrder(id: string, data: Record<string, unknown>) {
 }
 
 export function deleteOrder(id: string) {
-  const result = getOrderDb().prepare('DELETE FROM orders_simple WHERE id=?').run(id);
+  const db = getOrderDb();
+  const files = db.prepare('SELECT storage_path FROM order_attachments WHERE order_id=?').all(id) as Array<{ storage_path: string }>;
+  const result = db.prepare('DELETE FROM orders_simple WHERE id=?').run(id);
   if (!result.changes) throw new Error('ORDER_NOT_FOUND');
+  for (const file of files) removeAttachmentFile(file.storage_path);
 }
 
 export function listReimbursementOrders(filters: Record<string, string> = {}) {
@@ -276,15 +281,56 @@ export function updateReimbursement(id: string, status: string, actor: string) {
   return db.prepare('SELECT * FROM orders_simple WHERE id=?').get(id);
 }
 
-export function listOrderAttachments(orderId: string) { return getOrderDb().prepare('SELECT * FROM order_attachments WHERE order_id=? ORDER BY created_at DESC').all(orderId); }
+export const maxAttachmentSize = 10 * 1024 * 1024;
 
-export function addOrderAttachment(orderId: string, data: { fileName: string; mimeType?: string; fileSize?: number }) {
+/** 图片与 PDF 文件的魔数特征，用于确认上传内容真实可信。 */
+function detectAttachmentMime(data: Buffer): string {
+  if (data.length >= 5 && data.subarray(0, 5).toString('latin1') === '%PDF-') return 'application/pdf';
+  if (data.length >= 4 && data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4e && data[3] === 0x47) return 'image/png';
+  if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) return 'image/jpeg';
+  if (data.length >= 3 && data.subarray(0, 3).toString('latin1') === 'GIF') return 'image/gif';
+  if (data.length >= 12 && data.subarray(0, 4).toString('latin1') === 'RIFF' && data.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
+  return '';
+}
+
+export function listOrderAttachments(orderId: string) {
+  return getOrderDb().prepare('SELECT id,order_id,file_name,mime_type,file_size,created_at FROM order_attachments WHERE order_id=? ORDER BY created_at DESC').all(orderId);
+}
+
+export function getOrderAttachment(attachmentId: string) {
+  return getOrderDb().prepare('SELECT id,order_id,file_name,mime_type,file_size,storage_path,created_at FROM order_attachments WHERE id=?').get(attachmentId);
+}
+
+export function readAttachmentFile(row: { storage_path: string }): Buffer {
+  if (!row.storage_path) throw new Error('ATTACHMENT_FILE_MISSING');
+  const path = resolve(attachmentDir, row.storage_path);
+  if (!path.startsWith(attachmentDir + sep) || !existsSync(path)) throw new Error('ATTACHMENT_FILE_MISSING');
+  return readFileSync(path);
+}
+
+function removeAttachmentFile(storagePath: string) {
+  if (!storagePath) return;
+  const path = resolve(attachmentDir, storagePath);
+  if (!path.startsWith(attachmentDir + sep) || !existsSync(path)) return;
+  try { unlinkSync(path); } catch { /* 忽略清理失败，不影响主流程 */ }
+}
+
+export function addOrderAttachment(orderId: string, file: { name: string; data: Buffer }) {
   const db = getOrderDb();
-  const order = db.prepare('SELECT id FROM orders_simple WHERE id=? OR code=?').get(orderId, orderId);
+  const order = db.prepare('SELECT id FROM orders_simple WHERE id=? OR code=?').get(orderId, orderId) as { id: string } | undefined;
   if (!order) throw new Error('ORDER_NOT_FOUND');
+  if (!file.data?.length) throw new Error('附件内容为空');
+  if (file.data.length > maxAttachmentSize) throw new Error('单个附件不能超过 10MB');
+  const mime = detectAttachmentMime(file.data);
+  if (!mime) throw new Error('仅支持上传图片（PNG/JPG/GIF/WebP）或 PDF 文件');
   const id = uuid();
-  db.prepare('INSERT INTO order_attachments(id,order_id,file_name,mime_type,file_size,created_at) VALUES(?,?,?,?,?,?)').run(id, (order as { id: string }).id, data.fileName, data.mimeType || '', data.fileSize || 0, now());
-  return db.prepare('SELECT * FROM order_attachments WHERE id=?').get(id);
+  const safeName = (file.name || '附件').replace(/[\\/:*?"<>|\r\n\t]+/g, '_').trim().slice(-120) || '附件';
+  const extension = mime === 'application/pdf' ? '.pdf' : `.${mime.split('/')[1].replace('jpeg', 'jpg')}`;
+  const storagePath = join(order.id, `${id}${extension}`);
+  mkdirSync(join(attachmentDir, order.id), { recursive: true });
+  writeFileSync(join(attachmentDir, storagePath), file.data);
+  db.prepare('INSERT INTO order_attachments(id,order_id,file_name,mime_type,file_size,created_at,storage_path) VALUES(?,?,?,?,?,?,?)').run(id, order.id, safeName, mime, file.data.length, now(), storagePath);
+  return db.prepare('SELECT id,order_id,file_name,mime_type,file_size,created_at FROM order_attachments WHERE id=?').get(id);
 }
 
 export function importCatalog(rows: Array<Record<string, unknown>>) {

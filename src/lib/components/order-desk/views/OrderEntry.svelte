@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Plus, Trash2 } from "lucide-svelte";
+  import { FileText, Paperclip, Plus, Trash2, X } from "lucide-svelte";
   import { getContext } from "svelte";
   const desk = getContext<any>("order-desk");
   function productTotal(p: any) { return (Number(p.quantity || 0) * Number(p.unit_price || 0)).toFixed(2); }
@@ -44,7 +44,18 @@
     </div>
     <datalist id="catalog-names">{#each desk.catalog.filter((item: any) => item.quote_unit > 0) as item}<option value={item.name}>{item.category}</option>{/each}</datalist>
     <datalist id="cost-names">{#each desk.catalog.filter((item: any) => item.cost_unit > 0) as item}<option value={item.name}>{item.category}</option>{/each}</datalist>
-    <div class="form-grid"><label class="full">备注 / 制作要求<textarea bind:value={desk.note} placeholder="补充交付说明、来源或其他需要留痕的信息"></textarea></label></div>
+    <div class="form-grid"><label class="full">备注 / 制作要求<textarea bind:value={desk.note} placeholder="补充交付说明、来源或其他需要留痕的信息"></textarea></label>
+      <div class="full upload-field">
+        <span class="upload-label">备注附件 <small class="optional-mark">支持图片和 PDF，单个不超过 10MB</small></span>
+        <div class="upload-row">
+          <label class="upload-action"><Paperclip size={14}/>选择文件<input type="file" accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,.pdf" multiple disabled={desk.uploadingFiles} onchange={desk.onNoteFilesChange} /></label>
+          <span class="field-hint">{desk.noteFiles.length ? `已选择 ${desk.noteFiles.length} 个文件，保存订单时上传` : "可选择发票、付款截图等文件"}</span>
+        </div>
+        {#if desk.noteFiles.length}
+          <ul class="upload-list">{#each desk.noteFiles as file, i}<li><a class="upload-name" href={URL.createObjectURL(file)} target="_blank" rel="noreferrer" title="在新窗口预览"><FileText size={13}/>{file.name}</a><small>{desk.formatFileSize(file.size)}</small><button type="button" class="upload-remove" aria-label={`移除 ${file.name}`} onclick={() => desk.removeNoteFile(i)}><X size={13}/></button></li>{/each}</ul>
+        {/if}
+      </div>
+    </div>
     <div class="form-footer"><span>含员工垫付的订单会自动进入报销核验。</span><div class="submit-dropdown"><button class="primary-action" disabled={desk.busy || !desk.projectId}>{desk.busy ? "保存中..." : "保存订单"}</button></div></div>
   </form>
 </section>

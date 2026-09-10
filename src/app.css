@@ -1497,3 +1497,168 @@ td small {
         font-size: 23px
     }
 }
+/* ---- 附件上传与查看 ---- */
+.optional-mark {
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 400;
+    margin-left: 5px
+}
+
+.upload-field {
+    border: 1px dashed #c5ded7;
+    border-radius: 6px;
+    padding: 13px 14px;
+    background: #fafdfc
+}
+
+.upload-label {
+    display: block;
+    color: var(--muted);
+    font-size: 11px
+}
+
+.upload-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 9px;
+    flex-wrap: wrap
+}
+
+.upload-list {
+    list-style: none;
+    margin: 10px 0 0;
+    padding: 0;
+    display: grid;
+    gap: 6px
+}
+
+.upload-list li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 7px 10px;
+    font-size: 12px
+}
+
+.upload-list small {
+    color: var(--muted);
+    font-size: 10px
+}
+
+.upload-name {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--ink);
+    text-decoration: none;
+    font-weight: 600;
+    max-width: 420px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap
+}
+
+.upload-name:hover {
+    color: var(--teal)
+}
+
+.upload-remove {
+    margin-left: auto;
+    border: 0;
+    background: none;
+    color: var(--muted);
+    cursor: pointer;
+    display: inline-flex;
+    padding: 3px;
+    border-radius: 4px
+}
+
+.upload-remove:hover {
+    color: #c0392b;
+    background: #fdeeec
+}
+
+.attachment-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border: 1px solid var(--teal);
+    background: none;
+    color: var(--teal);
+    border-radius: 5px;
+    padding: 4px 9px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer
+}
+
+.attachment-toggle:hover {
+    background: var(--teal-soft)
+}
+
+.attachment-none {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px
+}
+
+.attachment-row>td {
+    background: #f7fbfa
+}
+
+.attachment-list {
+    list-style: none;
+    margin: 0;
+    padding: 4px 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px
+}
+
+.attachment-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    border: 1px solid #cbe8df;
+    background: #fff;
+    border-radius: 5px;
+    padding: 7px 11px;
+    color: var(--teal);
+    text-decoration: none;
+    font-size: 12px;
+    font-weight: 600;
+    transition: box-shadow .15s ease, border-color .15s ease
+}
+
+.attachment-link:hover {
+    border-color: var(--teal);
+    box-shadow: 0 2px 8px rgba(30, 110, 95, .12)
+}
+
+.attachment-link .attachment-name {
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap
+}
+
+.attachment-link small {
+    color: var(--muted);
+    font-weight: 400;
+    font-size: 10px
+}
+
+.attachment-date {
+    color: var(--muted);
+    font-size: 10px
+}
+
+.detail-card .attachment-list {
+    padding: 2px 0
+}

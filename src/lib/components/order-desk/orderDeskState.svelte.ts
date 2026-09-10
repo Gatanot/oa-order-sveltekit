@@ -91,6 +91,9 @@ export function createOrderDesk(data: Data) {
   let advances = $state<Array<Record<string, any>>>([]);
   let editingOrderId = $state("");
   let detailOrder = $state<any>(null);
+  let detailAttachments = $state<any[]>([]);
+  let detailAttachmentsLoading = $state(false);
+  let uploadingFiles = $state(false);
   const creatorNameStorageKey = "orbit-oa-creator-name";
   let creatorName = $state("");
   let creatorNameDraft = $state("");
@@ -150,6 +153,11 @@ export function createOrderDesk(data: Data) {
   ];
   const money = (c: number) =>
     `¥${(c / 100).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}`;
+  const formatFileSize = (size: number) =>
+    size >= 1024 * 1024
+      ? `${(size / 1024 / 1024).toFixed(1)} MB`
+      : `${Math.max(Math.round(size / 1024), 1)} KB`;
+  const attachmentUrl = (id: string) => `/api/attachments/${encodeURIComponent(id)}`;
   const filteredProjects = $derived(
     projects.filter((p) => !customerId || p.customer_id === customerId),
   );
@@ -360,6 +368,71 @@ export function createOrderDesk(data: Data) {
       busy = false;
     }
   }
+  function onNoteFilesChange(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const files = Array.from(input.files || []);
+    const isAllowed = (file: File) =>
+      /^image\/(png|jpe?g|gif|webp)$/i.test(file.type) ||
+      file.type === "application/pdf";
+    const rejected = files.filter((file) => !isAllowed(file));
+    const accepted = files.filter(isAllowed);
+    const oversized = accepted.filter((file) => file.size > 10 * 1024 * 1024);
+    const allowed = accepted.filter((file) => file.size <= 10 * 1024 * 1024);
+    const room = Math.max(10 - noteFiles.length, 0);
+    const kept = allowed.slice(0, room);
+    const overflow = allowed.length - kept.length;
+    noteFiles = [...noteFiles, ...kept];
+    input.value = "";
+    const messages: string[] = [];
+    if (rejected.length)
+      messages.push(`${rejected.length} 个文件不是图片或 PDF，已忽略`);
+    if (oversized.length)
+      messages.push(`${oversized.length} 个文件超过 10MB，已忽略`);
+    if (overflow > 0) messages.push("最多选择 10 个附件");
+    if (messages.length) notify(messages.join("；"), true);
+  }
+  function removeNoteFile(index: number) {
+    noteFiles = noteFiles.filter((_, i) => i !== index);
+  }
+  async function uploadAttachments(orderId: string) {
+    if (!noteFiles.length) return;
+    uploadingFiles = true;
+    try {
+      const form = new FormData();
+      for (const file of noteFiles) form.append("files", file, file.name);
+      const response = await fetch(
+        `/api/orders/${encodeURIComponent(orderId)}/attachments`,
+        { method: "POST", body: form },
+      );
+      if (!response.ok) {
+        const text = await response.text();
+        let detail = `附件上传失败（HTTP ${response.status}）`;
+        try {
+          detail = JSON.parse(text)?.detail || detail;
+        } catch {
+          /* 非 JSON 错误响应 */
+        }
+        throw new Error(detail);
+      }
+    } finally {
+      uploadingFiles = false;
+    }
+  }
+  async function loadDetailAttachments(orderId: string) {
+    detailAttachmentsLoading = true;
+    try {
+      const result = await api.get<{
+        data: Array<Record<string, any>>;
+      }>(`/api/orders/${encodeURIComponent(orderId)}/attachments`);
+      detailAttachments = result.data;
+      return result.data;
+    } catch {
+      detailAttachments = [];
+      return [];
+    } finally {
+      detailAttachmentsLoading = false;
+    }
+  }
   async function submitOrder(event: SubmitEvent) {
     event.preventDefault();
     busy = true;
@@ -368,16 +441,7 @@ export function createOrderDesk(data: Data) {
       const result = editingOrderId
         ? await api.patch<{ data: Order }>(`/api/orders/${editingOrderId}`, payload)
         : await api.post<{ data: Order }>("/api/orders", payload);
-      for (const file of noteFiles)
-        await fetch(`/api/orders/${result.data.id}/attachments`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            file_name: file.name,
-            mime_type: file.type,
-            file_size: file.size,
-          }),
-        });
+      await uploadAttachments(result.data.id);
       await refresh();
       notify(
         submitMode === "reimburse" || advances.length
@@ -455,6 +519,8 @@ export function createOrderDesk(data: Data) {
   }
   function openDetail(order: any) {
     detailOrder = order;
+    detailAttachments = [];
+    loadDetailAttachments(order.id);
   }
   function editOrder(order: any) {
     editingOrderId = order.id;
@@ -606,6 +672,9 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "costs", { get: () => costs, set: (value) => { costs = value; } });
   Object.defineProperty(desk, "advances", { get: () => advances, set: (value) => { advances = value; } });
   Object.defineProperty(desk, "detailOrder", { get: () => detailOrder, set: (value) => { detailOrder = value; } });
+  Object.defineProperty(desk, "detailAttachments", { get: () => detailAttachments });
+  Object.defineProperty(desk, "detailAttachmentsLoading", { get: () => detailAttachmentsLoading });
+  Object.defineProperty(desk, "uploadingFiles", { get: () => uploadingFiles, set: (value) => { uploadingFiles = value; } });
   Object.defineProperty(desk, "creatorName", { get: () => creatorName, set: (value) => { creatorName = value; } });
   Object.defineProperty(desk, "creatorNameDraft", { get: () => creatorNameDraft, set: (value) => { creatorNameDraft = value; } });
   Object.defineProperty(desk, "settingsOpen", { get: () => settingsOpen, set: (value) => { settingsOpen = value; } });
@@ -662,6 +731,16 @@ export function createOrderDesk(data: Data) {
   desk.toggleColumn = toggleColumn;
   desk.deleteOrder = deleteOrder;
   desk.openDetail = openDetail;
+  desk.fetchAttachments = async (orderId: string) => {
+    const result = await api.get<{ data: Array<Record<string, any>> }>(
+      `/api/orders/${encodeURIComponent(orderId)}/attachments`,
+    );
+    return result.data;
+  };
+  desk.removeNoteFile = removeNoteFile;
+  desk.onNoteFilesChange = onNoteFilesChange;
+  desk.attachmentUrl = attachmentUrl;
+  desk.formatFileSize = formatFileSize;
   desk.editOrder = editOrder;
   desk.startNewOrder = startNewOrder;
   desk.addProduct = addProduct;
