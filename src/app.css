@@ -44,11 +44,11 @@ button {
 }
 
 .order-sidebar {
-    width: 236px;
-    min-width: 236px;
+    width: 208px;
+    min-width: 208px;
     background: var(--nav);
     color: #d6e3e5;
-    padding: 24px 14px;
+    padding: 24px 12px;
     display: flex;
     flex-direction: column
 }
@@ -78,8 +78,8 @@ button {
 }
 
 .sidebar-collapsed .order-sidebar {
-    width: 68px;
-    min-width: 68px;
+    width: 60px;
+    min-width: 60px;
     padding-left: 9px;
     padding-right: 9px
 }
@@ -665,6 +665,16 @@ button {
 .editor-heading h3 { margin: 0; font-size: 15px; }
 .editor-row { grid-template-columns: 2fr 1fr 90px 110px 110px 38px; }
 .editor-row textarea { grid-column: 1 / -1; min-height: 54px; }
+.repeat-header {
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .02em;
+    margin-bottom: 4px;
+}
+.repeat-header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repeat-header textarea { display: none; }
+.repeat-header + .repeat-row { margin-top: 2px; }
 .detail-card { background: #fff; border: 1px solid var(--line); border-radius: 7px; padding: 23px; box-shadow: var(--shadow); }
 .table-panel {
     background: #fff;
@@ -1325,6 +1335,7 @@ td small {
     .info-grid { grid-template-columns: 1fr 1fr; }
     .repeat-row, .editor-row { grid-template-columns: 1fr 1fr; }
     .repeat-row textarea { grid-column: 1 / -1; }
+    .repeat-header { display: none; }
     .suggestion-menu { min-width: 0; width: min(420px, 90vw); }
     .repeat-row .delete-action { justify-self: start; }
     .detail-editor { margin-left: 0; margin-right: 0; }
