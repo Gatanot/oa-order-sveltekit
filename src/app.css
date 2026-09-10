@@ -1692,3 +1692,28 @@ td small {
 .detail-card .attachment-list {
     padding: 2px 0
 }
+
+/* ---- 垫付行内的发票上传 ---- */
+.invoice-upload {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    flex-wrap: wrap
+}
+
+.upload-action-small {
+    padding: 7px 10px;
+    font-size: 11px;
+    flex-shrink: 0
+}
+
+.invoice-name {
+    font-size: 11px;
+    max-width: 150px
+}
+
+.invoice-upload .upload-remove {
+    margin-left: 0;
+    flex-shrink: 0
+}

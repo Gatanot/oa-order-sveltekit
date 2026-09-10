@@ -394,28 +394,59 @@ export function createOrderDesk(data: Data) {
   function removeNoteFile(index: number) {
     noteFiles = noteFiles.filter((_, i) => i !== index);
   }
+  function onAdvanceInvoiceChange(event: Event, index: number) {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
+    const isAllowed =
+      /^image\/(png|jpe?g|gif|webp)$/i.test(file.type) ||
+      file.type === "application/pdf";
+    if (!isAllowed) {
+      notify("发票仅支持图片或 PDF 文件", true);
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      notify("发票文件不能超过 10MB", true);
+      return;
+    }
+    advances[index] = { ...advances[index], invoice: file.name, invoiceFile: file };
+    advances = [...advances];
+    notify("发票已选择，保存订单时上传");
+  }
+  function removeAdvanceInvoice(index: number) {
+    advances[index] = { ...advances[index], invoice: "", invoiceFile: null };
+    advances = [...advances];
+  }
   async function uploadAttachments(orderId: string) {
-    if (!noteFiles.length) return;
+    const invoiceFiles = advances
+      .map((advance) => advance.invoiceFile as File | null)
+      .filter((file): file is File => file instanceof File);
+    if (!noteFiles.length && !invoiceFiles.length) return;
     uploadingFiles = true;
     try {
-      const form = new FormData();
-      for (const file of noteFiles) form.append("files", file, file.name);
-      const response = await fetch(
-        `/api/orders/${encodeURIComponent(orderId)}/attachments`,
-        { method: "POST", body: form },
-      );
-      if (!response.ok) {
-        const text = await response.text();
-        let detail = `附件上传失败（HTTP ${response.status}）`;
-        try {
-          detail = JSON.parse(text)?.detail || detail;
-        } catch {
-          /* 非 JSON 错误响应 */
-        }
-        throw new Error(detail);
-      }
+      if (noteFiles.length) await postAttachments(orderId, noteFiles);
+      if (invoiceFiles.length) await postAttachments(orderId, invoiceFiles);
     } finally {
       uploadingFiles = false;
+    }
+  }
+  async function postAttachments(orderId: string, files: File[]) {
+    const form = new FormData();
+    for (const file of files) form.append("files", file, file.name);
+    const response = await fetch(
+      `/api/orders/${encodeURIComponent(orderId)}/attachments`,
+      { method: "POST", body: form },
+    );
+    if (!response.ok) {
+      const text = await response.text();
+      let detail = `附件上传失败（HTTP ${response.status}）`;
+      try {
+        detail = JSON.parse(text)?.detail || detail;
+      } catch {
+        /* 非 JSON 错误响应 */
+      }
+      throw new Error(detail);
     }
   }
   async function loadDetailAttachments(orderId: string) {
@@ -589,7 +620,7 @@ export function createOrderDesk(data: Data) {
     if (found) { costs[index] = { ...costs[index], name: found.item.name, vendor: found.vendor || "成本库", unit: found.item.unit, unit_price: (found.item.cost_unit / 100).toFixed(2), catalog_id: found.item.id }; costs = [...costs]; }
     else updateCost(index, "name", name);
   }
-  function addAdvance() { advances = [...advances, { item: "", amount: 0, date: orderDate, invoice: "" }]; }
+  function addAdvance() { advances = [...advances, { item: "", amount: 0, date: orderDate, invoice: "", invoiceFile: null as File | null }]; }
   function removeAdvance(index: number) { advances = advances.filter((_, i) => i !== index); }
   function updateAdvance(index: number, key: string, value: unknown) { advances[index] = { ...advances[index], [key]: value }; advances = [...advances]; }
   function startNewOrder() { editingOrderId = ""; detailOrder = null; products = [{ name: "", quantity: 1, unit: "项", unit_price: 0, cost_unit: 0, subtotal: 0, specification: "" }]; costs = []; advances = []; serviceName = ""; view = "entry"; }
@@ -747,6 +778,8 @@ export function createOrderDesk(data: Data) {
     return result.data;
   };
   desk.removeNoteFile = removeNoteFile;
+  desk.onAdvanceInvoiceChange = onAdvanceInvoiceChange;
+  desk.removeAdvanceInvoice = removeAdvanceInvoice;
   desk.onNoteFilesChange = onNoteFilesChange;
   desk.attachmentUrl = attachmentUrl;
   desk.formatFileSize = formatFileSize;
