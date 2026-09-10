@@ -8,3 +8,6 @@ build/
 *.db-shm
 *.db-wal
 npm-debug.log*
+*.png
+*.xls
+*.xlsx

@@ -21,7 +21,7 @@
   const nav = [
     ['dashboard', '经营工作台', LayoutDashboard], ['orders', '订单台账', FolderKanban],
     ['quotes', '报价与确认', FileText], ['procure', '采购与成本', ShoppingCart],
-    ['accept', '验收与整改', ClipboardCheck], ['finance', '财务跟进', Wallet], ['expenses', '项目费用与报销', ReceiptText]
+    ['accept', '验收与整改', ClipboardCheck], ['expenses', '项目费用与报销', ReceiptText]
   ] as const;
   const errorCopy: Record<string, string> = {
     QUOTE_CONFIRM_STAGE_REQUIRED: '当前订单已进入执行阶段，不能再确认报价版本',
@@ -55,7 +55,7 @@
   })()) as View);
   const modalTitles: Record<ModalKind, string> = {
     order: '新建项目', task: '新增项目工作项', expense: '录入项目费用', quote: '新增报价版本',
-    material: '录入物料成本', procurement: '新增采购需求', offer: '新增供应商报价', issue: '登记验收问题', finance: '登记本次开票与回款',
+    material: '录入物料成本', procurement: '新增采购需求', offer: '新增供应商报价', issue: '登记验收问题', finance: '登记财务信息（兼容旧数据）',
     attachment: '关联费用凭证', 'reject-expense': '驳回费用'
   };
   const modalDescriptions: Record<ModalKind, string> = {
@@ -67,7 +67,7 @@
     procurement: '填写要采购的物品和预算。',
     offer: '填写供应商对当前采购项目的报价。',
     issue: '填写需要整改的验收问题。',
-    finance: '填写本次发生的开票和回款金额，没有发生就填 0。',
+    finance: '财务字段仅为历史数据兼容，不作为订单流程。',
     attachment: '填写要关联到这笔费用的凭证名称。',
     'reject-expense': '填写驳回这笔费用的原因。'
   };
@@ -240,7 +240,7 @@
       </div>
     </header>
     {#if workspaceState.errorMessage}<div class="notice error" role="alert">{workspaceState.errorMessage}</div>{/if}
-    {#if workspaceState.order}<div class="workflow-strip" aria-label="项目流程"><div class="workflow-strip-title"><b>{workspaceState.order.name}</b><small>{workspaceState.order.code} · {workspaceState.order.customer}</small></div><div class="workflow-strip-stages">{#each ['报价中', '执行中', '待复验', '已验收', '待回款', '已回款'] as stage, index}<span class:current={stage === workspaceState.order.stage} class:done={['报价中', '执行中', '待复验', '已验收', '待回款', '已回款'].indexOf(workspaceState.order.stage) > index}>{index + 1}. {stage}</span>{/each}</div></div>{/if}
+    {#if workspaceState.order}<div class="workflow-strip" aria-label="项目流程"><div class="workflow-strip-title"><b>{workspaceState.order.name}</b><small>{workspaceState.order.code} · {workspaceState.order.customer}</small></div><div class="workflow-strip-stages">{#each ['报价中', '执行中', '待复验', '已验收'] as stage, index}<span class:current={stage === workspaceState.order.stage} class:done={['报价中', '执行中', '待复验', '已验收'].indexOf(workspaceState.order.stage) > index}>{index + 1}. {stage}</span>{/each}</div></div>{/if}
     <div class="content">{@render children()}</div>
   </main>
 </div>

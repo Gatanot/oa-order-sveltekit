@@ -9,7 +9,7 @@
   const workspace = getContext<WorkspaceContext>(WORKSPACE_CONTEXT);
   let orderSearch = $state('');
   let stageFilter = $state('全部');
-  const stages = ['报价中', '执行中', '待复验', '已验收', '待回款', '已回款'];
+  const stages = ['报价中', '执行中', '待复验', '已验收'];
   const filteredOrders = $derived(workspace.state.orders.filter((item) => {
     const keyword = orderSearch.trim().toLowerCase();
     const matchesSearch = !keyword || `${item.code} ${item.name} ${item.customer} ${item.owner}`.toLowerCase().includes(keyword);

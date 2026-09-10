@@ -30,8 +30,6 @@
     <div class="finance-card"><small>预计成本</small><strong>{money(workspace.state.order!.cost_summary.find((item) => item.cost_type === '预计')?.amount)}</strong><span>物料与采购计划</span></div>
     <div class="finance-card"><small>承诺成本</small><strong>{money(workspace.state.order!.cost_summary.find((item) => item.cost_type === '承诺')?.amount)}</strong><span>采购定标承诺</span></div>
     <div class="finance-card"><small>实际成本</small><strong>{money(workspace.state.order!.actual_cost)}</strong><span>已确认发生</span></div>
-    <div class="finance-card"><small>已开票</small><strong>{money(workspace.state.order!.workflow.invoice)}</strong><span>不得超过合同额</span></div>
-    <div class="finance-card"><small>已回款</small><strong>{money(workspace.state.order!.workflow.payment)}</strong><span>不得超过开票额</span></div>
   </div>
 
   <section class="panel">

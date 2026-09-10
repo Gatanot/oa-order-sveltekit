@@ -4,14 +4,14 @@ import { audit, isoNow, recordCost, touch } from './db';
 
 type OrderState = { id: string; stage: string; contract_amount: number; submitted: number; settled: number; invoice: number; payment: number };
 
-export const ORDER_STAGES = ['报价中', '执行中', '待复验', '已验收', '待回款', '已回款'] as const;
+// The company uses the order register for delivery execution. Collection/invoicing is
+// deliberately outside this OA: it is not an order completion condition.
+export const ORDER_STAGES = ['报价中', '执行中', '待复验', '已验收'] as const;
 const transitions: Record<string, string[]> = {
   报价中: ['执行中'],
   执行中: ['待复验'],
   待复验: ['执行中', '已验收'],
-  已验收: ['待回款'],
-  待回款: ['已回款'],
-  已回款: []
+  已验收: []
 };
 
 function state(db: Database.Database, orderId: string): OrderState {
@@ -42,9 +42,6 @@ function setStage(db: Database.Database, orderId: string, stage: string, actor: 
     const open = (db.prepare("SELECT COUNT(*) AS n FROM acceptance_issues WHERE order_id=? AND status='待整改'").get(orderId) as { n: number }).n;
     if (open) throw new Error('OPEN_ACCEPTANCE_ISSUES');
   }
-  if (stage === '待回款' && !current.settled) throw new Error('SETTLEMENT_REQUIRED');
-  if (stage === '已回款' && current.invoice < current.contract_amount) throw new Error('INVOICE_INCOMPLETE');
-  if (stage === '已回款' && current.payment < current.invoice) throw new Error('PAYMENT_INCOMPLETE');
   const changedAt = isoNow();
   db.prepare('UPDATE orders SET stage=?,updated_at=?,updated_by=?,version=version+1 WHERE id=?').run(stage, changedAt, actor, orderId);
   db.prepare('INSERT INTO status_history VALUES(?,?,?,?,?,?,?,?,?,?)').run(randomUUID(), orderId, 'order', orderId, current.stage, stage, action, actor, null, changedAt);
@@ -81,11 +78,7 @@ export function settleProject(db: Database.Database, orderId: string, actor: str
   if (current.stage !== '已验收') throw new Error('ACCEPTANCE_NOT_PASSED');
   if (current.settled) throw new Error('ALREADY_SETTLED');
   db.prepare('UPDATE order_workflows SET settled=1 WHERE order_id=?').run(orderId);
-  const result = setStage(db, orderId, '待回款', actor, '项目结算');
-  if (result.invoice === result.contract_amount && result.payment >= result.invoice) {
-    return setStage(db, orderId, '已回款', actor, '回款完成');
-  }
-  return result;
+  return setStage(db, orderId, '已验收', actor, '项目结算');
 }
 
 export function recordFinance(db: Database.Database, orderId: string, values: { invoice?: number; payment?: number }, actor: string) {

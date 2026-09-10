@@ -1,21 +1,11 @@
-import { audit, findOrder, getDb, isoNow, uuid } from '$lib/server/db';
-import { action, body, requiredText } from '$lib/server/http';
+import { json } from '@sveltejs/kit';
+import { addOrderAttachment, listOrderAttachments } from '$lib/server/order-db';
 import type { RequestHandler } from './$types';
 
-export const POST: RequestHandler = async (event) => {
-  const data = await body(event);
-  return action(() => getDb().transaction(() => {
-    const db = getDb(), order = findOrder(db, event.params.order);
-    if (!order) throw new Error('ORDER_NOT_FOUND');
-    const id = uuid(), name = requiredText(data.name, 'FILE_NAME_REQUIRED');
-    db.prepare('INSERT INTO attachments(id,order_id,name,kind,related_type,related_id,uploaded_by,created_at) VALUES(?,?,?,?,?,?,?,?)').run(
-      id, order.id, name, String(data.kind || '项目附件'), String(data.related_type || 'order'),
-      String(data.related_id || order.id), String(data.uploaded_by || data.actor || 'user'), isoNow()
-    );
-    if (data.related_type === 'expense' && data.related_id) {
-      db.prepare('UPDATE expenses SET proof=? WHERE id=? AND order_id=?').run(name, data.related_id, order.id);
-    }
-    audit(db, order.id, '上传项目附件', String(data.actor || 'user'), { attachment_id: id, name });
-    return { data: db.prepare('SELECT * FROM attachments WHERE id=?').get(id) };
-  })(), 201);
+export const GET: RequestHandler = ({ params }) => json({ data: listOrderAttachments(params.order) });
+// Empty implementation by design: only file metadata is persisted for now.
+export const POST: RequestHandler = async ({ params, request }) => {
+  const data = await request.json() as { file_name?: string; mime_type?: string; file_size?: number };
+  if (!data.file_name?.trim()) return json({ message: '请填写文件名' }, { status: 400 });
+  return json({ data: addOrderAttachment(params.order, { fileName: data.file_name.trim(), mimeType: data.mime_type, fileSize: data.file_size }) }, { status: 201 });
 };
