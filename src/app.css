@@ -1261,6 +1261,19 @@ td small {
     position: relative;
     min-width: 0;
 }
+.matched-hint {
+    position: absolute;
+    z-index: 12;
+    top: calc(100% + 4px);
+    left: 0;
+    background: var(--teal-soft);
+    color: #176c58;
+    border: 1px solid #b9e5d5;
+    border-radius: 4px;
+    padding: 4px 9px;
+    white-space: nowrap;
+    margin-top: 0;
+}
 .suggestion-menu {
     position: absolute;
     z-index: 12;
@@ -1313,7 +1326,6 @@ td small {
 .repeat-row textarea:focus { border-color: var(--teal); box-shadow: 0 0 0 3px var(--teal-soft); }
 .repeat-row input[readonly] { background: #f3f7f6; color: var(--muted); }
 .repeat-row textarea { grid-column: 1 / -1; min-height: 58px; resize: vertical; }
-.detail-editor { overflow: hidden; }
 
 @media(max-width:1000px) {
     .entry-layout {

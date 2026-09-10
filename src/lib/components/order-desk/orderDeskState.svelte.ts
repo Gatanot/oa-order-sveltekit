@@ -547,7 +547,12 @@ export function createOrderDesk(data: Data) {
   }
   function addProduct() { products = [...products, { name: "", quantity: 1, unit: "项", unit_price: 0, cost_unit: 0, subtotal: 0, specification: "" }]; }
   function removeProduct(index: number) { products = products.filter((_, i) => i !== index); }
-  function updateProduct(index: number, key: string, value: unknown) { products[index] = { ...products[index], [key]: value }; products = [...products]; }
+  function updateProduct(index: number, key: string, value: unknown) {
+    // 手动修改名称意味着不再对应库内条目，取消匹配状态与随库价格
+    if (key === "name" && products[index]?.catalog_id) products[index] = { ...products[index], catalog_id: undefined };
+    products[index] = { ...products[index], [key]: value };
+    products = [...products];
+  }
   function findCatalogItem(name: string) {
     const keyword = name.trim().toLowerCase();
     if (!keyword) return undefined;
@@ -567,7 +572,11 @@ export function createOrderDesk(data: Data) {
   }
   function addCost() { costs = [...costs, { name: "", vendor: "手工录入", quantity: 1, unit: "项", unit_price: 0, subtotal: 0 }]; }
   function removeCost(index: number) { costs = costs.filter((_, i) => i !== index); }
-  function updateCost(index: number, key: string, value: unknown) { costs[index] = { ...costs[index], [key]: value }; costs = [...costs]; }
+  function updateCost(index: number, key: string, value: unknown) {
+    if (key === "name" && costs[index]?.catalog_id) costs[index] = { ...costs[index], catalog_id: undefined };
+    costs[index] = { ...costs[index], [key]: value };
+    costs = [...costs];
+  }
   function applyCostCatalog(index: number, name: string) {
     const keyword = name.trim().toLowerCase();
     let found: { item: Catalog; vendor: string } | undefined;
@@ -577,7 +586,7 @@ export function createOrderDesk(data: Data) {
       const isCost = item.cost_unit > 0 && (!item.quote_unit || item.source_type === "supplier_cost");
       if (isCost && (item.name.toLowerCase() === keyword || item.name.toLowerCase().includes(keyword) || keyword.includes(item.name.toLowerCase()))) { found = { item, vendor }; break; }
     }
-    if (found) { costs[index] = { ...costs[index], name: found.item.name, vendor: found.vendor || "成本库", unit: found.item.unit, unit_price: (found.item.cost_unit / 100).toFixed(2) }; costs = [...costs]; }
+    if (found) { costs[index] = { ...costs[index], name: found.item.name, vendor: found.vendor || "成本库", unit: found.item.unit, unit_price: (found.item.cost_unit / 100).toFixed(2), catalog_id: found.item.id }; costs = [...costs]; }
     else updateCost(index, "name", name);
   }
   function addAdvance() { advances = [...advances, { item: "", amount: 0, date: orderDate, invoice: "" }]; }
