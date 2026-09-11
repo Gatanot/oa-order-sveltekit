@@ -4,6 +4,23 @@
   const desk = getContext<any>("order-desk");
 </script>
 
+{#if desk.showStandaloneReimbursement}<div class="project-modal-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) desk.showStandaloneReimbursement = false; }}>
+  <div class="project-modal reimbursement-modal" role="dialog" aria-modal="true" aria-labelledby="reimbursement-modal-title">
+    <div class="project-modal-head"><div><p class="section-kicker">NEW REIMBURSEMENT</p><h2 id="reimbursement-modal-title">新建报销</h2><span>可关联已有订单，也可以作为内务报销提交。</span></div><button class="icon-control" aria-label="关闭新建报销窗口" onclick={() => desk.showStandaloneReimbursement = false}><X size={18} /></button></div>
+    <form onsubmit={(event) => { event.preventDefault(); desk.submitStandaloneReimbursement(); }}>
+      <div class="project-modal-body reimbursement-form-body">
+        <label>报销人 <em>*</em><input bind:value={desk.standaloneEmployee} placeholder="例如：张三" required /></label>
+        <label>报销物品 <em>*</em><input bind:value={desk.standaloneItem} placeholder="例如：客户现场打车" required /></label>
+        <label>报销金额（元） <em>*</em><input type="number" inputmode="decimal" min="0.01" step="0.01" bind:value={desk.standaloneAmount} placeholder="0.00" required /></label>
+        <label>垫付日期 <em>*</em><input class="date-input" type="date" bind:value={desk.standaloneDate} required /></label>
+        <label class="full-field">关联订单<select bind:value={desk.standaloneOrderId}><option value="">不关联订单 · 内务报销</option>{#each desk.orders as order}<option value={order.id}>{order.code} · {order.customer_name} · {order.project_name}</option>{/each}</select></label>
+        <label class="full-field">发票文件<input type="text" value={desk.standaloneInvoice || "未上传（可先填写文件名）"} readonly onclick={() => document.getElementById("standalone-invoice")?.click()} /><input id="standalone-invoice" class="visually-hidden" type="file" accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,.pdf" onchange={desk.onStandaloneInvoiceChange} /></label>
+        <label class="full-field">备注<textarea bind:value={desk.standaloneNote} placeholder="补充报销说明（选填）"></textarea></label>
+      </div>
+      <div class="project-modal-footer"><button type="button" class="outline-action" onclick={() => desk.showStandaloneReimbursement = false}>取消</button><button type="submit" class="primary-action" disabled={desk.busy}>{desk.busy ? "保存中..." : "保存报销"}</button></div>
+    </form>
+  </div>
+</div>{/if}
 {#if desk.showProjectForm}<div
     class="project-modal-backdrop"
     role="presentation"

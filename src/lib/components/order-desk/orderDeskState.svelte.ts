@@ -136,6 +136,16 @@ export function createOrderDesk(data: Data) {
   let submitMenuOpen = $state(false);
   let showExport = $state(false);
   let showOrderFilters = $state(false);
+  let showStandaloneReimbursement = $state(false);
+  let selectedReimbursementIds = $state<string[]>([]);
+  let standaloneEmployee = $state("");
+  let standaloneItem = $state("");
+  let standaloneAmount = $state("");
+  let standaloneDate = $state(new Date().toISOString().slice(0, 10));
+  let standaloneOrderId = $state("");
+  let standaloneInvoice = $state("");
+  let standaloneInvoiceFile = $state<File | null>(null);
+  let standaloneNote = $state("");
   let selectedOrderIds = $state<string[]>([]);
   let visibleOrderColumns = $state(["department", "contact", "designer", "owner", "quote", "cost", "creator", "date", "delivery", "payment", "status"]);
   const orderColumnOptions = [
@@ -184,6 +194,7 @@ export function createOrderDesk(data: Data) {
       ? `${(size / 1024 / 1024).toFixed(1)} MB`
       : `${Math.max(Math.round(size / 1024), 1)} KB`;
   const attachmentUrl = (id: string) => `/api/attachments/${encodeURIComponent(id)}`;
+  const reimbursementAttachmentUrl = (id: string) => `/api/reimbursement-attachments/${encodeURIComponent(id)}`;
   const filteredProjects = $derived(
     projects.filter((p) => !customerId || p.customer_id === customerId),
   );
@@ -290,6 +301,11 @@ export function createOrderDesk(data: Data) {
   const reimbursementPeople = $derived([
     ...new Set(reimbursements.map((item: any) => item.employee).filter(Boolean)),
   ]);
+  const reimbursementStats = $derived({
+    pendingReview: reimbursements.filter((item: any) => item.reimbursement_status === "待核验").length,
+    pendingPay: reimbursements.filter((item: any) => item.reimbursement_status === "待报销").length,
+    amount: reimbursements.reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
+  });
   const creators = $derived([
     ...new Set(orders.map((o) => o.created_by).filter(Boolean)),
   ]);
@@ -403,6 +419,84 @@ export function createOrderDesk(data: Data) {
     projects = p.data;
     catalog = k.data;
     reimbursements = r.data;
+  }
+  function openStandaloneReimbursement() {
+    standaloneEmployee = creatorName || "";
+    standaloneItem = "";
+    standaloneAmount = "";
+    standaloneDate = new Date().toISOString().slice(0, 10);
+    standaloneOrderId = "";
+    standaloneInvoice = "";
+    standaloneInvoiceFile = null;
+    standaloneNote = "";
+    showStandaloneReimbursement = true;
+  }
+  async function submitStandaloneReimbursement() {
+    if (!standaloneEmployee.trim() || !standaloneItem.trim() || !(Number(standaloneAmount) > 0)) {
+      notify("请填写报销人、报销物品和大于 0 的金额", true);
+      return;
+    }
+    busy = true;
+    try {
+      const result = await api.post<{ data: { id: string } }>("/api/reimbursements", { employee: standaloneEmployee, item: standaloneItem, amount: standaloneAmount, advance_date: standaloneDate, order_id: standaloneOrderId, invoice: standaloneInvoice, note: standaloneNote });
+      if (standaloneInvoiceFile) {
+        const form = new FormData();
+        form.append("file", standaloneInvoiceFile);
+        const response = await fetch(`/api/reimbursements/${result.data.id.replace("standalone:", "")}/attachments`, { method: "POST", body: form });
+        if (!response.ok) throw new Error((await response.json()).message || "发票上传失败");
+      }
+      await refresh();
+      showStandaloneReimbursement = false;
+      notify("报销记录已保存，等待核验");
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "报销保存失败", true);
+    } finally { busy = false; }
+  }
+  function onStandaloneInvoiceChange(event: Event) {
+    const file = (event.currentTarget as HTMLInputElement).files?.[0];
+    if (!file) return;
+    if (!/^image\/(png|jpe?g|gif|webp)$/i.test(file.type) && file.type !== "application/pdf") { notify("发票仅支持图片或 PDF 文件", true); return; }
+    if (file.size > 10 * 1024 * 1024) { notify("发票文件不能超过 10MB", true); return; }
+    standaloneInvoice = file.name;
+    standaloneInvoiceFile = file;
+  }
+  function reimbursementRows() {
+    return reimbursements.filter((item: any) => (!reimbursementProject || item.project_id === reimbursementProject) && (!reimbursementPerson || item.employee === reimbursementPerson) && (!reimbursementStatus || item.reimbursement_status === reimbursementStatus) && (!reimbursementFrom || item.advance_date >= reimbursementFrom) && (!reimbursementTo || item.advance_date <= reimbursementTo));
+  }
+  function exportReimbursements() {
+    const rows = reimbursementRows().map((item: any) => ({
+      来源类型: item.source_type || (item.order_id ? "订单报销" : "内务报销"),
+      来源订单: item.code || "内务报销",
+      客户: item.customer_name || "",
+      项目: item.project_name || "内务报销",
+      报销人: item.employee,
+      报销物品: item.advance_item,
+      垫付日期: item.advance_date,
+      金额: Number(item.advance_amount || 0) / 100,
+      发票附件: item.invoice || "未上传",
+      状态: item.reimbursement_status,
+      备注: item.note || ""
+    }));
+    if (!rows.length) { notify("当前筛选没有可导出的报销记录", true); return; }
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), "报销明细");
+    XLSX.writeFile(workbook, `报销明细-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    notify(`已导出 ${rows.length} 条报销记录`);
+  }
+  async function batchMarkReimbursed() {
+    const targets = reimbursementRows().filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "待报销");
+    if (!targets.length) { notify("请选择待报销记录", true); return; }
+    busy = true;
+    try {
+      await Promise.all(targets.map((item: any) => fetch(`/api/reimbursements/${encodeURIComponent(item.id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "已报销", actor: creatorName || "财务人员" }) })));
+      selectedReimbursementIds = [];
+      await refresh();
+      notify(`已标记 ${targets.length} 条报销记录为已报销`);
+    } catch (e) { notify(e instanceof Error ? e.message : "批量处理失败", true); }
+    finally { busy = false; }
+  }
+  function toggleReimbursement(id: string) {
+    selectedReimbursementIds = selectedReimbursementIds.includes(id) ? selectedReimbursementIds.filter((item) => item !== id) : [...selectedReimbursementIds, id];
   }
   async function markReimbursement(item: Reimbursement, status: string) {
     busy = true;
@@ -824,6 +918,15 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "submitMenuOpen", { get: () => submitMenuOpen, set: (value) => { submitMenuOpen = value; } });
   Object.defineProperty(desk, "showExport", { get: () => showExport, set: (value) => { showExport = value; } });
   Object.defineProperty(desk, "showOrderFilters", { get: () => showOrderFilters, set: (value) => { showOrderFilters = value; } });
+  Object.defineProperty(desk, "showStandaloneReimbursement", { get: () => showStandaloneReimbursement, set: (value) => { showStandaloneReimbursement = value; } });
+  Object.defineProperty(desk, "selectedReimbursementIds", { get: () => selectedReimbursementIds, set: (value) => { selectedReimbursementIds = value; } });
+  Object.defineProperty(desk, "standaloneEmployee", { get: () => standaloneEmployee, set: (value) => { standaloneEmployee = value; } });
+  Object.defineProperty(desk, "standaloneItem", { get: () => standaloneItem, set: (value) => { standaloneItem = value; } });
+  Object.defineProperty(desk, "standaloneAmount", { get: () => standaloneAmount, set: (value) => { standaloneAmount = value; } });
+  Object.defineProperty(desk, "standaloneDate", { get: () => standaloneDate, set: (value) => { standaloneDate = value; } });
+  Object.defineProperty(desk, "standaloneOrderId", { get: () => standaloneOrderId, set: (value) => { standaloneOrderId = value; } });
+  Object.defineProperty(desk, "standaloneInvoice", { get: () => standaloneInvoice, set: (value) => { standaloneInvoice = value; } });
+  Object.defineProperty(desk, "standaloneNote", { get: () => standaloneNote, set: (value) => { standaloneNote = value; } });
   Object.defineProperty(desk, "selectedOrderIds", { get: () => selectedOrderIds, set: (value) => { selectedOrderIds = value; } });
   Object.defineProperty(desk, "selectedColumns", { get: () => selectedColumns, set: (value) => { selectedColumns = value; } });
   Object.defineProperty(desk, "visibleOrderColumns", { get: () => visibleOrderColumns });
@@ -845,10 +948,17 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "owners", { get: () => owners });
   Object.defineProperty(desk, "designers", { get: () => designers });
   Object.defineProperty(desk, "reimbursementPeople", { get: () => reimbursementPeople });
+  Object.defineProperty(desk, "reimbursementStats", { get: () => reimbursementStats });
   Object.defineProperty(desk, "creators", { get: () => creators });
   desk.money = money;
   desk.refresh = refresh;
   desk.markReimbursement = markReimbursement;
+  desk.openStandaloneReimbursement = openStandaloneReimbursement;
+  desk.exportReimbursements = exportReimbursements;
+  desk.batchMarkReimbursed = batchMarkReimbursed;
+  desk.toggleReimbursement = toggleReimbursement;
+  desk.submitStandaloneReimbursement = submitStandaloneReimbursement;
+  desk.onStandaloneInvoiceChange = onStandaloneInvoiceChange;
   desk.submitOrder = submitOrder;
   desk.submitProject = submitProject;
   desk.importFile = importFile;
@@ -878,6 +988,7 @@ export function createOrderDesk(data: Data) {
   desk.removeAdvanceInvoice = removeAdvanceInvoice;
   desk.onNoteFilesChange = onNoteFilesChange;
   desk.attachmentUrl = attachmentUrl;
+  desk.reimbursementAttachmentUrl = reimbursementAttachmentUrl;
   desk.formatFileSize = formatFileSize;
   desk.editOrder = editOrder;
   desk.startNewOrder = startNewOrder;

@@ -697,6 +697,24 @@ button {
 .order-click-row { cursor: pointer; }
 .order-click-row:hover { background: #f3faf8; }
 .detail-card h3 { margin: 25px 0 12px; font-size: 15px; }
+.link-action { border: 0; background: none; color: var(--teal); padding: 0; text-align: left; }
+.link-action:hover { text-decoration: underline; }
+.reimbursement-modal { width: min(560px, 94vw); }
+.reimbursement-summary { grid-template-columns: repeat(3, 1fr); margin: 0 0 19px; }
+.reimbursement-summary b small { font-size: 11px; font-weight: 400; color: var(--muted); }
+.reimbursement-actions { display: flex; justify-content: flex-end; gap: 9px; margin: -7px 0 15px; }
+.voucher-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 1px solid var(--line); }
+.voucher-grid > div { padding: 13px; border-bottom: 1px solid var(--line); }
+.voucher-grid > div:nth-child(odd) { border-right: 1px solid var(--line); }
+.voucher-grid small, .voucher-grid b { display: block; }
+.voucher-grid small { color: var(--muted); font-size: 11px; margin-bottom: 5px; }
+.voucher-grid b { overflow-wrap: anywhere; }
+.voucher-full { grid-column: 1 / -1; }
+.voucher-full:nth-child(odd) { border-right: 0 !important; }
+.reimbursement-detail { width: min(560px, 92vw); }
+.reimbursement-form-body { grid-template-columns: 1fr 1fr; }
+.reimbursement-form-body .full-field { grid-column: 1 / -1; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .info-grid { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--line); margin-bottom: 18px; }
 .info-grid > div { padding: 13px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .info-grid small { display: block; color: var(--muted); font-size: 11px; margin-bottom: 5px; }
@@ -1544,6 +1562,13 @@ td small {
         grid-template-columns: 1fr;
         padding: 17px
     }
+
+    .reimbursement-form-body { grid-template-columns: 1fr; }
+    .reimbursement-summary { grid-template-columns: 1fr 1fr; }
+    .reimbursement-summary > div:last-child { grid-column: 1 / -1; }
+    .reimbursement-actions { justify-content: stretch; }
+    .reimbursement-actions > button { flex: 1; }
+    .reimbursement-form-body .full-field { grid-column: auto; }
 
     .full {
         grid-column: auto

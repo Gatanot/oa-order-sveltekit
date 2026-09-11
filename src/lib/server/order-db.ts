@@ -45,7 +45,7 @@ export function moneyToCents(value: unknown): number {
 function migrate(db: Database.Database) {
   db.exec('CREATE TABLE IF NOT EXISTS schema_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)');
   const version = db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").get() as { value: string } | undefined;
-  if (version?.value !== '6') {
+  if (!version || !['6', '7'].includes(version.value)) {
     db.exec(`
       DROP TABLE IF EXISTS order_attachments;
       DROP TABLE IF EXISTS orders_simple;
@@ -57,11 +57,22 @@ function migrate(db: Database.Database) {
       CREATE TABLE catalog_items(id TEXT PRIMARY KEY, category TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, unit TEXT NOT NULL DEFAULT '项', quote_unit INTEGER NOT NULL DEFAULT 0, cost_unit INTEGER NOT NULL DEFAULT 0, customer_name TEXT NOT NULL DEFAULT '', project_name TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, source_file TEXT NOT NULL DEFAULT '', source_sheet TEXT NOT NULL DEFAULT '', source_type TEXT NOT NULL DEFAULT 'manual', item_no TEXT NOT NULL DEFAULT '', specification TEXT NOT NULL DEFAULT '', estimated_quantity TEXT NOT NULL DEFAULT '', max_quote_unit INTEGER NOT NULL DEFAULT 0, supplier_remark TEXT NOT NULL DEFAULT '', raw_data TEXT NOT NULL DEFAULT '{}', UNIQUE(category, name, customer_name, project_name, specification, estimated_quantity));
       CREATE TABLE orders_simple(id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, customer_id TEXT NOT NULL, project_id TEXT NOT NULL, catalog_id TEXT, service_name TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 1, unit TEXT NOT NULL DEFAULT '项', quote_amount INTEGER NOT NULL DEFAULT 0, cost_amount INTEGER NOT NULL DEFAULT 0, order_date TEXT NOT NULL, delivery_date TEXT NOT NULL DEFAULT '', contact TEXT NOT NULL DEFAULT '', customer_department TEXT NOT NULL DEFAULT '', designer TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL, status TEXT NOT NULL DEFAULT '制作中', payment_status TEXT NOT NULL DEFAULT '未结款', note TEXT NOT NULL DEFAULT '', specification TEXT NOT NULL DEFAULT '', products_json TEXT NOT NULL DEFAULT '[]', costs_json TEXT NOT NULL DEFAULT '[]', advances_json TEXT NOT NULL DEFAULT '[]', reimbursement_status TEXT NOT NULL DEFAULT '无需报销' CHECK(reimbursement_status IN ('无需报销','待核验','待报销','已报销')), reimbursed_by TEXT NOT NULL DEFAULT '', reimbursed_at TEXT, is_extra INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, FOREIGN KEY(customer_id) REFERENCES customers_simple(id), FOREIGN KEY(project_id) REFERENCES projects_simple(id), FOREIGN KEY(catalog_id) REFERENCES catalog_items(id));
       CREATE TABLE order_attachments(id TEXT PRIMARY KEY, order_id TEXT NOT NULL, file_name TEXT NOT NULL, mime_type TEXT NOT NULL DEFAULT '', file_size INTEGER NOT NULL DEFAULT 0, storage_path TEXT NOT NULL DEFAULT '', attachment_kind TEXT NOT NULL DEFAULT 'note', advance_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE);
+      CREATE TABLE reimbursements_simple(id TEXT PRIMARY KEY, employee TEXT NOT NULL, item TEXT NOT NULL, amount INTEGER NOT NULL DEFAULT 0, advance_date TEXT NOT NULL, order_id TEXT NOT NULL DEFAULT '', invoice TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '待核验' CHECK(status IN ('待核验','待报销','已报销')), reviewed_by TEXT NOT NULL DEFAULT '', reviewed_at TEXT, reimbursed_by TEXT NOT NULL DEFAULT '', reimbursed_at TEXT, created_at TEXT NOT NULL);
+      CREATE TABLE reimbursement_attachments(id TEXT PRIMARY KEY, reimbursement_id TEXT NOT NULL, file_name TEXT NOT NULL, mime_type TEXT NOT NULL DEFAULT '', file_size INTEGER NOT NULL DEFAULT 0, storage_path TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, FOREIGN KEY(reimbursement_id) REFERENCES reimbursements_simple(id) ON DELETE CASCADE);
       CREATE INDEX idx_simple_orders_date ON orders_simple(order_date DESC);
+      CREATE INDEX idx_simple_reimbursements_date ON reimbursements_simple(advance_date DESC);
       CREATE INDEX idx_simple_orders_customer ON orders_simple(customer_id, project_id);
       CREATE TABLE IF NOT EXISTS schema_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
       DELETE FROM schema_meta WHERE key='order_app_version';
-      INSERT INTO schema_meta(key,value) VALUES('order_app_version','6');
+      INSERT INTO schema_meta(key,value) VALUES('order_app_version','7');
+    `);
+  }
+  if (version?.value === '6') {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS reimbursements_simple(id TEXT PRIMARY KEY, employee TEXT NOT NULL, item TEXT NOT NULL, amount INTEGER NOT NULL DEFAULT 0, advance_date TEXT NOT NULL, order_id TEXT NOT NULL DEFAULT '', invoice TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '待核验' CHECK(status IN ('待核验','待报销','已报销')), reviewed_by TEXT NOT NULL DEFAULT '', reviewed_at TEXT, reimbursed_by TEXT NOT NULL DEFAULT '', reimbursed_at TEXT, created_at TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS idx_simple_reimbursements_date ON reimbursements_simple(advance_date DESC);
+      CREATE TABLE IF NOT EXISTS reimbursement_attachments(id TEXT PRIMARY KEY, reimbursement_id TEXT NOT NULL, file_name TEXT NOT NULL, mime_type TEXT NOT NULL DEFAULT '', file_size INTEGER NOT NULL DEFAULT 0, storage_path TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, FOREIGN KEY(reimbursement_id) REFERENCES reimbursements_simple(id) ON DELETE CASCADE);
+      UPDATE schema_meta SET value='7' WHERE key='order_app_version';
     `);
   }
 }
@@ -277,7 +288,7 @@ export function deleteOrder(id: string) {
 }
 
 export function listReimbursementOrders(filters: Record<string, string> = {}) {
-  return listOrders().flatMap((order) => {
+  const orderReimbursements = listOrders().flatMap((order) => {
     const advances = order.advances as Array<Record<string, unknown>>;
     return advances.map((advance) => {
       const status = text(advance.status) || '待审核';
@@ -303,7 +314,52 @@ export function listReimbursementOrders(filters: Record<string, string> = {}) {
     (!filters.from || item.advance_date >= filters.from) &&
     (!filters.to || item.advance_date <= filters.to) &&
     (!filters.status || item.reimbursement_status === filters.status)
-  ).sort((a, b) => String(b.advance_date).localeCompare(String(a.advance_date)));
+  );
+  const standalone = getOrderDb().prepare(`SELECT r.*, o.code, o.project_id, p.name AS project_name, c.name AS customer_name
+    FROM reimbursements_simple r
+    LEFT JOIN orders_simple o ON o.id = NULLIF(r.order_id, '')
+    LEFT JOIN projects_simple p ON p.id = o.project_id
+    LEFT JOIN customers_simple c ON c.id = o.customer_id
+    `).all() as Array<Record<string, any>>;
+  const standaloneRows = standalone.map((item) => ({
+    ...item,
+    id: `standalone:${item.id}`,
+    order_id: item.order_id || '',
+    advance_id: '',
+    project_id: item.project_id || '',
+    project_name: item.project_name || '内务报销',
+    customer_name: item.customer_name || '',
+    code: item.code || '内务报销',
+    advance_item: item.item,
+    advance_date: item.advance_date,
+    advance_amount: item.amount,
+    invoice: item.invoice,
+    employee: item.employee,
+    reimbursement_status: item.status,
+    attachment_count: (getOrderDb().prepare('SELECT COUNT(*) count FROM reimbursement_attachments WHERE reimbursement_id=?').get(item.id) as { count: number }).count,
+    source_type: item.order_id ? '订单报销' : '内务报销'
+  })).filter((item) =>
+    (!filters.project || item.project_id === filters.project) &&
+    (!filters.person || item.employee === filters.person) &&
+    (!filters.from || item.advance_date >= filters.from) &&
+    (!filters.to || item.advance_date <= filters.to) &&
+    (!filters.status || item.reimbursement_status === filters.status)
+  );
+  return [...orderReimbursements.map((item) => ({ ...item, source_type: '订单报销' })), ...standaloneRows]
+    .sort((a, b) => String(b.advance_date).localeCompare(String(a.advance_date)));
+}
+
+export function createStandaloneReimbursement(data: Record<string, unknown>) {
+  const employee = text(data.employee);
+  const item = text(data.item);
+  if (!employee || !item) throw new Error('请填写报销人和报销物品');
+  const amount = moneyToCents(data.amount);
+  const advanceDate = text(data.advance_date) || now().slice(0, 10);
+  const orderId = text(data.order_id);
+  if (orderId && !getOrderDb().prepare('SELECT id FROM orders_simple WHERE id=?').get(orderId)) throw new Error('关联订单不存在');
+  const id = uuid();
+  getOrderDb().prepare('INSERT INTO reimbursements_simple(id,employee,item,amount,advance_date,order_id,invoice,note,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run(id, employee, item, amount, advanceDate, orderId, text(data.invoice), text(data.note), now());
+  return { id: `standalone:${id}`, employee, item, amount, advance_date: advanceDate, order_id: orderId, reimbursement_status: '待核验' };
 }
 
 export function updateReimbursement(id: string, status: string, actor: string) {
@@ -331,6 +387,15 @@ export function updateReimbursement(id: string, status: string, actor: string) {
   return { ...advances[index], order_id: orderId, reimbursement_status: status };
 }
 
+export function updateStandaloneReimbursement(id: string, status: string, actor: string) {
+  if (!['待核验', '待报销', '已报销'].includes(status)) throw new Error('INVALID_REIMBURSEMENT_STATUS');
+  const db = getOrderDb();
+  const existing = db.prepare('SELECT * FROM reimbursements_simple WHERE id=?').get(id) as Record<string, any> | undefined;
+  if (!existing) throw new Error('REIMBURSEMENT_NOT_FOUND');
+  db.prepare(`UPDATE reimbursements_simple SET status=?, reviewed_by=CASE WHEN ?='待报销' THEN ? ELSE reviewed_by END, reviewed_at=CASE WHEN ?='待报销' THEN ? ELSE reviewed_at END, reimbursed_by=CASE WHEN ?='已报销' THEN ? ELSE reimbursed_by END, reimbursed_at=CASE WHEN ?='已报销' THEN ? ELSE reimbursed_at END WHERE id=?`).run(status, status, actor, status, now(), status, actor, status, now(), id);
+  return { ...existing, id: `standalone:${id}`, reimbursement_status: status };
+}
+
 export const maxAttachmentSize = 10 * 1024 * 1024;
 
 /** 图片与 PDF 文件的魔数特征，用于确认上传内容真实可信。 */
@@ -347,6 +412,32 @@ export function listOrderAttachments(orderId: string, advanceId = '') {
   return advanceId
     ? getOrderDb().prepare('SELECT id,order_id,file_name,mime_type,file_size,attachment_kind,advance_id,created_at FROM order_attachments WHERE order_id=? AND advance_id=? ORDER BY created_at DESC').all(orderId, advanceId)
     : getOrderDb().prepare('SELECT id,order_id,file_name,mime_type,file_size,attachment_kind,advance_id,created_at FROM order_attachments WHERE order_id=? ORDER BY created_at DESC').all(orderId);
+}
+
+export function addStandaloneReimbursementAttachment(reimbursementId: string, file: { name: string; data: Buffer }) {
+  const db = getOrderDb();
+  if (!db.prepare('SELECT id FROM reimbursements_simple WHERE id=?').get(reimbursementId)) throw new Error('REIMBURSEMENT_NOT_FOUND');
+  if (!file.data?.length) throw new Error('附件内容为空');
+  if (file.data.length > maxAttachmentSize) throw new Error('单个附件不能超过 10MB');
+  const mime = detectAttachmentMime(file.data);
+  if (!mime) throw new Error('仅支持上传图片（PNG/JPG/GIF/WebP）或 PDF 文件');
+  const id = uuid();
+  const safeName = (file.name || '发票附件').replace(/[\\/:*?"<>|\r\n\t]+/g, '_').trim().slice(-120) || '发票附件';
+  const extension = mime === 'application/pdf' ? '.pdf' : `.${mime.split('/')[1].replace('jpeg', 'jpg')}`;
+  const storagePath = join(`reimbursements/${reimbursementId}`, `${id}${extension}`);
+  mkdirSync(join(attachmentDir, `reimbursements/${reimbursementId}`), { recursive: true });
+  writeFileSync(join(attachmentDir, storagePath), file.data);
+  db.prepare('INSERT INTO reimbursement_attachments(id,reimbursement_id,file_name,mime_type,file_size,storage_path,created_at) VALUES(?,?,?,?,?,?,?)').run(id, reimbursementId, safeName, mime, file.data.length, storagePath, now());
+  db.prepare('UPDATE reimbursements_simple SET invoice=? WHERE id=?').run(safeName, reimbursementId);
+  return { id, reimbursement_id: reimbursementId, file_name: safeName, mime_type: mime, file_size: file.data.length, created_at: now() };
+}
+
+export function listReimbursementAttachments(reimbursementId: string) {
+  return getOrderDb().prepare('SELECT id,reimbursement_id,file_name,mime_type,file_size,created_at FROM reimbursement_attachments WHERE reimbursement_id=? ORDER BY created_at DESC').all(reimbursementId);
+}
+
+export function getReimbursementAttachment(attachmentId: string) {
+  return getOrderDb().prepare('SELECT id,reimbursement_id,file_name,mime_type,file_size,storage_path,created_at FROM reimbursement_attachments WHERE id=?').get(attachmentId);
 }
 
 export function getOrderAttachment(attachmentId: string) {
