@@ -6,20 +6,20 @@
   let attachmentsByOrder = $state<Record<string, Array<any>>>({});
   let detailItem = $state<any>(null);
   async function showAttachments(item: any) {
-    const orderId = item.id;
-    if (attachmentsByOrder[orderId]) {
+    const reimbursementId = item.id;
+    if (attachmentsByOrder[reimbursementId]) {
       const next = { ...attachmentsByOrder };
-      delete next[orderId];
+      delete next[reimbursementId];
       attachmentsByOrder = next;
       return;
     }
     try {
-      const files = item.id.startsWith("standalone:")
-        ? (await fetch(`/api/reimbursements/${item.id.replace("standalone:", "")}/attachments`).then((response) => response.json())).data
-        : await desk.fetchAdvanceAttachments(item.order_id, item.advance_id);
-      attachmentsByOrder = { ...attachmentsByOrder, [orderId]: files };
+      const response = await fetch(`/api/reimbursements/${encodeURIComponent(reimbursementId)}/attachments`);
+      if (!response.ok) throw new Error("附件加载失败");
+      const files = (await response.json()).data;
+      attachmentsByOrder = { ...attachmentsByOrder, [reimbursementId]: files };
     } catch {
-      attachmentsByOrder = { ...attachmentsByOrder, [orderId]: [] };
+      attachmentsByOrder = { ...attachmentsByOrder, [reimbursementId]: [] };
     }
   }
 </script>
@@ -105,14 +105,14 @@
                     class="primary-action"
                     onclick={() => desk.markReimbursement(item, "已报销")}
                     >标记已报销</button
-                  >{:else}<span class="muted">已完成</span>{/if}{#if item.id.startsWith("standalone:") && item.reimbursement_status === "待核验"}<button class="delete-action" type="button" onclick={() => desk.deleteStandalone(item)}>删除</button>{/if}</td
+                  >{:else}<span class="muted">已完成</span>{/if}{#if item.reimbursement_status === "待核验"}<button class="delete-action" type="button" onclick={() => desk.deleteReimbursement(item)}>删除</button>{/if}</td
               ></tr
             >{#if attachmentsByOrder[item.id]?.length}<tr class="attachment-row"
                 ><td colspan="9"
                   ><ul class="attachment-list">{#each attachmentsByOrder[item.id] as file}<li>
                         <a
                           class="attachment-link"
-                          href={item.id.startsWith("standalone:") ? desk.reimbursementAttachmentUrl(file.id) : desk.attachmentUrl(file.id)}
+                          href={desk.reimbursementAttachmentUrl(file.id)}
                           target="_blank"
                           rel="noreferrer"
                           title="在新窗口查看附件"

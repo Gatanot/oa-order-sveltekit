@@ -444,7 +444,7 @@ export function createOrderDesk(data: Data) {
       if (standaloneInvoiceFile) {
         const form = new FormData();
         form.append("file", standaloneInvoiceFile);
-        const response = await fetch(`/api/reimbursements/${result.data.id.replace("standalone:", "")}/attachments`, { method: "POST", body: form });
+        const response = await fetch(`/api/reimbursements/${encodeURIComponent(result.data.id)}/attachments`, { method: "POST", body: form });
         if (!response.ok) throw new Error((await response.json()).message || "发票上传失败");
       }
       await refresh();
@@ -503,7 +503,7 @@ export function createOrderDesk(data: Data) {
   function toggleReimbursement(id: string) {
     selectedReimbursementIds = selectedReimbursementIds.includes(id) ? selectedReimbursementIds.filter((item) => item !== id) : [...selectedReimbursementIds, id];
   }
-  async function deleteStandalone(item: any) {
+  async function deleteReimbursement(item: any) {
     if (!window.confirm(`确认删除报销“${item.advance_item || item.item}”？此操作不可恢复。`)) return;
     busy = true;
     try {
@@ -517,11 +517,12 @@ export function createOrderDesk(data: Data) {
   async function markReimbursement(item: Reimbursement, status: string) {
     busy = true;
     try {
-      await fetch(`/api/reimbursements/${item.id}`, {
+      const response = await fetch(`/api/reimbursements/${encodeURIComponent(item.id)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status, actor: "财务人员" }),
       });
+      if (!response.ok) throw new Error((await response.json()).message || "状态更新失败");
       await refresh();
       notify(status === "已报销" ? "已标记为已报销" : "已更新报销状态");
     } catch (e) {
@@ -581,23 +582,29 @@ export function createOrderDesk(data: Data) {
     advances = [...advances];
   }
   async function uploadAttachments(orderId: string, savedAdvances: Array<Record<string, any>>, submittedAdvances: Array<Record<string, any>>) {
-    const invoices = submittedAdvances.map((advance, index) => ({ file: advance.invoiceFile as File | null, advanceId: savedAdvances[index]?.id })).filter((item): item is { file: File; advanceId: string } => item.file instanceof File && Boolean(item.advanceId));
+    const savedById = new Map(savedAdvances.map((advance) => [String(advance.id), advance]));
+    const invoices = submittedAdvances.map((advance, index) => ({
+      file: advance.invoiceFile as File | null,
+      reimbursementId: savedById.get(String(advance.id))?.id || savedAdvances[index]?.id,
+    })).filter((item): item is { file: File; reimbursementId: string } => item.file instanceof File && Boolean(item.reimbursementId));
     if (!noteFiles.length && !invoices.length) return;
     uploadingFiles = true;
     try {
       if (noteFiles.length) await postAttachments(orderId, noteFiles);
-      for (const invoice of invoices) await postAttachments(orderId, [invoice.file], { kind: "invoice", advanceId: invoice.advanceId });
+      for (const invoice of invoices) await postReimbursementAttachment(invoice.reimbursementId, invoice.file);
     } finally {
       uploadingFiles = false;
     }
   }
-  async function postAttachments(orderId: string, files: File[], relation?: { kind: string; advanceId: string }) {
+  async function postReimbursementAttachment(reimbursementId: string, file: File) {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    const response = await fetch(`/api/reimbursements/${encodeURIComponent(reimbursementId)}/attachments`, { method: "POST", body: form });
+    if (!response.ok) throw new Error((await response.json()).message || "发票上传失败");
+  }
+  async function postAttachments(orderId: string, files: File[]) {
     const form = new FormData();
     for (const file of files) form.append("files", file, file.name);
-    if (relation) {
-      form.append("kind", relation.kind);
-      form.append("advance_id", relation.advanceId);
-    }
     const response = await fetch(
       `/api/orders/${encodeURIComponent(orderId)}/attachments`,
       { method: "POST", body: form },
@@ -973,7 +980,7 @@ export function createOrderDesk(data: Data) {
   desk.exportReimbursements = exportReimbursements;
   desk.batchMarkReimbursed = batchMarkReimbursed;
   desk.toggleReimbursement = toggleReimbursement;
-  desk.deleteStandalone = deleteStandalone;
+  desk.deleteReimbursement = deleteReimbursement;
   desk.submitStandaloneReimbursement = submitStandaloneReimbursement;
   desk.onStandaloneInvoiceChange = onStandaloneInvoiceChange;
   desk.submitOrder = submitOrder;
@@ -994,9 +1001,9 @@ export function createOrderDesk(data: Data) {
     );
     return result.data;
   };
-  desk.fetchAdvanceAttachments = async (orderId: string, advanceId: string) => {
+  desk.fetchAdvanceAttachments = async (orderId: string, reimbursementId: string) => {
     const result = await api.get<{ data: Array<Record<string, any>> }>(
-      `/api/orders/${encodeURIComponent(orderId)}/attachments?advance_id=${encodeURIComponent(advanceId)}`,
+      `/api/reimbursements/${encodeURIComponent(reimbursementId)}/attachments`,
     );
     return result.data;
   };
