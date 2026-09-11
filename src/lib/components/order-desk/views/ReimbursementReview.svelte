@@ -105,7 +105,7 @@
                     class="primary-action"
                     onclick={() => desk.markReimbursement(item, "已报销")}
                     >标记已报销</button
-                  >{:else}<span class="muted">已完成</span>{/if}</td
+                  >{:else}<span class="muted">已完成</span>{/if}{#if item.id.startsWith("standalone:") && item.reimbursement_status === "待核验"}<button class="delete-action" type="button" onclick={() => desk.deleteStandalone(item)}>删除</button>{/if}</td
               ></tr
             >{#if attachmentsByOrder[item.id]?.length}<tr class="attachment-row"
                 ><td colspan="9"

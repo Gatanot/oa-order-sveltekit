@@ -387,6 +387,14 @@ export function updateReimbursement(id: string, status: string, actor: string) {
   return { ...advances[index], order_id: orderId, reimbursement_status: status };
 }
 
+export function deleteStandaloneReimbursement(id: string) {
+  const db = getOrderDb();
+  const files = db.prepare('SELECT storage_path FROM reimbursement_attachments WHERE reimbursement_id=?').all(id) as Array<{ storage_path: string }>;
+  const result = db.prepare('DELETE FROM reimbursements_simple WHERE id=?').run(id);
+  if (!result.changes) throw new Error('REIMBURSEMENT_NOT_FOUND');
+  for (const file of files) removeAttachmentFile(file.storage_path);
+}
+
 export function updateStandaloneReimbursement(id: string, status: string, actor: string) {
   if (!['待核验', '待报销', '已报销'].includes(status)) throw new Error('INVALID_REIMBURSEMENT_STATUS');
   const db = getOrderDb();

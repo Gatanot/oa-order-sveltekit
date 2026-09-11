@@ -437,8 +437,10 @@ export function createOrderDesk(data: Data) {
       return;
     }
     busy = true;
+    let createdId = "";
     try {
       const result = await api.post<{ data: { id: string } }>("/api/reimbursements", { employee: standaloneEmployee, item: standaloneItem, amount: standaloneAmount, advance_date: standaloneDate, order_id: standaloneOrderId, invoice: standaloneInvoice, note: standaloneNote });
+      createdId = result.data.id;
       if (standaloneInvoiceFile) {
         const form = new FormData();
         form.append("file", standaloneInvoiceFile);
@@ -449,6 +451,7 @@ export function createOrderDesk(data: Data) {
       showStandaloneReimbursement = false;
       notify("报销记录已保存，等待核验");
     } catch (e) {
+      if (createdId) await api.delete(`/api/reimbursements/${encodeURIComponent(createdId)}`).catch(() => undefined);
       notify(e instanceof Error ? e.message : "报销保存失败", true);
     } finally { busy = false; }
   }
@@ -488,7 +491,9 @@ export function createOrderDesk(data: Data) {
     if (!targets.length) { notify("请选择待报销记录", true); return; }
     busy = true;
     try {
-      await Promise.all(targets.map((item: any) => fetch(`/api/reimbursements/${encodeURIComponent(item.id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "已报销", actor: creatorName || "财务人员" }) })));
+      const responses = await Promise.all(targets.map((item: any) => fetch(`/api/reimbursements/${encodeURIComponent(item.id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "已报销", actor: creatorName || "财务人员" }) })));
+      const failed = responses.filter((response) => !response.ok).length;
+      if (failed) throw new Error(`${failed} 条报销记录更新失败，请刷新后重试`);
       selectedReimbursementIds = [];
       await refresh();
       notify(`已标记 ${targets.length} 条报销记录为已报销`);
@@ -497,6 +502,17 @@ export function createOrderDesk(data: Data) {
   }
   function toggleReimbursement(id: string) {
     selectedReimbursementIds = selectedReimbursementIds.includes(id) ? selectedReimbursementIds.filter((item) => item !== id) : [...selectedReimbursementIds, id];
+  }
+  async function deleteStandalone(item: any) {
+    if (!window.confirm(`确认删除报销“${item.advance_item || item.item}”？此操作不可恢复。`)) return;
+    busy = true;
+    try {
+      await api.delete(`/api/reimbursements/${encodeURIComponent(item.id)}`);
+      selectedReimbursementIds = selectedReimbursementIds.filter((id) => id !== item.id);
+      await refresh();
+      notify("报销记录已删除");
+    } catch (e) { notify(e instanceof Error ? e.message : "报销删除失败", true); }
+    finally { busy = false; }
   }
   async function markReimbursement(item: Reimbursement, status: string) {
     busy = true;
@@ -957,6 +973,7 @@ export function createOrderDesk(data: Data) {
   desk.exportReimbursements = exportReimbursements;
   desk.batchMarkReimbursed = batchMarkReimbursed;
   desk.toggleReimbursement = toggleReimbursement;
+  desk.deleteStandalone = deleteStandalone;
   desk.submitStandaloneReimbursement = submitStandaloneReimbursement;
   desk.onStandaloneInvoiceChange = onStandaloneInvoiceChange;
   desk.submitOrder = submitOrder;

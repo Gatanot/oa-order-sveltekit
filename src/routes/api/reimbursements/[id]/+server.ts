@@ -1,6 +1,12 @@
 import { action, body } from '$lib/server/http';
-import { updateReimbursement, updateStandaloneReimbursement } from '$lib/server/order-db';
+import { deleteStandaloneReimbursement, updateReimbursement, updateStandaloneReimbursement } from '$lib/server/order-db';
 import type { RequestHandler } from './$types';
+
+export const DELETE: RequestHandler = (event) => action(() => {
+  if (!event.params.id.startsWith('standalone:')) throw new Error('仅支持删除独立报销记录');
+  deleteStandaloneReimbursement(event.params.id.slice('standalone:'.length));
+  return { data: null };
+});
 
 export const PATCH: RequestHandler = async (event) => {
   const data = await body(event);
