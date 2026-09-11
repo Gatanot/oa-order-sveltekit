@@ -43,6 +43,14 @@ import { api } from "$lib/api";
     created_by: string;
     status: string;
     reimbursement_status?: string;
+    customer_department?: string;
+    designer?: string;
+    delivery_date?: string;
+    contact?: string;
+    payment_status?: string;
+    products?: Array<Record<string, any>>;
+    costs?: Array<Record<string, any>>;
+    advances?: Array<Record<string, any>>;
     note: string;
   };
   type Reimbursement = Order & {
@@ -84,6 +92,8 @@ export function createOrderDesk(data: Data) {
   let noteFiles = $state<File[]>([]);
   let deliveryDate = $state("");
   let contact = $state("");
+  let customerDepartment = $state("");
+  let designer = $state("");
   let paymentStatus = $state("未结款");
   let status = $state("制作中");
   let products = $state<Array<Record<string, any>>>([]);
@@ -116,19 +126,30 @@ export function createOrderDesk(data: Data) {
   let filterCustomer = $state("");
   let filterProject = $state("");
   let filterOwner = $state("");
+  let filterDesigner = $state("");
   let filterCreator = $state("");
+  let filterPayment = $state("");
   let filterFrom = $state("");
   let filterTo = $state("");
+  let orderSort = $state("date_desc");
   let submitMode = $state<"save" | "reimburse">("save");
   let submitMenuOpen = $state(false);
   let showExport = $state(false);
+  let showOrderFilters = $state(false);
   let selectedOrderIds = $state<string[]>([]);
+  let visibleOrderColumns = $state(["department", "contact", "designer", "owner", "quote", "cost", "creator", "date", "delivery", "payment", "status"]);
+  const orderColumnOptions = [
+    ["department", "客户部门"], ["contact", "联系人"], ["designer", "设计师"],
+    ["owner", "项目负责人"], ["quote", "报价"], ["cost", "成本"], ["creator", "录入人"],
+    ["date", "下单日期"], ["delivery", "交货日期"], ["payment", "结款状态"], ["status", "状态"],
+  ];
   let selectedColumns = $state([
     "code",
     "order_date",
     "customer_name",
     "project_name",
     "project_owner",
+    "designer",
     "service_name",
     "quantity",
     "quote_amount",
@@ -141,6 +162,11 @@ export function createOrderDesk(data: Data) {
     ["customer_name", "客户"],
     ["project_name", "项目"],
     ["project_owner", "项目负责人"],
+    ["customer_department", "客户部门"],
+    ["designer", "设计师"],
+    ["contact", "联系人"],
+    ["delivery_date", "交货日期"],
+    ["payment_status", "结款状态"],
     ["service_name", "订单内容"],
     ["quantity", "数量"],
     ["unit", "单位"],
@@ -201,17 +227,30 @@ export function createOrderDesk(data: Data) {
     orders.filter(
       (o) =>
         (!search ||
-          `${o.code}${o.customer_name}${o.project_name}${o.service_name}`
+          `${o.code}${o.customer_name}${o.project_name}${o.service_name}${o.customer_department || ""}${o.contact || ""}${o.designer || ""}${o.created_by || ""}${o.note || ""}${(o.products || []).map((item: any) => `${item.name || ""}${item.specification || ""}`).join("")}${(o.costs || []).map((item: any) => item.name || "").join("")}`
             .toLowerCase()
             .includes(search.toLowerCase())) &&
         (!filterCustomer || o.customer_id === filterCustomer) &&
         (!filterProject || o.project_id === filterProject) &&
         (!filterOwner || o.project_owner === filterOwner) &&
+        (!filterDesigner || o.designer === filterDesigner) &&
         (!filterCreator || o.created_by === filterCreator) &&
+        (!filterPayment || o.payment_status === filterPayment) &&
         (!filterFrom || o.order_date >= filterFrom) &&
         (!filterTo || o.order_date <= filterTo),
-    ),
+    ).sort((a, b) => {
+      if (orderSort === "date_asc") return a.order_date.localeCompare(b.order_date);
+      if (orderSort === "quote_desc") return b.quote_amount - a.quote_amount;
+      if (orderSort === "quote_asc") return a.quote_amount - b.quote_amount;
+      if (orderSort === "delivery_asc") return (a.delivery_date || "9999-99-99").localeCompare(b.delivery_date || "9999-99-99");
+      return b.order_date.localeCompare(a.order_date);
+    }),
   );
+  function resetOrderFilters() {
+    search = ""; filterCustomer = ""; filterProject = ""; filterOwner = "";
+    filterDesigner = ""; filterCreator = ""; filterPayment = ""; filterFrom = "";
+    filterTo = ""; orderSort = "date_desc";
+  }
   const projectStats = $derived(
     projects
       .map((project) => {
@@ -221,6 +260,7 @@ export function createOrderDesk(data: Data) {
           orderCount: items.length,
           quote: items.reduce((sum, item) => sum + item.quote_amount, 0),
           cost: items.reduce((sum, item) => sum + item.cost_amount, 0),
+          advance: items.reduce((sum, item) => sum + (item.advances || []).reduce((subtotal, advance) => subtotal + Math.round(Number(advance.amount || 0) * 100), 0), 0),
         };
       })
       .filter((project) => project.orderCount > 0),
@@ -235,8 +275,20 @@ export function createOrderDesk(data: Data) {
   const totalCost = $derived(
     filteredOrders.reduce((sum, item) => sum + item.cost_amount, 0),
   );
+  const totalAdvance = $derived(
+    filteredOrders.reduce((sum, item) => sum + (item.advances || []).reduce((subtotal, advance) => subtotal + Math.round(Number(advance.amount || 0) * 100), 0), 0),
+  );
+  const totalUnpaid = $derived(
+    filteredOrders.filter((item) => (item.payment_status || "未结款") === "未结款").reduce((sum, item) => sum + item.quote_amount, 0),
+  );
   const owners = $derived([
     ...new Set(orders.map((o) => o.project_owner).filter(Boolean)),
+  ]);
+  const designers = $derived([
+    ...new Set(orders.map((o) => o.designer).filter(Boolean)),
+  ]);
+  const reimbursementPeople = $derived([
+    ...new Set(reimbursements.map((item: any) => item.employee).filter(Boolean)),
   ]);
   const creators = $derived([
     ...new Set(orders.map((o) => o.created_by).filter(Boolean)),
@@ -418,22 +470,24 @@ export function createOrderDesk(data: Data) {
     advances[index] = { ...advances[index], invoice: "", invoiceFile: null };
     advances = [...advances];
   }
-  async function uploadAttachments(orderId: string) {
-    const invoiceFiles = advances
-      .map((advance) => advance.invoiceFile as File | null)
-      .filter((file): file is File => file instanceof File);
-    if (!noteFiles.length && !invoiceFiles.length) return;
+  async function uploadAttachments(orderId: string, savedAdvances: Array<Record<string, any>>, submittedAdvances: Array<Record<string, any>>) {
+    const invoices = submittedAdvances.map((advance, index) => ({ file: advance.invoiceFile as File | null, advanceId: savedAdvances[index]?.id })).filter((item): item is { file: File; advanceId: string } => item.file instanceof File && Boolean(item.advanceId));
+    if (!noteFiles.length && !invoices.length) return;
     uploadingFiles = true;
     try {
       if (noteFiles.length) await postAttachments(orderId, noteFiles);
-      if (invoiceFiles.length) await postAttachments(orderId, invoiceFiles);
+      for (const invoice of invoices) await postAttachments(orderId, [invoice.file], { kind: "invoice", advanceId: invoice.advanceId });
     } finally {
       uploadingFiles = false;
     }
   }
-  async function postAttachments(orderId: string, files: File[]) {
+  async function postAttachments(orderId: string, files: File[], relation?: { kind: string; advanceId: string }) {
     const form = new FormData();
     for (const file of files) form.append("files", file, file.name);
+    if (relation) {
+      form.append("kind", relation.kind);
+      form.append("advance_id", relation.advanceId);
+    }
     const response = await fetch(
       `/api/orders/${encodeURIComponent(orderId)}/attachments`,
       { method: "POST", body: form },
@@ -467,6 +521,10 @@ export function createOrderDesk(data: Data) {
   async function submitOrder(event: SubmitEvent) {
     event.preventDefault();
     const hasName = (value: string) => String(value || '').trim().length > 0;
+    if (!hasName(customerDepartment) && !hasName(contact)) {
+      notify("客户部门和联系人 / 下单人至少填写一项", true);
+      return;
+    }
     const validProducts = products.filter((item) => hasName(item.name));
     const validCosts = costs.filter((item) => hasName(item.name));
     // 垫付行填写了物品名或金额大于 0 均视为有效（金额可先记，物品名后补）
@@ -477,11 +535,11 @@ export function createOrderDesk(data: Data) {
     }
     busy = true;
     try {
-      const payload = { project_id: projectId, catalog_id: catalogId, service_name: serviceName, quantity, unit, quote_amount: quoteAmount, cost_amount: costAmount, order_date: orderDate, delivery_date: deliveryDate, contact, payment_status: paymentStatus, status, created_by: createdBy, note, specification, products: validProducts, costs: validCosts, advances: validAdvances, submit_reimbursement: submitMode === "reimburse" };
+      const payload = { project_id: projectId, catalog_id: catalogId, service_name: serviceName, quantity, unit, quote_amount: quoteAmount, cost_amount: costAmount, order_date: orderDate, delivery_date: deliveryDate, contact, customer_department: customerDepartment, designer, payment_status: paymentStatus, status, created_by: createdBy, note, specification, products: validProducts, costs: validCosts, advances: validAdvances, submit_reimbursement: submitMode === "reimburse" };
       const result = editingOrderId
         ? await api.patch<{ data: Order }>(`/api/orders/${editingOrderId}`, payload)
         : await api.post<{ data: Order }>("/api/orders", payload);
-      await uploadAttachments(result.data.id);
+      await uploadAttachments(result.data.id, result.data.advances || [], validAdvances);
       await refresh();
       notify(
         submitMode === "reimburse" || advances.length
@@ -506,6 +564,8 @@ export function createOrderDesk(data: Data) {
       createdBy = creatorName;
       deliveryDate = "";
       contact = "";
+      customerDepartment = "";
+      designer = "";
       paymentStatus = "未结款";
       submitMode = "save";
       submitMenuOpen = false;
@@ -574,6 +634,8 @@ export function createOrderDesk(data: Data) {
     orderDate = order.order_date;
     deliveryDate = order.delivery_date || "";
     contact = order.contact || "";
+    customerDepartment = order.customer_department || "";
+    designer = order.designer || "";
     paymentStatus = order.payment_status || "未结款";
     status = order.status || "制作中";
     createdBy = order.created_by || creatorName;
@@ -610,7 +672,7 @@ export function createOrderDesk(data: Data) {
     products[index] = { ...products[index], name: item.name, unit: item.unit, unit_price: (item.quote_unit / 100).toFixed(2), cost_unit: (item.cost_unit / 100).toFixed(2), specification: item.specification || "", catalog_id: item.id };
     products = [...products];
   }
-  function addCost() { costs = [...costs, { name: "", vendor: "手工录入", quantity: 1, unit: "项", unit_price: 0, subtotal: 0 }]; }
+  function addCost() { costs = [...costs, { name: "", vendor: "手工录入", unit: "项", quantity: 1, unit_price: 0, subtotal: 0 }]; }
   function removeCost(index: number) { costs = costs.filter((_, i) => i !== index); }
   function updateCost(index: number, key: string, value: unknown) {
     if (key === "name" && costs[index]?.catalog_id) costs[index] = { ...costs[index], catalog_id: undefined };
@@ -629,7 +691,7 @@ export function createOrderDesk(data: Data) {
     if (found) { costs[index] = { ...costs[index], name: found.item.name, vendor: found.vendor || "成本库", unit: found.item.unit, unit_price: (found.item.cost_unit / 100).toFixed(2), catalog_id: found.item.id }; costs = [...costs]; }
     else updateCost(index, "name", name);
   }
-  function addAdvance() { advances = [...advances, { item: "", amount: 0, date: orderDate, invoice: "", invoiceFile: null as File | null }]; }
+  function addAdvance() { advances = [...advances, { id: crypto.randomUUID(), employee: designer || createdBy, item: "", amount: 0, date: orderDate, invoice: "", status: "待审核", invoiceFile: null as File | null }]; }
   function removeAdvance(index: number) { advances = advances.filter((_, i) => i !== index); }
   function updateAdvance(index: number, key: string, value: unknown) { advances[index] = { ...advances[index], [key]: value }; advances = [...advances]; }
   function startNewOrder() { editingOrderId = ""; detailOrder = null; products = [{ name: "", quantity: 1, unit: "项", unit_price: 0, cost_unit: 0, subtotal: 0, specification: "" }]; costs = []; advances = []; serviceName = ""; view = "entry"; }
@@ -667,6 +729,11 @@ export function createOrderDesk(data: Data) {
     selectedColumns = selectedColumns.includes(key)
       ? selectedColumns.filter((item) => item !== key)
       : [...selectedColumns, key];
+  }
+  function toggleOrderColumn(key: string) {
+    visibleOrderColumns = visibleOrderColumns.includes(key)
+      ? visibleOrderColumns.filter((item) => item !== key)
+      : [...visibleOrderColumns, key];
   }
   async function deleteOrder(order: Order) {
     if (
@@ -714,6 +781,8 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "noteFiles", { get: () => noteFiles, set: (value) => { noteFiles = value; } });
   Object.defineProperty(desk, "deliveryDate", { get: () => deliveryDate, set: (value) => { deliveryDate = value; } });
   Object.defineProperty(desk, "contact", { get: () => contact, set: (value) => { contact = value; } });
+  Object.defineProperty(desk, "customerDepartment", { get: () => customerDepartment, set: (value) => { customerDepartment = value; } });
+  Object.defineProperty(desk, "designer", { get: () => designer, set: (value) => { designer = value; } });
   Object.defineProperty(desk, "paymentStatus", { get: () => paymentStatus, set: (value) => { paymentStatus = value; } });
   Object.defineProperty(desk, "status", { get: () => status, set: (value) => { status = value; } });
   Object.defineProperty(desk, "editingOrderId", { get: () => editingOrderId });
@@ -745,14 +814,20 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "filterCustomer", { get: () => filterCustomer, set: (value) => { filterCustomer = value; } });
   Object.defineProperty(desk, "filterProject", { get: () => filterProject, set: (value) => { filterProject = value; } });
   Object.defineProperty(desk, "filterOwner", { get: () => filterOwner, set: (value) => { filterOwner = value; } });
+  Object.defineProperty(desk, "filterDesigner", { get: () => filterDesigner, set: (value) => { filterDesigner = value; } });
   Object.defineProperty(desk, "filterCreator", { get: () => filterCreator, set: (value) => { filterCreator = value; } });
+  Object.defineProperty(desk, "filterPayment", { get: () => filterPayment, set: (value) => { filterPayment = value; } });
   Object.defineProperty(desk, "filterFrom", { get: () => filterFrom, set: (value) => { filterFrom = value; } });
   Object.defineProperty(desk, "filterTo", { get: () => filterTo, set: (value) => { filterTo = value; } });
+  Object.defineProperty(desk, "orderSort", { get: () => orderSort, set: (value) => { orderSort = value; } });
   Object.defineProperty(desk, "submitMode", { get: () => submitMode, set: (value) => { submitMode = value; } });
   Object.defineProperty(desk, "submitMenuOpen", { get: () => submitMenuOpen, set: (value) => { submitMenuOpen = value; } });
   Object.defineProperty(desk, "showExport", { get: () => showExport, set: (value) => { showExport = value; } });
+  Object.defineProperty(desk, "showOrderFilters", { get: () => showOrderFilters, set: (value) => { showOrderFilters = value; } });
   Object.defineProperty(desk, "selectedOrderIds", { get: () => selectedOrderIds, set: (value) => { selectedOrderIds = value; } });
   Object.defineProperty(desk, "selectedColumns", { get: () => selectedColumns, set: (value) => { selectedColumns = value; } });
+  Object.defineProperty(desk, "visibleOrderColumns", { get: () => visibleOrderColumns });
+  desk.orderColumnOptions = orderColumnOptions;
   Object.defineProperty(desk, "filteredProjects", { get: () => filteredProjects });
   Object.defineProperty(desk, "visibleCatalog", { get: () => visibleCatalog });
   Object.defineProperty(desk, "catalogCategories", { get: () => catalogCategories });
@@ -765,7 +840,11 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "allFilteredSelected", { get: () => allFilteredSelected });
   Object.defineProperty(desk, "totalQuote", { get: () => totalQuote });
   Object.defineProperty(desk, "totalCost", { get: () => totalCost });
+  Object.defineProperty(desk, "totalAdvance", { get: () => totalAdvance });
+  Object.defineProperty(desk, "totalUnpaid", { get: () => totalUnpaid });
   Object.defineProperty(desk, "owners", { get: () => owners });
+  Object.defineProperty(desk, "designers", { get: () => designers });
+  Object.defineProperty(desk, "reimbursementPeople", { get: () => reimbursementPeople });
   Object.defineProperty(desk, "creators", { get: () => creators });
   desk.money = money;
   desk.refresh = refresh;
@@ -778,11 +857,19 @@ export function createOrderDesk(data: Data) {
   desk.openExport = openExport;
   desk.downloadExport = downloadExport;
   desk.toggleColumn = toggleColumn;
+  desk.toggleOrderColumn = toggleOrderColumn;
+  desk.resetOrderFilters = resetOrderFilters;
   desk.deleteOrder = deleteOrder;
   desk.openDetail = openDetail;
   desk.fetchAttachments = async (orderId: string) => {
     const result = await api.get<{ data: Array<Record<string, any>> }>(
       `/api/orders/${encodeURIComponent(orderId)}/attachments`,
+    );
+    return result.data;
+  };
+  desk.fetchAdvanceAttachments = async (orderId: string, advanceId: string) => {
+    const result = await api.get<{ data: Array<Record<string, any>> }>(
+      `/api/orders/${encodeURIComponent(orderId)}/attachments?advance_id=${encodeURIComponent(advanceId)}`,
     );
     return result.data;
   };

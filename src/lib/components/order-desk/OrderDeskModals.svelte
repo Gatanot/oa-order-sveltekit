@@ -119,6 +119,20 @@
       </div>
     </div>
   </div>{/if}
+{#if desk.showOrderFilters}<div class="drawer-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) desk.showOrderFilters = false; }}>
+  <div class="export-drawer filter-drawer" role="dialog" aria-modal="true" aria-labelledby="order-filter-title" tabindex="-1">
+    <div class="drawer-head"><div><p class="section-kicker">ORDER FILTERS</p><h2 id="order-filter-title">筛选订单</h2><span>筛选结果会同步更新列表与金额汇总</span></div><button class="icon-control" aria-label="关闭筛选" onclick={() => desk.showOrderFilters = false}><X size={17} /></button></div>
+    <div class="drawer-body"><div class="drawer-filter-grid">
+      <label>项目负责人<select bind:value={desk.filterOwner}><option value="">全部负责人</option>{#each desk.owners as owner}<option value={owner}>{owner}</option>{/each}</select></label>
+      <label>设计师<select bind:value={desk.filterDesigner}><option value="">全部设计师</option>{#each desk.designers as designer}<option value={designer}>{designer}</option>{/each}</select></label>
+      <label>结款状态<select bind:value={desk.filterPayment}><option value="">全部结款状态</option><option>未结款</option><option>已结款</option></select></label>
+      <label>录入人<select bind:value={desk.filterCreator}><option value="">全部录入人</option>{#each desk.creators as creator}<option value={creator}>{creator}</option>{/each}</select></label>
+      <label>开始日期<input class="date-input" type="date" bind:value={desk.filterFrom} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} /></label>
+      <label>结束日期<input class="date-input" type="date" bind:value={desk.filterTo} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} /></label>
+    </div></div>
+    <div class="drawer-footer"><button class="outline-action" type="button" onclick={desk.resetOrderFilters}>重置全部</button><button class="primary-action" type="button" onclick={() => desk.showOrderFilters = false}>查看结果</button></div>
+  </div>
+</div>{/if}
 {#if desk.showExport}<div
     class="drawer-backdrop"
     role="presentation"
@@ -166,9 +180,9 @@
         </div>
         <div class="drawer-filter-grid">
           <label
-            >开始日期<input type="date" bind:value={desk.filterFrom} /></label
+            >开始日期<input class="date-input" type="date" bind:value={desk.filterFrom} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} /></label
           ><label
-            >结束日期<input type="date" bind:value={desk.filterTo} /></label
+            >结束日期<input class="date-input" type="date" bind:value={desk.filterTo} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} /></label
           ><label
             >客户<select bind:value={desk.filterCustomer}
               ><option value="">全部客户</option

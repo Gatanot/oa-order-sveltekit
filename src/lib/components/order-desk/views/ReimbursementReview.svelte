@@ -13,7 +13,7 @@
       return;
     }
     try {
-      const files = await desk.fetchAttachments(orderId);
+      const files = await desk.fetchAdvanceAttachments(item.order_id, item.advance_id);
       attachmentsByOrder = { ...attachmentsByOrder, [orderId]: files };
     } catch {
       attachmentsByOrder = { ...attachmentsByOrder, [orderId]: [] };
@@ -27,7 +27,7 @@
       <p class="section-kicker">FINANCE REVIEW</p>
       <h2>员工垫付 / 报销核验</h2>
       <span
-        >未选择报价成本库的订单默认进入这里，按项目、日期和录入人员核验。</span
+        >未选择报价成本库的订单默认进入这里，按项目、垫付人员和垫付日期核验。</span
       >
     </div>
   </div>
@@ -37,7 +37,7 @@
           value={project.id}>{project.name}</option
         >{/each}</select
     ><select bind:value={desk.reimbursementPerson}
-      ><option value="">全部人员</option>{#each desk.creators as person}<option
+      ><option value="">全部人员</option>{#each desk.reimbursementPeople as person}<option
           value={person}>{person}</option
         >{/each}</select
     ><select bind:value={desk.reimbursementStatus}
@@ -47,13 +47,17 @@
       ></select
     ><label class="date-field"
       ><span>从</span><input
+        class="date-input"
         type="date"
         bind:value={desk.reimbursementFrom}
+        onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()}
       /></label
     ><label class="date-field"
       ><span>至</span><input
+        class="date-input"
         type="date"
         bind:value={desk.reimbursementTo}
+        onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()}
       /></label
     >
   </div>
@@ -62,16 +66,16 @@
       <table>
         <thead
           ><tr
-            ><th>订单</th><th>项目 / 人员</th><th>日期</th><th>订单内容</th><th
+            ><th>订单</th><th>项目 / 垫付员工</th><th>垫付日期</th><th>垫付物品</th><th
               >金额</th
             ><th>备注附件</th><th>报销状态</th><th>操作</th></tr
           ></thead
         ><tbody
-          >{#each desk.reimbursements.filter((item: any) => (!desk.reimbursementProject || item.project_id === desk.reimbursementProject) && (!desk.reimbursementPerson || item.created_by === desk.reimbursementPerson) && (!desk.reimbursementStatus || item.reimbursement_status === desk.reimbursementStatus) && (!desk.reimbursementFrom || item.order_date >= desk.reimbursementFrom) && (!desk.reimbursementTo || item.order_date <= desk.reimbursementTo)) as item}<tr
+          >{#each desk.reimbursements.filter((item: any) => (!desk.reimbursementProject || item.project_id === desk.reimbursementProject) && (!desk.reimbursementPerson || item.employee === desk.reimbursementPerson) && (!desk.reimbursementStatus || item.reimbursement_status === desk.reimbursementStatus) && (!desk.reimbursementFrom || item.advance_date >= desk.reimbursementFrom) && (!desk.reimbursementTo || item.advance_date <= desk.reimbursementTo)) as item}<tr
               ><td><b>{item.code}</b></td><td
-                ><b>{item.project_name}</b><small>{item.created_by}</small></td
-              ><td>{item.order_date}</td><td>{item.service_name}</td><td
-                class="money">{desk.money(item.cost_amount)}</td
+                ><b>{item.project_name}</b><small>{item.employee}</small></td
+              ><td>{item.advance_date}</td><td>{item.advance_item || "—"}</td><td
+                class="money">{desk.money(item.advance_amount)}</td
               ><td
                 >{#if item.attachment_count}<button
                     class="attachment-toggle"
