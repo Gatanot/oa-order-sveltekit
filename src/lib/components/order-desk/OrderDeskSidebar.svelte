@@ -28,6 +28,7 @@
     <div><b>ORBIT OA</b><span>订单工作台</span></div>
   </div>
   <div class="side-caption">工作台</div>
+  <label class="role-picker">当前身份<select value={desk.reimbursementRole} onchange={(event) => desk.setReimbursementRole((event.currentTarget as HTMLSelectElement).value)}><option value="employee">员工视图</option><option value="finance">财务视图</option></select></label>
   <button
     class:active={desk.view === "overview"}
     onclick={() => (desk.view = "overview")}

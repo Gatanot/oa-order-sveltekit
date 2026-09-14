@@ -1,5 +1,5 @@
-import * as XLSX from "xlsx";
 import { onMount } from "svelte";
+import type * as XLSXType from "xlsx";
 import { api } from "$lib/api";
 
   type Customer = { id: string; name: string; contact: string };
@@ -115,8 +115,10 @@ export function createOrderDesk(data: Data) {
   let busy = $state(false);
   let message = $state("");
   let error = $state("");
+  let reimbursementRole = $state<"employee" | "finance">("employee");
   let reimbursementProject = $state("");
   let reimbursementPerson = $state("");
+  let reimbursementType = $state<"" | "order" | "internal">("");
   let reimbursementStatus = $state("");
   let reimbursementFrom = $state("");
   let reimbursementTo = $state("");
@@ -135,6 +137,15 @@ export function createOrderDesk(data: Data) {
   let submitMode = $state<"save" | "reimburse">("save");
   let submitMenuOpen = $state(false);
   let showExport = $state(false);
+  let exportMode = $state<"detail" | "settlement">("detail");
+  let exportTitle = $state("");
+  let exportContract = $state("");
+  let exportPartyA = $state("");
+  let exportPartyB = $state("");
+  let exportFollowB = $state("");
+  let exportRemarkOrder = $state(true);
+  let exportTotal = $state(true);
+  let exportSign = $state(true);
   let showOrderFilters = $state(false);
   let showStandaloneReimbursement = $state(false);
   let selectedReimbursementIds = $state<string[]>([]);
@@ -182,11 +193,20 @@ export function createOrderDesk(data: Data) {
     ["unit", "单位"],
     ["quote_amount", "总报价"],
     ["cost_amount", "总成本"],
+    ["advance_amount", "员工垫付"],
+    ["profit", "预计毛利"],
+    ["product_name", "产品名称"],
+    ["product_specification", "制作要求"],
+    ["product_quantity", "产品数量"],
+    ["product_unit", "产品单位"],
+    ["product_unit_price", "产品单价"],
+    ["product_subtotal", "产品小计"],
     ["created_by", "录入人"],
     ["status", "状态"],
     ["note", "备注"],
     ["reimbursement_status", "报销状态"],
   ];
+  const loadXlsx = () => import("xlsx") as Promise<typeof XLSXType>;
   const money = (c: number) =>
     `¥${(c / 100).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}`;
   const formatFileSize = (size: number) =>
@@ -301,11 +321,42 @@ export function createOrderDesk(data: Data) {
   const reimbursementPeople = $derived([
     ...new Set(reimbursements.map((item: any) => item.employee).filter(Boolean)),
   ]);
+  const reimbursementRowsForRole = $derived(
+    reimbursements.filter((item: any) =>
+      reimbursementRole === "finance" || (creatorName !== "" && item.employee === creatorName),
+    ),
+  );
   const reimbursementStats = $derived({
-    pendingReview: reimbursements.filter((item: any) => item.reimbursement_status === "待核验").length,
-    pendingPay: reimbursements.filter((item: any) => item.reimbursement_status === "待报销").length,
-    amount: reimbursements.reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
+    total: reimbursementRowsForRole.length,
+    pendingReview: reimbursementRowsForRole.filter((item: any) => item.reimbursement_status === "待核验").length,
+    pendingReviewAmount: reimbursementRowsForRole.filter((item: any) => item.reimbursement_status === "待核验").reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
+    pendingPay: reimbursementRowsForRole.filter((item: any) => item.reimbursement_status === "待报销").length,
+    paid: reimbursementRowsForRole.filter((item: any) => item.reimbursement_status === "已报销").length,
+    rejected: reimbursementRowsForRole.filter((item: any) => item.reimbursement_status === "已打回").length,
+    amount: reimbursementRowsForRole.reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
+    pendingPayAmount: reimbursementRowsForRole.filter((item: any) => item.reimbursement_status === "待报销").reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
   });
+  const reimbursementPaymentSummary = $derived(
+    reimbursements
+      .filter((item: any) => item.reimbursement_status === "待报销")
+      .reduce((groups: Array<any>, item: any) => {
+        const employee = item.employee || "未填写";
+        const existing = groups.find((group) => group.employee === employee);
+        if (existing) {
+          existing.count += 1;
+          existing.amount += Number(item.advance_amount || 0);
+        } else {
+          groups.push({ employee, count: 1, amount: Number(item.advance_amount || 0) });
+        }
+        return groups;
+      }, [])
+      .sort((a, b) => b.amount - a.amount),
+  );
+  const reimbursementVouchers = $derived(
+    reimbursements
+      .filter((item: any) => item.voucher_no)
+      .map((item: any) => ({ ...item, voucherNo: item.voucher_no })),
+  );
   const creators = $derived([
     ...new Set(orders.map((o) => o.created_by).filter(Boolean)),
   ]);
@@ -464,9 +515,55 @@ export function createOrderDesk(data: Data) {
     standaloneInvoiceFile = file;
   }
   function reimbursementRows() {
-    return reimbursements.filter((item: any) => (!reimbursementProject || item.project_id === reimbursementProject) && (!reimbursementPerson || item.employee === reimbursementPerson) && (!reimbursementStatus || item.reimbursement_status === reimbursementStatus) && (!reimbursementFrom || item.advance_date >= reimbursementFrom) && (!reimbursementTo || item.advance_date <= reimbursementTo));
+    if (reimbursementRole === "finance" && !reimbursementPerson) return [];
+    return reimbursementRowsForRole.filter((item: any) =>
+      (reimbursementRole !== "finance" || item.employee === reimbursementPerson) &&
+      (!reimbursementProject || item.project_id === reimbursementProject) &&
+      (!reimbursementType || (reimbursementType === "order" ? !!item.order_id : !item.order_id)) &&
+      (!reimbursementStatus || item.reimbursement_status === reimbursementStatus) &&
+      (!reimbursementFrom || item.advance_date >= reimbursementFrom) &&
+      (!reimbursementTo || item.advance_date <= reimbursementTo),
+    );
   }
-  function exportReimbursements() {
+  function resetReimbursementFilters() {
+    reimbursementProject = "";
+    reimbursementPerson = "";
+    reimbursementType = "";
+    reimbursementStatus = "";
+    reimbursementFrom = "";
+    reimbursementTo = "";
+    selectedReimbursementIds = [];
+  }
+  function setReimbursementRole(role: "employee" | "finance") {
+    reimbursementRole = role;
+    resetReimbursementFilters();
+  }
+  async function batchUpdateReimbursements(ids: string[], status: string, rejectReason = "") {
+    const response = await fetch("/api/reimbursements/batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids, status, reject_reason: rejectReason, actor: creatorName || "财务人员" }),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.detail || body.message || "批量更新失败");
+    }
+    return (await response.json()).data as Array<any>;
+  }
+  async function batchReviewReimbursements() {
+    const targets = reimbursementRows().filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "待核验");
+    if (!targets.length) { notify("请选择待核验记录", true); return; }
+    busy = true;
+    try {
+      await batchUpdateReimbursements(targets.map((item) => item.id), "待报销");
+      selectedReimbursementIds = [];
+      await refresh();
+      notify(`已确认 ${targets.length} 条报销，进入待付款队列`);
+    } catch (e) { notify(e instanceof Error ? e.message : "批量审核失败", true); }
+    finally { busy = false; }
+  }
+  async function exportReimbursements() {
+    const XLSX = await loadXlsx();
     const rows = reimbursementRows().map((item: any) => ({
       来源类型: item.source_type || (item.order_id ? "订单报销" : "内务报销"),
       来源订单: item.code || "内务报销",
@@ -487,18 +584,112 @@ export function createOrderDesk(data: Data) {
     notify(`已导出 ${rows.length} 条报销记录`);
   }
   async function batchMarkReimbursed() {
-    const targets = reimbursementRows().filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "待报销");
+    const targets = reimbursements.filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "待报销");
     if (!targets.length) { notify("请选择待报销记录", true); return; }
     busy = true;
     try {
-      const responses = await Promise.all(targets.map((item: any) => fetch(`/api/reimbursements/${encodeURIComponent(item.id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "已报销", actor: creatorName || "财务人员" }) })));
-      const failed = responses.filter((response) => !response.ok).length;
-      if (failed) throw new Error(`${failed} 条报销记录更新失败，请刷新后重试`);
+      await batchUpdateReimbursements(targets.map((item) => item.id), "已报销");
       selectedReimbursementIds = [];
       await refresh();
       notify(`已标记 ${targets.length} 条报销记录为已报销`);
     } catch (e) { notify(e instanceof Error ? e.message : "批量处理失败", true); }
     finally { busy = false; }
+  }
+  async function exportPaymentSummary() {
+    const XLSX = await loadXlsx();
+    const rows = reimbursements.filter((item: any) => item.reimbursement_status === "待报销");
+    if (!rows.length) { notify("暂无待付款记录", true); return; }
+    const groups = new Map<string, any[]>();
+    for (const item of rows) {
+      const employee = (item as any).employee || "未填写";
+      groups.set(employee, [...(groups.get(employee) || []), item]);
+    }
+    const summary = [...groups.entries()].map(([employee, items]) => ({
+      员工: employee,
+      待付款单数: items.length,
+      应付金额: items.reduce((sum, item) => sum + Number(item.advance_amount || 0), 0) / 100,
+      明细: items.map((item) => item.advance_item || item.item).join("、"),
+      最近日期: items.map((item) => item.advance_date).sort().at(-1) || "",
+    }));
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summary), "待付款汇总");
+    XLSX.writeFile(workbook, `最近应付汇总单-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    notify(`已导出 ${summary.length} 位员工的待付款汇总`);
+  }
+  async function markEmployeeReimbursed(employee: string) {
+    const targets = reimbursements.filter((item: any) => item.employee === employee && item.reimbursement_status === "待报销");
+    if (!targets.length) { notify("该员工暂无待付款报销", true); return; }
+    busy = true;
+    try {
+      await batchUpdateReimbursements(targets.map((item) => item.id), "已报销");
+      selectedReimbursementIds = selectedReimbursementIds.filter((id) => !targets.some((item) => item.id === id));
+      await refresh();
+      notify(`${employee} 已确认打款`);
+    } catch (e) { notify(e instanceof Error ? e.message : "确认打款失败", true); }
+    finally { busy = false; }
+  }
+  async function generateReimbursementVoucher(item: any) {
+    busy = true;
+    try {
+      const response = await fetch(`/api/reimbursements/${encodeURIComponent(item.id)}/voucher`, { method: "POST" });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.detail || body.message || "生成单据失败");
+      }
+      await refresh();
+      notify("报销单据已生成");
+    } catch (e) { notify(e instanceof Error ? e.message : "生成单据失败", true); }
+    finally { busy = false; }
+  }
+  async function rejectReimbursement(item: any) {
+    const reason = window.prompt("打回原因（员工可见）：", item.reject_reason || "");
+    if (reason === null) return;
+    busy = true;
+    try {
+      const response = await fetch(`/api/reimbursements/${encodeURIComponent(item.id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "已打回", reject_reason: reason.trim() || "附件不清晰，请重新上传", actor: creatorName || "财务人员" }) });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.message || body.detail || "打回失败");
+      }
+      selectedReimbursementIds = selectedReimbursementIds.filter((id) => id !== item.id);
+      await refresh();
+      notify("报销已打回，员工可查看原因并重新上传发票");
+    } catch (e) { notify(e instanceof Error ? e.message : "打回失败", true); }
+    finally { busy = false; }
+  }
+  async function batchRejectReimbursements() {
+    const targets = reimbursementRows().filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "待核验");
+    if (!targets.length) { notify("请选择待核验记录", true); return; }
+    const reason = window.prompt("批量打回原因（员工可见）：", "附件不清晰，请重新上传");
+    if (reason === null) return;
+    busy = true;
+    try {
+      await batchUpdateReimbursements(targets.map((item) => item.id), "已打回", reason.trim() || "附件不清晰，请重新上传");
+      selectedReimbursementIds = [];
+      await refresh();
+      notify(`已打回 ${targets.length} 条报销`);
+    } catch (e) { notify(e instanceof Error ? e.message : "批量打回失败", true); }
+    finally { busy = false; }
+  }
+  async function reuploadReimbursement(item: any) {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/png,image/jpeg,image/gif,image/webp,application/pdf,.pdf";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      if (file.size > 10 * 1024 * 1024) { notify("发票文件不能超过 10MB", true); return; }
+      busy = true;
+      try {
+        const form = new FormData(); form.append("file", file, file.name);
+        const response = await fetch(`/api/reimbursements/${encodeURIComponent(item.id)}/attachments`, { method: "POST", body: form });
+        if (!response.ok) throw new Error((await response.json()).message || "发票上传失败");
+        await refresh();
+        notify("发票已重新上传，等待财务核验");
+      } catch (e) { notify(e instanceof Error ? e.message : "发票上传失败", true); }
+      finally { busy = false; }
+    };
+    input.click();
   }
   function toggleReimbursement(id: string) {
     selectedReimbursementIds = selectedReimbursementIds.includes(id) ? selectedReimbursementIds.filter((item) => item !== id) : [...selectedReimbursementIds, id];
@@ -720,6 +911,7 @@ export function createOrderDesk(data: Data) {
     if (!file) return;
     busy = true;
     try {
+      const XLSX = await loadXlsx();
       const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
       const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(
         workbook.Sheets[workbook.SheetNames[0]],
@@ -826,6 +1018,13 @@ export function createOrderDesk(data: Data) {
   }
   function openExport() {
     selectedOrderIds = filteredOrders.map((order) => order.id);
+    const first = filteredOrders[0];
+    exportTitle = first ? `${first.project_name || first.customer_name || "订单"}结算明细` : "订单结算明细";
+    exportPartyA = first?.customer_name || "";
+    exportPartyB = "";
+    exportContract = "";
+    exportFollowB = creatorName || "";
+    exportMode = "detail";
     showExport = true;
   }
   function downloadExport() {
@@ -838,6 +1037,15 @@ export function createOrderDesk(data: Data) {
       project: filterProject,
       ids: selectedOrderIds.join(","),
       columns: selectedColumns.join(","),
+      mode: exportMode,
+      title: exportTitle,
+      contract: exportContract,
+      partyA: exportPartyA,
+      partyB: exportPartyB,
+      followB: exportFollowB,
+      remarkOrder: String(exportRemarkOrder),
+      total: String(exportTotal),
+      sign: String(exportSign),
     });
     window.location.href = `/api/orders/export?${params}`;
     showExport = false;
@@ -920,8 +1128,10 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "busy", { get: () => busy, set: (value) => { busy = value; } });
   Object.defineProperty(desk, "message", { get: () => message, set: (value) => { message = value; } });
   Object.defineProperty(desk, "error", { get: () => error, set: (value) => { error = value; } });
+  Object.defineProperty(desk, "reimbursementRole", { get: () => reimbursementRole, set: (value) => { setReimbursementRole(value); } });
   Object.defineProperty(desk, "reimbursementProject", { get: () => reimbursementProject, set: (value) => { reimbursementProject = value; } });
   Object.defineProperty(desk, "reimbursementPerson", { get: () => reimbursementPerson, set: (value) => { reimbursementPerson = value; } });
+  Object.defineProperty(desk, "reimbursementType", { get: () => reimbursementType, set: (value) => { reimbursementType = value; } });
   Object.defineProperty(desk, "reimbursementStatus", { get: () => reimbursementStatus, set: (value) => { reimbursementStatus = value; } });
   Object.defineProperty(desk, "reimbursementFrom", { get: () => reimbursementFrom, set: (value) => { reimbursementFrom = value; } });
   Object.defineProperty(desk, "reimbursementTo", { get: () => reimbursementTo, set: (value) => { reimbursementTo = value; } });
@@ -940,6 +1150,15 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "submitMode", { get: () => submitMode, set: (value) => { submitMode = value; } });
   Object.defineProperty(desk, "submitMenuOpen", { get: () => submitMenuOpen, set: (value) => { submitMenuOpen = value; } });
   Object.defineProperty(desk, "showExport", { get: () => showExport, set: (value) => { showExport = value; } });
+  Object.defineProperty(desk, "exportMode", { get: () => exportMode, set: (value) => { exportMode = value; } });
+  Object.defineProperty(desk, "exportTitle", { get: () => exportTitle, set: (value) => { exportTitle = value; } });
+  Object.defineProperty(desk, "exportContract", { get: () => exportContract, set: (value) => { exportContract = value; } });
+  Object.defineProperty(desk, "exportPartyA", { get: () => exportPartyA, set: (value) => { exportPartyA = value; } });
+  Object.defineProperty(desk, "exportPartyB", { get: () => exportPartyB, set: (value) => { exportPartyB = value; } });
+  Object.defineProperty(desk, "exportFollowB", { get: () => exportFollowB, set: (value) => { exportFollowB = value; } });
+  Object.defineProperty(desk, "exportRemarkOrder", { get: () => exportRemarkOrder, set: (value) => { exportRemarkOrder = value; } });
+  Object.defineProperty(desk, "exportTotal", { get: () => exportTotal, set: (value) => { exportTotal = value; } });
+  Object.defineProperty(desk, "exportSign", { get: () => exportSign, set: (value) => { exportSign = value; } });
   Object.defineProperty(desk, "showOrderFilters", { get: () => showOrderFilters, set: (value) => { showOrderFilters = value; } });
   Object.defineProperty(desk, "showStandaloneReimbursement", { get: () => showStandaloneReimbursement, set: (value) => { showStandaloneReimbursement = value; } });
   Object.defineProperty(desk, "selectedReimbursementIds", { get: () => selectedReimbursementIds, set: (value) => { selectedReimbursementIds = value; } });
@@ -972,6 +1191,10 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "designers", { get: () => designers });
   Object.defineProperty(desk, "reimbursementPeople", { get: () => reimbursementPeople });
   Object.defineProperty(desk, "reimbursementStats", { get: () => reimbursementStats });
+  Object.defineProperty(desk, "reimbursementRowsForRole", { get: () => reimbursementRowsForRole });
+  Object.defineProperty(desk, "reimbursementRows", { get: () => reimbursementRows });
+  Object.defineProperty(desk, "reimbursementPaymentSummary", { get: () => reimbursementPaymentSummary });
+  Object.defineProperty(desk, "reimbursementVouchers", { get: () => reimbursementVouchers });
   Object.defineProperty(desk, "creators", { get: () => creators });
   desk.money = money;
   desk.refresh = refresh;
@@ -979,6 +1202,15 @@ export function createOrderDesk(data: Data) {
   desk.openStandaloneReimbursement = openStandaloneReimbursement;
   desk.exportReimbursements = exportReimbursements;
   desk.batchMarkReimbursed = batchMarkReimbursed;
+  desk.markEmployeeReimbursed = markEmployeeReimbursed;
+  desk.exportPaymentSummary = exportPaymentSummary;
+  desk.batchReviewReimbursements = batchReviewReimbursements;
+  desk.batchRejectReimbursements = batchRejectReimbursements;
+  desk.rejectReimbursement = rejectReimbursement;
+  desk.generateReimbursementVoucher = generateReimbursementVoucher;
+  desk.reuploadReimbursement = reuploadReimbursement;
+  desk.setReimbursementRole = setReimbursementRole;
+  desk.resetReimbursementFilters = resetReimbursementFilters;
   desk.toggleReimbursement = toggleReimbursement;
   desk.deleteReimbursement = deleteReimbursement;
   desk.submitStandaloneReimbursement = submitStandaloneReimbursement;

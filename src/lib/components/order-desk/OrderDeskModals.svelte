@@ -9,12 +9,12 @@
     <div class="project-modal-head"><div><p class="section-kicker">NEW REIMBURSEMENT</p><h2 id="reimbursement-modal-title">新建报销</h2><span>可关联已有订单，也可以作为内务报销提交。</span></div><button class="icon-control" aria-label="关闭新建报销窗口" onclick={() => desk.showStandaloneReimbursement = false}><X size={18} /></button></div>
     <form onsubmit={(event) => { event.preventDefault(); desk.submitStandaloneReimbursement(); }}>
       <div class="project-modal-body reimbursement-form-body">
-        <label>报销人 <em>*</em><input bind:value={desk.standaloneEmployee} placeholder="例如：张三" required /></label>
+        <label>报销人 <em>*</em><input bind:value={desk.standaloneEmployee} placeholder="例如：张三" readonly={desk.reimbursementRole === "employee"} required /></label>
         <label>报销物品 <em>*</em><input bind:value={desk.standaloneItem} placeholder="例如：客户现场打车" required /></label>
         <label>报销金额（元） <em>*</em><input type="number" inputmode="decimal" min="0.01" step="0.01" bind:value={desk.standaloneAmount} placeholder="0.00" required /></label>
         <label>垫付日期 <em>*</em><input class="date-input" type="date" bind:value={desk.standaloneDate} required /></label>
         <label class="full-field">关联订单<select bind:value={desk.standaloneOrderId}><option value="">不关联订单 · 内务报销</option>{#each desk.orders as order}<option value={order.id}>{order.code} · {order.customer_name} · {order.project_name}</option>{/each}</select></label>
-        <label class="full-field">发票文件<input type="text" value={desk.standaloneInvoice || "未上传（可先填写文件名）"} readonly onclick={() => document.getElementById("standalone-invoice")?.click()} /><input id="standalone-invoice" class="visually-hidden" type="file" accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,.pdf" onchange={desk.onStandaloneInvoiceChange} /></label>
+        <label class="full-field">发票文件<input type="text" value={desk.standaloneInvoice || "未上传附件"} readonly onclick={() => document.getElementById("standalone-invoice")?.click()} /><input id="standalone-invoice" class="visually-hidden" type="file" accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,.pdf" onchange={desk.onStandaloneInvoiceChange} /></label>
         <label class="full-field">备注<textarea bind:value={desk.standaloneNote} placeholder="补充报销说明（选填）"></textarea></label>
       </div>
       <div class="project-modal-footer"><button type="button" class="outline-action" onclick={() => desk.showStandaloneReimbursement = false}>取消</button><button type="submit" class="primary-action" disabled={desk.busy}>{desk.busy ? "保存中..." : "保存报销"}</button></div>
@@ -169,6 +169,19 @@
         >
       </div>
       <div class="drawer-body">
+        <div class="export-mode-picker">
+          <label>导出模式<select bind:value={desk.exportMode}><option value="detail">自选字段明细</option><option value="settlement">客户结算单</option></select></label>
+          {#if desk.exportMode === "settlement"}
+            <div class="export-template-grid">
+              <label>标题<input bind:value={desk.exportTitle} placeholder="例如：2026年宣传物料结算单" /></label>
+              <label>合同编号<input bind:value={desk.exportContract} placeholder="可留空" /></label>
+              <label>甲方（客户）<input bind:value={desk.exportPartyA} placeholder="客户名称" /></label>
+              <label>乙方（我方）<input bind:value={desk.exportPartyB} placeholder="执行方名称，可留空" /></label>
+              <label>乙方项目跟进人<input bind:value={desk.exportFollowB} placeholder="可留空" /></label>
+            </div>
+            <div class="export-options"><label><input type="checkbox" bind:checked={desk.exportRemarkOrder} /> 备注列填写订单编号</label><label><input type="checkbox" bind:checked={desk.exportTotal} /> 附带总计行</label><label><input type="checkbox" bind:checked={desk.exportSign} /> 附带签署栏</label></div>
+          {/if}
+        </div>
         <div class="export-selection">
           <div class="picker-head">
             <b>选择导出订单</b><span
@@ -229,7 +242,7 @@
             ></label
           >
         </div>
-        <div class="column-picker">
+        {#if desk.exportMode === "detail"}<div class="column-picker">
           <div class="picker-head">
             <b>导出列</b><span>已选 {desk.selectedColumns.length} 列</span>
           </div>
@@ -242,7 +255,7 @@
                 /><span>{label}</span></label
               >{/each}
           </div>
-        </div>
+        </div>{/if}
       </div>
       <div class="drawer-footer">
         <span>预计导出 {desk.selectedOrderIds.length} 条记录</span><button

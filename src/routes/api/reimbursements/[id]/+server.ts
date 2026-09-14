@@ -9,5 +9,5 @@ export const DELETE: RequestHandler = (event) => action(() => {
 
 export const PATCH: RequestHandler = async (event) => {
   const data = await body(event);
-  return action(() => ({ data: updateReimbursement(event.params.id, String(data.status || ''), String(data.actor || '财务人员')) }));
+  return action(() => ({ data: updateReimbursement(event.params.id, String(data.status || ''), String(data.actor || '财务人员'), String(data.reject_reason || '')) }));
 };

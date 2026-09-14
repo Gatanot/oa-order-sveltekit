@@ -11,6 +11,9 @@ let instance: Database.Database | undefined;
 
 const now = () => new Date().toISOString();
 export const uuid = () => randomUUID();
+function reimbursementVoucherNo(id: string, date: string): string {
+  return `BX-${String(date || '').replaceAll('-', '')}-${String(id).replaceAll('-', '').slice(0, 6).toUpperCase()}`;
+}
 
 /** 把乘积四舍五入到分，避免浮点误差（如 454×17.4 = 7899.599999999999）。 */
 function lineTotalYuan(item: Record<string, unknown>): number {
@@ -45,7 +48,40 @@ export function moneyToCents(value: unknown): number {
 function migrate(db: Database.Database) {
   db.exec('CREATE TABLE IF NOT EXISTS schema_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)');
   const version = db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").get() as { value: string } | undefined;
-  if (version?.value === '9') return;
+  if (version?.value === '11') return;
+  if (version?.value === '10') {
+    db.exec(`
+      ALTER TABLE reimbursements_simple ADD COLUMN voucher_no TEXT NOT NULL DEFAULT '';
+      ALTER TABLE reimbursements_simple ADD COLUMN voucher_created_at TEXT;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_reimbursements_voucher_no ON reimbursements_simple(voucher_no) WHERE voucher_no <> '';
+      UPDATE reimbursements_simple SET voucher_no='BX-' || replace(advance_date, '-', '') || '-' || upper(substr(replace(id, '-', ''), 1, 6)), voucher_created_at=created_at WHERE status IN ('待报销','已报销') AND voucher_no='';
+      UPDATE schema_meta SET value='11' WHERE key='order_app_version';
+    `);
+    return;
+  }
+  if (version?.value === '9') {
+    // Rebuild both tables together. SQLite rewrites child-table foreign keys when a
+    // referenced table is renamed, so renaming only reimbursements_simple would leave
+    // reimbursement_attachments pointing at the removed *_old table.
+    db.exec(`
+      ALTER TABLE reimbursement_attachments RENAME TO reimbursement_attachments_old;
+      ALTER TABLE reimbursements_simple RENAME TO reimbursements_simple_old;
+      CREATE TABLE reimbursements_simple(id TEXT PRIMARY KEY, employee TEXT NOT NULL, item TEXT NOT NULL, amount INTEGER NOT NULL DEFAULT 0, advance_date TEXT NOT NULL, order_id TEXT, invoice TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '待核验' CHECK(status IN ('待核验','已打回','待报销','已报销')), reject_reason TEXT NOT NULL DEFAULT '', reviewed_by TEXT NOT NULL DEFAULT '', reviewed_at TEXT, reimbursed_by TEXT NOT NULL DEFAULT '', reimbursed_at TEXT, voucher_no TEXT NOT NULL DEFAULT '', voucher_created_at TEXT, created_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE);
+      CREATE TABLE reimbursement_attachments(id TEXT PRIMARY KEY, reimbursement_id TEXT NOT NULL, file_name TEXT NOT NULL, mime_type TEXT NOT NULL DEFAULT '', file_size INTEGER NOT NULL DEFAULT 0, storage_path TEXT NOT NULL DEFAULT '', attachment_kind TEXT NOT NULL DEFAULT 'note', created_at TEXT NOT NULL, FOREIGN KEY(reimbursement_id) REFERENCES reimbursements_simple(id) ON DELETE CASCADE);
+      INSERT INTO reimbursements_simple(id,employee,item,amount,advance_date,order_id,invoice,note,status,reviewed_by,reviewed_at,reimbursed_by,reimbursed_at,created_at)
+        SELECT id,employee,item,amount,advance_date,order_id,invoice,note,status,reviewed_by,reviewed_at,reimbursed_by,reimbursed_at,created_at FROM reimbursements_simple_old;
+      INSERT INTO reimbursement_attachments(id,reimbursement_id,file_name,mime_type,file_size,storage_path,created_at)
+        SELECT id,reimbursement_id,file_name,mime_type,file_size,storage_path,created_at FROM reimbursement_attachments_old;
+      DROP TABLE reimbursement_attachments_old;
+      DROP TABLE reimbursements_simple_old;
+      CREATE INDEX IF NOT EXISTS idx_simple_reimbursements_date ON reimbursements_simple(advance_date DESC);
+      CREATE INDEX IF NOT EXISTS idx_simple_reimbursements_order ON reimbursements_simple(order_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_reimbursements_voucher_no ON reimbursements_simple(voucher_no) WHERE voucher_no <> '';
+      UPDATE reimbursements_simple SET voucher_no='BX-' || replace(advance_date, '-', '') || '-' || upper(substr(replace(id, '-', ''), 1, 6)), voucher_created_at=created_at WHERE status IN ('待报销','已报销') AND voucher_no='';
+      UPDATE schema_meta SET value='11' WHERE key='order_app_version';
+    `);
+    return;
+  }
   db.exec(`
     DROP TABLE IF EXISTS reimbursement_attachments;
     DROP TABLE IF EXISTS reimbursements_simple;
@@ -59,14 +95,15 @@ function migrate(db: Database.Database) {
     CREATE TABLE catalog_items(id TEXT PRIMARY KEY, category TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, unit TEXT NOT NULL DEFAULT '项', quote_unit INTEGER NOT NULL DEFAULT 0, cost_unit INTEGER NOT NULL DEFAULT 0, customer_name TEXT NOT NULL DEFAULT '', project_name TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, source_file TEXT NOT NULL DEFAULT '', source_sheet TEXT NOT NULL DEFAULT '', source_type TEXT NOT NULL DEFAULT 'manual', item_no TEXT NOT NULL DEFAULT '', specification TEXT NOT NULL DEFAULT '', estimated_quantity TEXT NOT NULL DEFAULT '', max_quote_unit INTEGER NOT NULL DEFAULT 0, supplier_remark TEXT NOT NULL DEFAULT '', raw_data TEXT NOT NULL DEFAULT '{}', UNIQUE(category, name, customer_name, project_name, specification, estimated_quantity));
     CREATE TABLE orders_simple(id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, customer_id TEXT NOT NULL, project_id TEXT NOT NULL, catalog_id TEXT, service_name TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 1, unit TEXT NOT NULL DEFAULT '项', quote_amount INTEGER NOT NULL DEFAULT 0, cost_amount INTEGER NOT NULL DEFAULT 0, order_date TEXT NOT NULL, delivery_date TEXT NOT NULL DEFAULT '', contact TEXT NOT NULL DEFAULT '', customer_department TEXT NOT NULL DEFAULT '', designer TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL, status TEXT NOT NULL DEFAULT '制作中', payment_status TEXT NOT NULL DEFAULT '未结款', note TEXT NOT NULL DEFAULT '', specification TEXT NOT NULL DEFAULT '', products_json TEXT NOT NULL DEFAULT '[]', costs_json TEXT NOT NULL DEFAULT '[]', is_extra INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, FOREIGN KEY(customer_id) REFERENCES customers_simple(id), FOREIGN KEY(project_id) REFERENCES projects_simple(id), FOREIGN KEY(catalog_id) REFERENCES catalog_items(id));
     CREATE TABLE order_attachments(id TEXT PRIMARY KEY, order_id TEXT NOT NULL, file_name TEXT NOT NULL, mime_type TEXT NOT NULL DEFAULT '', file_size INTEGER NOT NULL DEFAULT 0, storage_path TEXT NOT NULL DEFAULT '', attachment_kind TEXT NOT NULL DEFAULT 'note', created_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE);
-    CREATE TABLE reimbursements_simple(id TEXT PRIMARY KEY, employee TEXT NOT NULL, item TEXT NOT NULL, amount INTEGER NOT NULL DEFAULT 0, advance_date TEXT NOT NULL, order_id TEXT, invoice TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '待核验' CHECK(status IN ('待核验','待报销','已报销')), reviewed_by TEXT NOT NULL DEFAULT '', reviewed_at TEXT, reimbursed_by TEXT NOT NULL DEFAULT '', reimbursed_at TEXT, created_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE);
+    CREATE TABLE reimbursements_simple(id TEXT PRIMARY KEY, employee TEXT NOT NULL, item TEXT NOT NULL, amount INTEGER NOT NULL DEFAULT 0, advance_date TEXT NOT NULL, order_id TEXT, invoice TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '待核验' CHECK(status IN ('待核验','已打回','待报销','已报销')), reject_reason TEXT NOT NULL DEFAULT '', reviewed_by TEXT NOT NULL DEFAULT '', reviewed_at TEXT, reimbursed_by TEXT NOT NULL DEFAULT '', reimbursed_at TEXT, voucher_no TEXT NOT NULL DEFAULT '', voucher_created_at TEXT, created_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE);
     CREATE TABLE reimbursement_attachments(id TEXT PRIMARY KEY, reimbursement_id TEXT NOT NULL, file_name TEXT NOT NULL, mime_type TEXT NOT NULL DEFAULT '', file_size INTEGER NOT NULL DEFAULT 0, storage_path TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, FOREIGN KEY(reimbursement_id) REFERENCES reimbursements_simple(id) ON DELETE CASCADE);
     CREATE INDEX idx_simple_orders_date ON orders_simple(order_date DESC);
     CREATE INDEX idx_simple_reimbursements_date ON reimbursements_simple(advance_date DESC);
     CREATE INDEX idx_simple_reimbursements_order ON reimbursements_simple(order_id);
     CREATE INDEX idx_simple_orders_customer ON orders_simple(customer_id, project_id);
+    CREATE UNIQUE INDEX idx_reimbursements_voucher_no ON reimbursements_simple(voucher_no) WHERE voucher_no <> '';
     DELETE FROM schema_meta WHERE key='order_app_version';
-    INSERT INTO schema_meta(key,value) VALUES('order_app_version','9');
+    INSERT INTO schema_meta(key,value) VALUES('order_app_version','11');
   `);
 }
 
@@ -224,6 +261,82 @@ export function listOrders(): Array<Record<string, any>> {
   return rows.map(hydrateOrder);
 }
 
+const exportColumnLabels: Record<string, string> = {
+  code: '订单编号', order_date: '订单日期', customer_name: '客户', project_name: '项目',
+  project_owner: '项目负责人', customer_department: '客户部门', designer: '设计师', contact: '联系人',
+  delivery_date: '交货日期', payment_status: '结款状态', service_name: '订单内容', quantity: '数量', unit: '单位',
+  quote_amount: '总报价', cost_amount: '制作成本', advance_amount: '员工垫付', profit: '预计毛利', created_by: '录入人',
+  status: '制作状态', reimbursement_status: '报销状态', product_name: '产品名称', product_specification: '制作要求',
+  product_quantity: '产品数量', product_unit: '产品单位', product_unit_price: '产品单价', product_subtotal: '产品小计', note: '备注',
+};
+
+export function exportOrders(filters: Record<string, string>) {
+  const selectedIds = new Set((filters.ids || '').split(',').map((id) => id.trim()).filter(Boolean));
+  const columns = (filters.columns || '').split(',').filter((key) => exportColumnLabels[key]);
+  const selectedColumns = columns.length ? columns : ['code', 'order_date', 'customer_name', 'project_name', 'service_name', 'quote_amount', 'cost_amount'];
+  const orders = listOrders().filter((order) =>
+    (!selectedIds.size || selectedIds.has(order.id)) &&
+    (!filters.customer || order.customer_id === filters.customer) &&
+    (!filters.project || order.project_id === filters.project) &&
+    (!filters.owner || order.project_owner === filters.owner) &&
+    (!filters.creator || order.created_by === filters.creator) &&
+    (!filters.from || order.order_date >= filters.from) &&
+    (!filters.to || order.order_date <= filters.to),
+  );
+  if (filters.mode === 'settlement') {
+    const title = text(filters.title) || '订单结算明细';
+    const detailRows: unknown[][] = [[title], [`客户：${text(filters.partyA) || '—'}`, `合同编号：${text(filters.contract) || '—'}`], [`乙方：${text(filters.partyB) || '—'}`, `项目跟进人：${text(filters.followB) || '—'}`], [], ['分类', '产品名称', '制作要求', '单位', '数量', '单价（元）', '金额（元）', '订单编号', '备注']];
+    let grandTotal = 0;
+    const categories = new Map<string, unknown[][]>();
+    for (const order of orders) {
+      const products = order.products?.length ? order.products : [{ name: order.service_name, specification: order.specification, unit: order.unit, quantity: order.quantity, unit_price: order.quote_amount / 100 }];
+      for (const product of products as Array<Record<string, any>>) {
+        const category = String(order.catalog_category || product.category || '其他');
+        const quantity = Number(product.quantity || 0);
+        const unitPrice = Number(product.unit_price || 0);
+        const total = quantity * unitPrice;
+        grandTotal += total;
+        const rows = categories.get(category) || [];
+        rows.push([category, product.name || order.service_name, product.specification || order.specification || '', product.unit || order.unit || '项', quantity, unitPrice, total, order.code, filters.remarkOrder === 'true' ? order.code : '']);
+        categories.set(category, rows);
+      }
+    }
+    for (const [category, rows] of categories) {
+      detailRows.push(...rows);
+      detailRows.push([`${category}小计`, '', '', '', '', '', rows.reduce((sum, row) => sum + Number(row[6] || 0), 0), '', '']);
+    }
+    if (filters.total !== 'false') detailRows.push([], ['合计', '', '', '', '', '', grandTotal, '', '']);
+    if (filters.sign === 'true') detailRows.push([], ['甲方（盖章）：', '', '', '乙方（盖章）：', '', '', '', '', ''], ['日期：', '', '', '日期：', '', '', '', '', '']);
+    const sheet = XLSX.utils.aoa_to_sheet(detailRows);
+    sheet['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 8 } }];
+    sheet['!cols'] = [{ wch: 14 }, { wch: 30 }, { wch: 42 }, { wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 22 }, { wch: 18 }];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, sheet, '结算单');
+    return { data: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }), count: orders.length };
+  }
+  const rows = orders.flatMap((order) => {
+    const advances = (order.advances || []).reduce((sum: number, item: any) => sum + Math.round(Number(item.amount || 0) * 100), 0);
+    const products = order.products?.length ? order.products : [null];
+    return products.map((product: any) => {
+      const values: Record<string, unknown> = {
+        code: order.code, order_date: order.order_date, customer_name: order.customer_name, project_name: order.project_name,
+        project_owner: order.project_owner || '', customer_department: order.customer_department || '', designer: order.designer || '',
+        contact: order.contact || '', delivery_date: order.delivery_date || '', payment_status: order.payment_status || '未结款',
+        service_name: order.service_name, quantity: order.quantity, unit: order.unit, quote_amount: order.quote_amount / 100,
+        cost_amount: order.cost_amount / 100, advance_amount: advances / 100, profit: (order.quote_amount - order.cost_amount - advances) / 100,
+        created_by: order.created_by, status: order.status, reimbursement_status: order.reimbursement_status || '无需报销',
+        product_name: product?.name || '', product_specification: product?.specification || '', product_quantity: product?.quantity ?? '',
+        product_unit: product?.unit || '', product_unit_price: product ? Number(product.unit_price || 0) : '',
+        product_subtotal: product ? Number(product.quantity || 0) * Number(product.unit_price || 0) : '', note: order.note || '',
+      };
+      return Object.fromEntries(selectedColumns.map((key) => [exportColumnLabels[key], values[key]]));
+    });
+  });
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), '订单明细');
+  return { data: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }), count: rows.length };
+}
+
 export interface CreateProjectInput {
   customer?: string;
   customer_id?: string;
@@ -257,11 +370,18 @@ export function createOrder(data: Record<string, unknown>) {
   if (!project) throw new Error('请选择项目');
   const department = text(data.customer_department);
   const contact = text(data.contact);
-  if (!department && !contact) throw new Error('客户部门和联系人 / 下单人至少填写一项');
+  const deliveryDate = text(data.delivery_date);
+  const designer = text(data.designer);
+  if (!deliveryDate) throw new Error('请填写交货日期');
+  if (!designer) throw new Error('请填写指定设计师');
   const products = sanitizeLines(Array.isArray(data.products) ? data.products as Array<Record<string, unknown>> : [], 'name');
   const costs = sanitizeLines(Array.isArray(data.costs) ? data.costs as Array<Record<string, unknown>> : [], 'name');
   const advances = sanitizeAdvances(Array.isArray(data.advances) ? data.advances as Array<Record<string, unknown>> : []);
-  if (!products.length && !costs.length && !advances.length) throw new Error('请至少填写一项产品、固定成本或员工垫付');
+  if (!products.length) throw new Error('请至少填写一项产品');
+  for (const item of [...products, ...costs]) {
+    if (!Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0) throw new Error('产品和成本数量必须大于 0');
+    if (!Number.isFinite(Number(item.unit_price)) || Number(item.unit_price) < 0) throw new Error('产品和成本单价不能为负数');
+  }
   const primary = products[0] || costs[0] || advances[0];
   const serviceName = String(data.service_name || products.map((item) => text(item.name)).filter(Boolean).join('、') || costs.map((item) => text(item.name)).filter(Boolean).join('、') || advances.map((item) => text(item.item) || '员工垫付').filter(Boolean).join('、') || primary.name || primary.item || '员工垫付').trim();
   if (!serviceName) throw new Error('请填写订单内容');
@@ -275,7 +395,7 @@ export function createOrder(data: Record<string, unknown>) {
   const quoteCents = products.length ? products.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0) : optionalMoneyToCents(data.quote_amount);
   const costCents = costs.length ? costs.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0) : optionalMoneyToCents(data.cost_amount);
   db.transaction(() => {
-    db.prepare('INSERT INTO orders_simple(id,code,customer_id,project_id,catalog_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,created_by,status,note,created_at,specification,is_extra,delivery_date,contact,customer_department,designer,payment_status,products_json,costs_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id, code, project.customer_id, projectId, catalogId, serviceName, quantity, String(data.unit || products[0]?.unit || '项'), quoteCents, costCents, date, String(data.created_by || '当前用户'), String(data.status || '制作中'), String(data.note || '').trim(), created, text(data.specification || products[0]?.specification), data.is_extra ? 1 : 0, text(data.delivery_date), contact, department, text(data.designer), text(data.payment_status) || '未结款', JSON.stringify(products), JSON.stringify(costs));
+    db.prepare('INSERT INTO orders_simple(id,code,customer_id,project_id,catalog_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,created_by,status,note,created_at,specification,is_extra,delivery_date,contact,customer_department,designer,payment_status,products_json,costs_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id, code, project.customer_id, projectId, catalogId, serviceName, quantity, String(data.unit || products[0]?.unit || '项'), quoteCents, costCents, date, String(data.created_by || '当前用户'), String(data.status || '制作中'), String(data.note || '').trim(), created, text(data.specification || products[0]?.specification), data.is_extra ? 1 : 0, deliveryDate, contact, department, designer, text(data.payment_status) || '未结款', JSON.stringify(products), JSON.stringify(costs));
     insertReimbursements(db, id, advances);
   })();
   return hydrateOrder(db.prepare('SELECT * FROM orders_simple WHERE id=?').get(id) as Record<string, unknown>);
@@ -285,19 +405,26 @@ export function updateOrder(id: string, data: Record<string, unknown>) {
   const db = getOrderDb();
   const existing = db.prepare('SELECT * FROM orders_simple WHERE id=?').get(id) as Record<string, unknown> | undefined;
   if (!existing) throw new Error('ORDER_NOT_FOUND');
-  const products = Array.isArray(data.products) ? data.products as Array<Record<string, unknown>> : parseList(existing.products_json);
-  const costs = Array.isArray(data.costs) ? data.costs as Array<Record<string, unknown>> : parseList(existing.costs_json);
+  const products = sanitizeLines(Array.isArray(data.products) ? data.products as Array<Record<string, unknown>> : parseList(existing.products_json), 'name');
+  const costs = sanitizeLines(Array.isArray(data.costs) ? data.costs as Array<Record<string, unknown>> : parseList(existing.costs_json), 'name');
   const advances = Array.isArray(data.advances) ? sanitizeAdvances(data.advances as Array<Record<string, unknown>>) : [];
-  if (!products.length && !costs.length && !advances.length) throw new Error('请至少保留一项产品、固定成本或员工垫付');
+  if (!products.length) throw new Error('请至少保留一项产品');
+  const deliveryDate = text(data.delivery_date);
+  const designer = text(data.designer);
+  if (!deliveryDate) throw new Error('请填写交货日期');
+  if (!designer) throw new Error('请填写指定设计师');
+  for (const item of [...products, ...costs]) {
+    if (!Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0) throw new Error('产品和成本数量必须大于 0');
+    if (!Number.isFinite(Number(item.unit_price)) || Number(item.unit_price) < 0) throw new Error('产品和成本单价不能为负数');
+  }
   const quote = products.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0);
   const cost = costs.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0);
-  const service = products.map((item) => text(item.name)).filter(Boolean).join('、') || costs.map((item) => text(item.name)).filter(Boolean).join('、') || advances.map((item) => text(item.item)).filter(Boolean).join('、') || text(data.service_name) || String(existing.service_name);
+  const service = products.map((item) => text(item.name)).filter(Boolean).join('、') || text(data.service_name) || String(existing.service_name);
   const targetProject = text(data.project_id || existing.project_id);
   const department = text(data.customer_department);
   const contact = text(data.contact);
-  if (!department && !contact) throw new Error('客户部门和联系人 / 下单人至少填写一项');
   const staleFiles = db.transaction(() => {
-    db.prepare(`UPDATE orders_simple SET project_id=?,customer_id=(SELECT customer_id FROM projects_simple WHERE id=?),service_name=?,quantity=?,unit=?,quote_amount=?,cost_amount=?,order_date=?,delivery_date=?,contact=?,customer_department=?,designer=?,created_by=?,status=?,payment_status=?,note=?,specification=?,products_json=?,costs_json=? WHERE id=?`).run(targetProject, targetProject, service, Number(products[0]?.quantity || existing.quantity), text(products[0]?.unit || existing.unit), quote, cost, text(data.order_date || existing.order_date), text(data.delivery_date), contact, department, text(data.designer), text(data.created_by || existing.created_by), text(data.status || existing.status), text(data.payment_status || existing.payment_status), text(data.note), text(products[0]?.specification || existing.specification), JSON.stringify(products), JSON.stringify(costs), id);
+    db.prepare(`UPDATE orders_simple SET project_id=?,customer_id=(SELECT customer_id FROM projects_simple WHERE id=?),service_name=?,quantity=?,unit=?,quote_amount=?,cost_amount=?,order_date=?,delivery_date=?,contact=?,customer_department=?,designer=?,created_by=?,status=?,payment_status=?,note=?,specification=?,products_json=?,costs_json=? WHERE id=?`).run(targetProject, targetProject, service, Number(products[0]?.quantity || existing.quantity), text(products[0]?.unit || existing.unit), quote, cost, text(data.order_date || existing.order_date), deliveryDate, contact, department, designer, text(data.created_by || existing.created_by), text(data.status || existing.status), text(data.payment_status || existing.payment_status), text(data.note), text(products[0]?.specification || existing.specification), JSON.stringify(products), JSON.stringify(costs), id);
     return syncOrderReimbursements(db, id, advances);
   })();
   for (const file of staleFiles) removeAttachmentFile(file.storage_path);
@@ -340,6 +467,8 @@ export function listReimbursementOrders(filters: Record<string, string> = {}) {
     employee: item.employee,
     invoice: item.invoice,
     reimbursement_status: item.status,
+    voucher_no: item.voucher_no || '',
+    voucher_created_at: item.voucher_created_at || '',
     source_type: item.order_id ? '订单报销' : '内务报销'
   })).filter((item) =>
     (!filters.project || item.project_id === filters.project) &&
@@ -363,13 +492,56 @@ export function createReimbursement(data: Record<string, unknown>) {
   return { id, employee, item, amount, advance_date: advanceDate, order_id: orderId, reimbursement_status: '待核验' };
 }
 
-export function updateReimbursement(id: string, status: string, actor: string) {
-  if (!['待核验', '待报销', '已报销'].includes(status)) throw new Error('INVALID_REIMBURSEMENT_STATUS');
+export function updateReimbursement(id: string, status: string, actor: string, rejectReason = '') {
+  if (!['待核验', '已打回', '待报销', '已报销'].includes(status)) throw new Error('INVALID_REIMBURSEMENT_STATUS');
   const db = getOrderDb();
   const reimbursement = db.prepare('SELECT * FROM reimbursements_simple WHERE id=?').get(id) as Record<string, any> | undefined;
   if (!reimbursement) throw new Error('REIMBURSEMENT_NOT_FOUND');
-  db.prepare(`UPDATE reimbursements_simple SET status=?, reviewed_by=CASE WHEN ?='待报销' THEN ? ELSE reviewed_by END, reviewed_at=CASE WHEN ?='待报销' THEN ? ELSE reviewed_at END, reimbursed_by=CASE WHEN ?='已报销' THEN ? ELSE reimbursed_by END, reimbursed_at=CASE WHEN ?='已报销' THEN ? ELSE reimbursed_at END WHERE id=?`).run(status, status, actor, status, now(), status, actor, status, now(), id);
-  return { ...reimbursement, order_id: reimbursement.order_id || '', reimbursement_status: status };
+  const transitions: Record<string, string[]> = {
+    待核验: ['待报销', '已打回'],
+    待报销: ['已报销'],
+  };
+  if (reimbursement.status !== status && !transitions[reimbursement.status]?.includes(status)) {
+    throw new Error('INVALID_REIMBURSEMENT_TRANSITION');
+  }
+  if (status === '已打回' && !text(rejectReason)) throw new Error('请填写打回原因');
+  const reviewedAt = now();
+  db.prepare(`UPDATE reimbursements_simple SET status=?, reject_reason=CASE WHEN ?='已打回' THEN ? WHEN ?='待核验' THEN '' ELSE reject_reason END, reviewed_by=CASE WHEN ? IN ('待报销','已打回') THEN ? ELSE reviewed_by END, reviewed_at=CASE WHEN ? IN ('待报销','已打回') THEN ? ELSE reviewed_at END, reimbursed_by=CASE WHEN ?='已报销' THEN ? ELSE reimbursed_by END, reimbursed_at=CASE WHEN ?='已报销' THEN ? ELSE reimbursed_at END WHERE id=?`).run(status, status, rejectReason, status, status, actor, status, reviewedAt, status, actor, status, reviewedAt, id);
+  return { ...reimbursement, status, order_id: reimbursement.order_id || '', reimbursement_status: status, reject_reason: status === '已打回' ? rejectReason : reimbursement.reject_reason || '' };
+}
+
+export function updateReimbursementsBatch(ids: string[], status: string, actor: string, rejectReason = '') {
+  if (!['待核验', '已打回', '待报销', '已报销'].includes(status)) throw new Error('INVALID_REIMBURSEMENT_STATUS');
+  const uniqueIds = [...new Set(ids.map((id) => text(id)).filter(Boolean))];
+  if (!uniqueIds.length) throw new Error('请选择报销记录');
+  if (status === '已打回' && !text(rejectReason)) throw new Error('请填写打回原因');
+  const db = getOrderDb();
+  const transitions: Record<string, string[]> = { 待核验: ['待报销', '已打回'], 待报销: ['已报销'] };
+  const rows = uniqueIds.map((id) => db.prepare('SELECT * FROM reimbursements_simple WHERE id=?').get(id) as Record<string, any> | undefined);
+  if (rows.some((row) => !row)) throw new Error('REIMBURSEMENT_NOT_FOUND');
+  for (const row of rows as Array<Record<string, any>>) {
+    if (row.status !== status && !transitions[row.status]?.includes(status)) throw new Error('INVALID_REIMBURSEMENT_TRANSITION');
+  }
+  const changedAt = now();
+  db.transaction(() => {
+    const update = db.prepare(`UPDATE reimbursements_simple SET status=?, reject_reason=CASE WHEN ?='已打回' THEN ? WHEN ?='待核验' THEN '' ELSE reject_reason END, reviewed_by=CASE WHEN ? IN ('待报销','已打回') THEN ? ELSE reviewed_by END, reviewed_at=CASE WHEN ? IN ('待报销','已打回') THEN ? ELSE reviewed_at END, reimbursed_by=CASE WHEN ?='已报销' THEN ? ELSE reimbursed_by END, reimbursed_at=CASE WHEN ?='已报销' THEN ? ELSE reimbursed_at END WHERE id=?`);
+    for (const id of uniqueIds) update.run(status, status, rejectReason, status, status, actor, status, changedAt, status, actor, status, changedAt, id);
+  })();
+  return uniqueIds.map((id) => {
+    const row = db.prepare('SELECT * FROM reimbursements_simple WHERE id=?').get(id) as Record<string, any>;
+    return { ...row, order_id: row.order_id || '', reimbursement_status: row.status };
+  });
+}
+
+export function generateReimbursementVoucher(id: string) {
+  const db = getOrderDb();
+  const row = db.prepare('SELECT * FROM reimbursements_simple WHERE id=?').get(id) as Record<string, any> | undefined;
+  if (!row) throw new Error('REIMBURSEMENT_NOT_FOUND');
+  if (!['待报销', '已报销'].includes(row.status)) throw new Error('报销确认后才能生成单据');
+  const voucherNo = row.voucher_no || reimbursementVoucherNo(row.id, row.advance_date);
+  const createdAt = row.voucher_created_at || now();
+  db.prepare('UPDATE reimbursements_simple SET voucher_no=?, voucher_created_at=? WHERE id=?').run(voucherNo, createdAt, id);
+  return { ...row, voucher_no: voucherNo, voucher_created_at: createdAt, order_id: row.order_id || '', reimbursement_status: row.status };
 }
 
 export function deleteReimbursement(id: string) {
@@ -398,7 +570,9 @@ export function listOrderAttachments(orderId: string) {
 
 export function addStandaloneReimbursementAttachment(reimbursementId: string, file: { name: string; data: Buffer }) {
   const db = getOrderDb();
-  if (!db.prepare('SELECT id FROM reimbursements_simple WHERE id=?').get(reimbursementId)) throw new Error('REIMBURSEMENT_NOT_FOUND');
+  const reimbursement = db.prepare('SELECT id,status FROM reimbursements_simple WHERE id=?').get(reimbursementId) as { id: string; status: string } | undefined;
+  if (!reimbursement) throw new Error('REIMBURSEMENT_NOT_FOUND');
+  if (!['待核验', '已打回'].includes(reimbursement.status)) throw new Error('当前状态不允许上传发票');
   if (!file.data?.length) throw new Error('附件内容为空');
   if (file.data.length > maxAttachmentSize) throw new Error('单个附件不能超过 10MB');
   const mime = detectAttachmentMime(file.data);
@@ -410,7 +584,7 @@ export function addStandaloneReimbursementAttachment(reimbursementId: string, fi
   mkdirSync(join(attachmentDir, `reimbursements/${reimbursementId}`), { recursive: true });
   writeFileSync(join(attachmentDir, storagePath), file.data);
   db.prepare('INSERT INTO reimbursement_attachments(id,reimbursement_id,file_name,mime_type,file_size,storage_path,created_at) VALUES(?,?,?,?,?,?,?)').run(id, reimbursementId, safeName, mime, file.data.length, storagePath, now());
-  db.prepare('UPDATE reimbursements_simple SET invoice=? WHERE id=?').run(safeName, reimbursementId);
+  db.prepare("UPDATE reimbursements_simple SET invoice=?, status=CASE WHEN status='已打回' THEN '待核验' ELSE status END, reject_reason=CASE WHEN status='已打回' THEN '' ELSE reject_reason END WHERE id=?").run(safeName, reimbursementId);
   return { id, reimbursement_id: reimbursementId, file_name: safeName, mime_type: mime, file_size: file.data.length, created_at: now() };
 }
 

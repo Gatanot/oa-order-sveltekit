@@ -170,6 +170,30 @@ button {
     margin-bottom: 3px
 }
 
+.role-picker {
+    display: grid;
+    gap: 6px;
+    margin: 0 9px 18px;
+    color: #7fa0a5;
+    font-size: 10px;
+    letter-spacing: .04em
+}
+
+.role-picker select {
+    width: 100%;
+    border: 1px solid #2c4a51;
+    border-radius: 5px;
+    padding: 7px 8px;
+    background: var(--nav2);
+    color: #fff;
+    font-size: 12px;
+    outline: none
+}
+
+.sidebar-collapsed .role-picker {
+    display: none
+}
+
 .order-sidebar>button:hover,
 .order-sidebar>button.active {
     background: var(--nav2);
@@ -538,6 +562,14 @@ button {
     font-size: 10px
 }
 
+.export-mode-picker { margin-bottom: 16px; padding: 13px; border: 1px solid var(--line); border-radius: 5px; background: #f7faf9; }
+.export-mode-picker > label { display: grid; max-width: 280px; gap: 6px; font-size: 12px; font-weight: 600; }
+.export-mode-picker select { width: 100%; }
+.export-template-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+.export-template-grid label { display: grid; gap: 5px; color: var(--muted); font-size: 11px; font-weight: 500; }
+.export-options { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 12px; color: var(--muted); font-size: 11px; }
+.export-options label { display: inline-flex; align-items: center; gap: 5px; }
+@media(max-width:700px) { .export-template-grid { grid-template-columns: 1fr; } }
 .export-selection {
     border-bottom: 1px solid var(--line);
     padding-bottom: 20px;
@@ -700,9 +732,34 @@ button {
 .link-action { border: 0; background: none; color: var(--teal); padding: 0; text-align: left; }
 .link-action:hover { text-decoration: underline; }
 .reimbursement-modal { width: min(560px, 94vw); }
-.reimbursement-summary { grid-template-columns: repeat(3, 1fr); margin: 0 0 19px; }
+.reimbursement-summary { grid-template-columns: repeat(4, 1fr); margin: 0 0 19px; }
 .reimbursement-summary b small { font-size: 11px; font-weight: 400; color: var(--muted); }
-.reimbursement-actions { display: flex; justify-content: flex-end; gap: 9px; margin: -7px 0 15px; }
+.reimbursement-summary .negative { color: var(--red); }
+.reimbursement-callout { display: flex; align-items: baseline; gap: 10px; margin: -8px 0 18px; padding: 11px 13px; border: 1px solid #f0cccc; border-radius: 5px; background: #fff5f5; color: var(--red); font-size: 12px; }
+.reimbursement-callout span { color: #875454; font-size: 11px; }
+.reimbursement-actions { display: flex; align-items: center; justify-content: flex-end; gap: 9px; margin: -7px 0 15px; flex-wrap: wrap; }
+.role-context { margin-right: auto; color: var(--muted); font-size: 12px; }
+.reimbursement-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.finance-workbench { margin: 0 0 18px; border: 1px solid var(--line); background: #fff; border-radius: 6px; overflow: hidden; }
+.finance-workbench-head { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; padding: 13px 15px; background: #f7faf9; border-bottom: 1px solid var(--line); }
+.finance-workbench-head div { display: flex; align-items: baseline; gap: 9px; }
+.finance-workbench-head b { font-size: 13px; }
+.finance-workbench-head span { color: var(--muted); font-size: 11px; }
+.finance-workbench-head strong { color: var(--teal); font-size: 13px; white-space: nowrap; }
+.finance-head-actions { display: flex; align-items: center; gap: 10px; }
+@media(max-width:700px) { .finance-workbench-head { align-items: flex-start; } .finance-workbench-head div { flex-wrap: wrap; } .finance-head-actions { flex-direction: column; align-items: flex-end; } }
+.payment-summary-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; padding: 12px; }
+.payment-summary-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 64px; padding: 8px 10px; text-align: left; border: 1px solid var(--line); border-radius: 5px; background: #fff; color: var(--ink); }
+.payment-summary-item:hover { border-color: var(--teal); background: #f3faf8; }
+.payment-summary-select { display: flex; flex: 1; align-items: center; justify-content: space-between; gap: 12px; padding: 3px 2px; text-align: left; background: transparent; color: inherit; }
+.payment-summary-select:hover { background: transparent; }
+.payment-summary-item span { display: grid; gap: 3px; }
+.payment-summary-item small { color: var(--muted); font-size: 11px; }
+.payment-summary-item strong { color: var(--teal); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.empty-workbench { padding: 16px; color: var(--muted); font-size: 12px; }
+.voucher-archive { margin-top: 20px; }
+.archive-table { border: 0; border-radius: 0; box-shadow: none; }
+.archive-table td small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
 .voucher-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 1px solid var(--line); }
 .voucher-grid > div { padding: 13px; border-bottom: 1px solid var(--line); }
 .voucher-grid > div:nth-child(odd) { border-right: 1px solid var(--line); }
@@ -802,6 +859,47 @@ td small {
     padding: 5px 8px;
     border-radius: 4px;
     font-size: 11px
+}
+
+.status-dot.reimbursement-rejected {
+    background: #fdeaea;
+    color: #b33b3b
+}
+
+.reject-reason {
+    max-width: 170px;
+    color: var(--red);
+    line-height: 1.45
+}
+
+.reupload-action {
+    margin-top: 5px
+}
+
+.rejection-detail {
+    background: #fff5f5;
+}
+
+.rejection-detail b {
+    color: var(--red)
+}
+
+.voucher-attachment-button {
+    padding: 0;
+    text-align: left
+}
+
+.voucher-attachments {
+    display: grid;
+    gap: 5px;
+    margin: 7px 0 0;
+    padding: 0;
+    list-style: none
+}
+
+.voucher-attachments .attachment-link {
+    padding: 5px 7px;
+    background: #f7faf9
 }
 
 .delete-action {
@@ -1565,7 +1663,8 @@ td small {
 
     .reimbursement-form-body { grid-template-columns: 1fr; }
     .reimbursement-summary { grid-template-columns: 1fr 1fr; }
-    .reimbursement-summary > div:last-child { grid-column: 1 / -1; }
+    .reimbursement-summary > div:last-child { grid-column: auto; }
+    .reimbursement-callout { display: grid; gap: 4px; }
     .reimbursement-actions { justify-content: stretch; }
     .reimbursement-actions > button { flex: 1; }
     .reimbursement-form-body .full-field { grid-column: auto; }

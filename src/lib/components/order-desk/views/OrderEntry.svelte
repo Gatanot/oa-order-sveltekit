@@ -27,9 +27,8 @@
       <label>客户 <em>*</em><select bind:value={desk.customerId} onchange={desk.onCustomerChange} required><option value="">请选择客户</option>{#each desk.customers as c}<option value={c.id}>{c.name}</option>{/each}</select></label>
       <label>项目 <em>*</em><select bind:value={desk.projectId} required disabled={!desk.customerId}><option value="">请选择项目</option>{#each desk.filteredProjects as p}<option value={p.id}>{p.name} · {p.owner || "未分配"}</option>{/each}</select></label>
       <div class="full inline-create"><span>没有找到对应项目？</span><button type="button" onclick={() => desk.showProjectForm = true}><Plus size={14}/>新建项目</button></div>
-      <label>客户部门 <em>*</em><input bind:value={desk.customerDepartment} aria-required="true" aria-describedby="contact-rule" placeholder="例如：市场部" /></label>
-      <label>联系人 / 下单人 <em>*</em><input bind:value={desk.contact} aria-required="true" aria-describedby="contact-rule" placeholder="例如：张三" /></label>
-      <p id="contact-rule" class="field-hint full form-rule">客户部门和联系人 / 下单人至少填写一项</p>
+      <label>客户部门<input bind:value={desk.customerDepartment} placeholder="例如：市场部（可不填）" /></label>
+      <label>联系人 / 下单人<input bind:value={desk.contact} placeholder="例如：张三（可不填）" /></label>
       <label class="compact-field">订单日期 <em>*</em><input class="date-input" type="date" bind:value={desk.orderDate} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} required /></label>
       <label class="compact-field">交货日期 <em>*</em><input class="date-input" type="date" bind:value={desk.deliveryDate} min={desk.orderDate} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} required /></label>
       <label>指定设计师 <em>*</em><input bind:value={desk.designer} placeholder="本订单设计师" required /></label>
@@ -66,6 +65,6 @@
         {/if}
       </div>
     </div>
-    <div class="form-footer"><span>含员工垫付的订单会自动进入报销核验。</span><div class="submit-dropdown"><button class="primary-action" disabled={desk.busy || desk.uploadingFiles || !desk.projectId}>{desk.busy || desk.uploadingFiles ? "保存中..." : "保存订单"}</button></div></div>
+    <div class="form-footer"><span>至少添加一项产品；含员工垫付的订单会自动进入报销核验。</span><div class="submit-dropdown"><button class="primary-action" disabled={desk.busy || desk.uploadingFiles || !desk.projectId}>{desk.busy || desk.uploadingFiles ? "保存中..." : "保存订单"}</button></div></div>
   </form>
 </section>
