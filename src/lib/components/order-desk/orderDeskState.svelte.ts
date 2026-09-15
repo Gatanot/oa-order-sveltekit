@@ -829,16 +829,13 @@ export function createOrderDesk(data: Data) {
   async function submitOrder(event: SubmitEvent) {
     event.preventDefault();
     const hasName = (value: string) => String(value || '').trim().length > 0;
-    if (!hasName(customerDepartment) && !hasName(contact)) {
-      notify("客户部门和联系人 / 下单人至少填写一项", true);
-      return;
-    }
+    // 部门、联系人和垫付均是业务补充信息；和 demo 一致，订单的最小可保存单位是产品明细。
+    // 空白的动态行会被忽略，但不能用成本或垫付行替代产品行。
     const validProducts = products.filter((item) => hasName(item.name));
     const validCosts = costs.filter((item) => hasName(item.name));
-    // 垫付行填写了物品名或金额大于 0 均视为有效（金额可先记，物品名后补）
     const validAdvances = advances.filter((item) => hasName(item.item) || Number(item.amount) > 0);
-    if (!validProducts.length && !validCosts.length && !validAdvances.length) {
-      notify("请至少填写一项产品、固定成本或员工垫付", true);
+    if (!validProducts.length) {
+      notify("请至少添加一项产品", true);
       return;
     }
     busy = true;
@@ -1003,7 +1000,37 @@ export function createOrderDesk(data: Data) {
   function addAdvance() { advances = [...advances, { id: crypto.randomUUID(), employee: designer || createdBy, item: "", amount: 0, date: orderDate, invoice: "", status: "待审核", invoiceFile: null as File | null }]; }
   function removeAdvance(index: number) { advances = advances.filter((_, i) => i !== index); }
   function updateAdvance(index: number, key: string, value: unknown) { advances[index] = { ...advances[index], [key]: value }; advances = [...advances]; }
-  function startNewOrder() { editingOrderId = ""; detailOrder = null; products = [{ name: "", quantity: 1, unit: "项", unit_price: 0, cost_unit: 0, subtotal: 0, specification: "" }]; costs = []; advances = []; serviceName = ""; view = "entry"; }
+  function startNewOrder() {
+    editingOrderId = "";
+    detailOrder = null;
+    customerId = "";
+    projectId = "";
+    catalogId = "";
+    serviceName = "";
+    quantity = 1;
+    unit = "项";
+    unitQuote = "";
+    unitCost = "";
+    quoteAmount = "";
+    costAmount = "";
+    specification = "";
+    orderDate = new Date().toISOString().slice(0, 10);
+    deliveryDate = "";
+    contact = "";
+    customerDepartment = "";
+    designer = "";
+    status = "制作中";
+    paymentStatus = "未结款";
+    createdBy = creatorName;
+    note = "";
+    noteFiles = [];
+    products = [{ name: "", quantity: 1, unit: "项", unit_price: 0, cost_unit: 0, subtotal: 0, specification: "" }];
+    costs = [];
+    advances = [];
+    submitMode = "save";
+    submitMenuOpen = false;
+    view = "entry";
+  }
   function toggleOrder(id: string) {
     selectedOrderIds = selectedOrderIds.includes(id)
       ? selectedOrderIds.filter((item) => item !== id)
