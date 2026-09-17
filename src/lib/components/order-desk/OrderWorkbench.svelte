@@ -3,7 +3,6 @@
   import type { Data } from './orderDeskState.svelte';
   import { createOrderDesk } from './orderDeskState.svelte';
   import OrderDeskSidebar from './OrderDeskSidebar.svelte';
-  import OrderDeskHeader from './OrderDeskHeader.svelte';
   import OrderOverview from './views/OrderOverview.svelte';
   import OrderEntry from './views/OrderEntry.svelte';
   import ReimbursementReview from './views/ReimbursementReview.svelte';
@@ -30,7 +29,6 @@
 <div class:sidebar-collapsed={desk.sidebarCollapsed} class="order-app">
   <OrderDeskSidebar />
   <main class="order-main">
-    <OrderDeskHeader />
     {#if desk.message}<div class="flash success">{desk.message}</div>{/if}
     {#if desk.error}<div class="flash error">{desk.error}</div>{/if}
     {#if desk.view === 'overview'}<OrderOverview />

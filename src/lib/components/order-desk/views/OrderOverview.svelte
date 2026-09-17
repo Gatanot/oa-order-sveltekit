@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getContext } from "svelte";
-  import { ListFilter, Paperclip, Search, Trash2 } from "lucide-svelte";
+  import { Download, ListFilter, Paperclip, Plus, RefreshCw, Search, Trash2 } from "lucide-svelte";
   const desk = getContext<any>("order-desk");
   function openRow(event: KeyboardEvent, order: any) {
     if ((event.target as HTMLElement).closest("button, input, select, a")) return;
@@ -35,12 +35,14 @@
   {:else}
   <div class="section-heading">
     <div>
-      <p class="section-kicker">OPERATIONS</p>
-      <h2>全部订单</h2>
-      <span>按订单日期、客户和项目负责人快速定位信息</span>
+      <p class="section-kicker">ORDER MANAGEMENT</p>
+      <h2>订单列表</h2>
+      <span>共 {desk.filteredOrders.length} 笔订单，按日期、客户、项目和业务人员快速定位</span>
     </div>
-    <div class="heading-count">
-      {desk.filteredOrders.length}<small>笔订单</small>
+    <div class="heading-actions">
+      <button class="icon-control" title="刷新数据" aria-label="刷新数据" onclick={() => desk.refresh()}><RefreshCw size={17} /></button>
+      {#if desk.canFinance}<button class="outline-action" onclick={desk.openExport}><Download size={16} />导出结算单</button>{/if}
+      {#if desk.canWrite}<button class="primary-action" onclick={() => desk.navigate("/orders/new")}><Plus size={16} />新增订单</button>{/if}
     </div>
   </div>
   <div class="summary-row summary-row-five">
@@ -70,45 +72,17 @@
         </div>{:else}<span class="muted">暂无可统计项目</span>{/each}
     </div>
   </div>
-  <div class="filter-bar compact-filter-bar" aria-label="订单筛选">
-    <span class="filter-result" aria-live="polite">已显示 {desk.filteredOrders.length} 笔</span>
-    <label class="search-field"
-      ><Search size={16} /><input
-        bind:value={desk.search}
-        placeholder="搜索订单号、客户、项目、产品、联系人或规格"
-      /></label
-    ><select bind:value={desk.filterCustomer}
-      ><option value="">全部客户</option
-      >{#each desk.customers as customer}<option value={customer.id}
-          >{customer.name}</option
-        >{/each}</select
-    ><select bind:value={desk.filterProject}
-      ><option value="">全部项目</option
-      >{#each desk.projects.filter((item: any) => !desk.filterCustomer || item.customer_id === desk.filterCustomer) as project}<option
-          value={project.id}>{project.name}</option
-        >{/each}</select
-    ><select bind:value={desk.orderSort} aria-label="订单排序"><option value="date_desc">日期：新到旧</option><option value="date_asc">日期：旧到新</option><option value="delivery_asc">交货日期：近到远</option><option value="quote_desc">报价：高到低</option><option value="quote_asc">报价：低到高</option></select
-    ><button class="outline-action" type="button" onclick={() => desk.showOrderFilters = true}>更多筛选</button
-    ><button class="outline-action" type="button" onclick={desk.resetOrderFilters}>重置</button
-    ><details class="column-settings"><summary>显示字段</summary><div class="column-menu">{#each desk.orderColumnOptions as option}<label><input type="checkbox" checked={desk.visibleOrderColumns.includes(option[0])} onchange={() => desk.toggleOrderColumn(option[0])} />{option[1]}</label>{/each}</div></details
-    ><select bind:value={desk.filterOwner} class="secondary-filter"
-      ><option value="">全部负责人</option>{#each desk.owners as owner}<option value={owner}>{owner}</option>{/each}</select
-    ><select bind:value={desk.filterDesigner} class="secondary-filter"
-      ><option value="">全部设计师</option>{#each desk.designers as designer}<option value={designer}>{designer}</option>{/each}</select
-    ><select bind:value={desk.filterPayment} class="secondary-filter"><option value="">全部结款状态</option><option>未结款</option><option>已结款</option></select
-    ><select bind:value={desk.filterCreator} class="secondary-filter"
-      ><option value="">全部录入人</option
-      >{#each desk.creators as creator}<option value={creator}>{creator}</option
-        >{/each}</select
-    ><label class="date-field secondary-filter"
-      ><span>从</span><input class="date-input" type="date" bind:value={desk.filterFrom} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} /></label
-    ><label class="date-field secondary-filter"
-      ><span>至</span><input class="date-input" type="date" bind:value={desk.filterTo} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} /></label
-    >{#if desk.canFinance}<button
-      class="filter-icon"
-      title="导出当前筛选结果"
-      onclick={desk.openExport}><ListFilter size={17} /></button>{/if}
+  <div class="filters order-filters" aria-label="订单筛选">
+    <label class="field"><span>开始日期</span><input class="date-input" type="date" bind:value={desk.filterFrom} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} /></label>
+    <label class="field"><span>结束日期</span><input class="date-input" type="date" bind:value={desk.filterTo} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} /></label>
+    <label class="field"><span>客户</span><select bind:value={desk.filterCustomer}><option value="">全部客户</option>{#each desk.customers as customer}<option value={customer.id}>{customer.name}</option>{/each}</select></label>
+    <label class="field"><span>项目</span><select bind:value={desk.filterProject}><option value="">全部项目</option>{#each desk.projects.filter((item: any) => !desk.filterCustomer || item.customer_id === desk.filterCustomer) as project}<option value={project.id}>{project.name}</option>{/each}</select></label>
+    <label class="field"><span>设计师</span><select bind:value={desk.filterDesigner}><option value="">全部设计师</option>{#each desk.designers as designer}<option value={designer}>{designer}</option>{/each}</select></label>
+    <label class="field"><span>结款状态</span><select bind:value={desk.filterPayment}><option value="">全部</option><option>未结款</option><option>已结款</option></select></label>
+    <label class="field"><span>排序</span><select bind:value={desk.orderSort}><option value="date_desc">日期：新到旧</option><option value="date_asc">日期：旧到新</option><option value="delivery_asc">交货日期：近到远</option><option value="quote_desc">报价：高到低</option><option value="quote_asc">报价：低到高</option></select></label>
+    <label class="field filter-search"><span>关键词</span><div class="search-field"><Search size={16} /><input bind:value={desk.search} placeholder="订单 / 产品 / 联系人" /></div></label>
   </div>
+  <div class="table-tools"><span class="filter-result" aria-live="polite">已显示 {desk.filteredOrders.length} 笔订单</span><div class="table-actions"><button class="outline-action" type="button" onclick={() => desk.showOrderFilters = true}>更多筛选</button><button class="outline-action" type="button" onclick={desk.resetOrderFilters}>重置</button>{#if desk.canFinance}<button class="filter-icon" title="导出当前筛选结果" aria-label="导出当前筛选结果" onclick={desk.openExport}><ListFilter size={17} /></button>{/if}<details class="column-settings"><summary>显示字段</summary><div class="column-menu">{#each desk.orderColumnOptions as option}<label><input type="checkbox" checked={desk.visibleOrderColumns.includes(option[0])} onchange={() => desk.toggleOrderColumn(option[0])} />{option[1]}</label>{/each}</div></details></div></div>
   <div class="table-panel">
     <div class="table-scroll">
       <table>

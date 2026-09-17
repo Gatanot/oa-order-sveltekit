@@ -22,7 +22,7 @@
 
 <section class="entry-layout">
   <form class="order-form" onsubmit={desk.submitOrder}>
-    <div class="form-title"><div><h3>{desk.editingOrderId ? "编辑订单" : "新增订单"}</h3><span>订单保存后可在总览中查看、筛选和再次编辑</span></div><span class="form-step">ORDER</span></div>
+    <div class="form-title"><div><p class="section-kicker">ORDER ENTRY</p><h3>{desk.editingOrderId ? "编辑订单" : "新增订单"}</h3><span>订单保存后可在列表中查看、筛选和再次编辑</span></div><button type="button" class="outline-action" onclick={() => desk.navigate("/orders")}>取消</button></div>
     <div class="form-grid">
       <label>客户 <em>*</em><select bind:value={desk.customerId} onchange={desk.onCustomerChange} required><option value="">请选择客户</option>{#each desk.customers as c}<option value={c.id}>{c.name}</option>{/each}</select></label>
       <label>项目 <em>*</em><select bind:value={desk.projectId} required disabled={!desk.customerId}><option value="">请选择项目</option>{#each desk.filteredProjects as p}<option value={p.id}>{p.name} · {p.owner || "未分配"}</option>{/each}</select></label>
