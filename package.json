@@ -14,8 +14,8 @@
     "preview": "vite preview",
     "start": "node build",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-    "rebuild": "bash scripts/rebuild.sh",
-    "rebuild:reset-data": "bash scripts/rebuild.sh --reset-data"
+    "test": "npm run check && npm run build && npm run test:smoke",
+    "test:smoke": "node scripts/smoke-test.mjs"
   },
   "dependencies": {
     "better-sqlite3": "11.10.0",

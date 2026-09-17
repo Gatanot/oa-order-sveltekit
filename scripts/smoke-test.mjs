@@ -1,0 +1,160 @@
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import Database from 'better-sqlite3';
+
+const directory = mkdtempSync(join(tmpdir(), 'oa-order-test-'));
+const databasePath = join(directory, 'oa.db');
+const port = 4300 + Math.floor(Math.random() * 500);
+const origin = `http://127.0.0.1:${port}`;
+const server = spawn(process.execPath, ['build'], { env: { ...process.env, DATABASE_PATH: databasePath, NODE_ENV: 'development', PORT: String(port), ORIGIN: origin }, stdio: ['ignore', 'pipe', 'pipe'] });
+let logs = '';
+let migrationServer;
+server.stdout.on('data', (chunk) => { logs += chunk; });
+server.stderr.on('data', (chunk) => { logs += chunk; });
+
+async function waitForServer(targetOrigin = origin, readLogs = () => logs) {
+  for (let index = 0; index < 80; index++) {
+    try { if ((await fetch(`${targetOrigin}/orders`)).ok) return; } catch { /* retry */ }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`服务器启动超时\n${readLogs()}`);
+}
+
+async function request(path, { json, ...options } = {}) {
+  const headers = new Headers(options.headers);
+  if (json !== undefined) headers.set('content-type', 'application/json');
+  if (options.body instanceof FormData) headers.set('origin', origin);
+  const response = await fetch(`${origin}${path}`, { ...options, headers, body: json === undefined ? options.body : JSON.stringify(json), redirect: 'manual' });
+  const contentType = response.headers.get('content-type') || '';
+  const data = contentType.includes('json') ? await response.json() : await response.arrayBuffer();
+  return { response, data };
+}
+
+try {
+  await waitForServer();
+  let result = await request('/api/orders');
+  assert.equal(result.response.status, 200, '工作台 API 不应要求登录');
+
+  result = await request('/api/projects', { method: 'POST', json: { customer: '测试客户', name: '测试项目', owner: '项目负责人' } });
+  assert.equal(result.response.status, 201, JSON.stringify(result.data));
+  const projectId = result.data.data.id;
+
+  result = await request('/api/catalog/sources', { method: 'POST', json: { kind: 'cost', owner_name: '测试厂商', source_file: 'cost.csv', actor: '财务甲' } });
+  assert.equal(result.response.status, 201, JSON.stringify(result.data));
+  const sourceId = result.data.data.id;
+  const catalogFile = new Blob(['name,unit,cost_unit\nprint,sqm,10.50\n,item,5'], { type: 'text/csv' });
+  const preview = new FormData();
+  preview.append('mode', 'preview');
+  preview.append('file', catalogFile, 'cost.csv');
+  result = await request('/api/catalog/import', { method: 'POST', body: preview });
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  assert.equal(result.data.data.valid_rows, 1);
+  assert.equal(result.data.data.ignored_rows, 1);
+  const catalogImport = new FormData();
+  catalogImport.append('mode', 'import');
+  catalogImport.append('replace', 'true');
+  catalogImport.append('source_id', sourceId);
+  catalogImport.append('actor', '财务甲');
+  catalogImport.append('file', catalogFile, 'cost.csv');
+  result = await request('/api/catalog/import', { method: 'POST', body: catalogImport });
+  assert.equal(result.response.status, 201, JSON.stringify(result.data));
+  assert.equal(result.data.data.imported, 1);
+
+  const createPayload = { project_id: projectId, order_date: '2026-09-16', delivery_date: '2026-09-20', designer: '设计师甲', created_by: '填写人甲', idempotency_key: 'smoke-order-1', products: [{ name: '测试产品', unit: '项', quantity: 2, unit_price: '12.34', specification: '测试要求' }], costs: [{ name: '制作成本', vendor: '测试厂商', unit: '项', quantity: 2, unit_price: '3.21' }], advances: [] };
+  result = await request('/api/orders', { method: 'POST', json: createPayload });
+  assert.equal(result.response.status, 201, JSON.stringify(result.data));
+  assert.equal(result.data.data.created_by, '填写人甲');
+  assert.equal(result.data.data.quote_amount, 2468);
+  assert.equal(result.data.data.cost_amount, 642);
+  const orderId = result.data.data.id;
+  result = await request('/api/orders', { method: 'POST', json: createPayload });
+  assert.equal(result.data.data.id, orderId, '重复提交必须返回原订单');
+
+  result = await request(`/api/orders/${orderId}`, { method: 'PATCH', json: { project_id: projectId, order_date: '2026-09-16', delivery_date: '2026-09-21', designer: '设计师乙', created_by: '填写人乙', payment_status: '已结款', status: '已完成', products: [{ name: '测试产品', unit: '项', quantity: 1, unit_price: '20.00' }], costs: [], advances: [] } });
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  assert.equal(result.data.data.created_by, '填写人乙');
+
+  result = await request('/api/reimbursements', { method: 'POST', json: { employee: '填写人甲', item: '交通费', amount: '12.34', advance_date: '2026-09-16', order_id: orderId } });
+  assert.equal(result.response.status, 201, JSON.stringify(result.data));
+  const reimbursementId = result.data.data.id;
+  result = await request(`/api/reimbursements/${reimbursementId}`, { method: 'PATCH', json: { status: '已打回', reject_reason: '请补充发票', actor: '财务甲' } });
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  assert.equal(result.data.data.reimbursement_status, '已打回');
+  const invoice = new FormData();
+  invoice.append('file', new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], { type: 'image/png' }), 'invoice.png');
+  result = await request(`/api/reimbursements/${reimbursementId}/attachments`, { method: 'POST', body: invoice });
+  assert.equal(result.response.status, 201, JSON.stringify(result.data));
+  result = await request('/api/reimbursements?person=填写人甲');
+  assert.equal(result.data.data.find((item) => item.id === reimbursementId).reimbursement_status, '待审核', '补传发票后应回到待审核');
+  result = await request('/api/reimbursements/batch', { method: 'POST', json: { ids: [reimbursementId], status: '待打款', actor: '财务甲' } });
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  result = await request('/api/reimbursements/batch', { method: 'POST', json: { ids: [reimbursementId], status: '已报销', actor: '财务甲' } });
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  result = await request(`/api/reimbursements/${reimbursementId}/voucher`, { method: 'POST' });
+  assert.equal(result.response.status, 201, JSON.stringify(result.data));
+  const voucherNo = result.data.data.voucher_no;
+  result = await request(`/api/reimbursements/${reimbursementId}/voucher`, { method: 'POST' });
+  assert.equal(result.data.data.voucher_no, voucherNo, '重复生成必须保持同一单号');
+  result = await request(`/api/reimbursements/${reimbursementId}/archive`, { method: 'POST', json: { actor: '财务甲' } });
+  assert.equal(result.response.status, 200);
+  result = await request('/api/reimbursements/export?mode=detail&actor=财务甲');
+  assert.equal(result.response.status, 200);
+  assert.match(result.response.headers.get('content-type') || '', /spreadsheet/);
+
+  const db = new Database(databasePath, { readonly: true });
+  assert.equal(db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '20');
+  assert.equal(db.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, '幂等键不能产生重复订单');
+  assert.equal(db.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('users','sessions')").pluck().get(), 0, '全新数据库不应创建登录或角色表');
+  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+  assert.ok(db.prepare('SELECT COUNT(*) FROM audit_logs').pluck().get() >= 5);
+  db.close();
+
+  const migrationPath = join(directory, 'oa-v18.db');
+  const source = new Database(databasePath, { readonly: true });
+  await source.backup(migrationPath);
+  source.close();
+  const legacy = new Database(migrationPath);
+  legacy.exec(`
+    DROP INDEX IF EXISTS idx_orders_idempotency;
+    ALTER TABLE orders_simple DROP COLUMN idempotency_key;
+    CREATE TABLE users(id TEXT PRIMARY KEY, username TEXT);
+    CREATE TABLE sessions(id TEXT PRIMARY KEY, user_id TEXT);
+    ALTER TABLE orders_simple ADD COLUMN created_by_user_id TEXT;
+    ALTER TABLE reimbursements_simple ADD COLUMN employee_user_id TEXT;
+    ALTER TABLE reimbursements_simple ADD COLUMN voucher_archived_by_user_id TEXT;
+    ALTER TABLE order_attachments ADD COLUMN uploaded_by_user_id TEXT;
+    ALTER TABLE reimbursement_attachments ADD COLUMN uploaded_by_user_id TEXT;
+    ALTER TABLE catalog_sources ADD COLUMN maintained_by_user_id TEXT;
+    ALTER TABLE audit_logs ADD COLUMN actor_user_id TEXT;
+  `);
+  legacy.prepare("UPDATE schema_meta SET value = '18' WHERE key = 'order_app_version'").run();
+  legacy.close();
+  const migrationPort = port + 501;
+  const migrationOrigin = `http://127.0.0.1:${migrationPort}`;
+  let migrationLogs = '';
+  migrationServer = spawn(process.execPath, ['build'], { env: { ...process.env, DATABASE_PATH: migrationPath, NODE_ENV: 'development', PORT: String(migrationPort), ORIGIN: migrationOrigin }, stdio: ['ignore', 'pipe', 'pipe'] });
+  migrationServer.stdout.on('data', (chunk) => { migrationLogs += chunk; });
+  migrationServer.stderr.on('data', (chunk) => { migrationLogs += chunk; });
+  await waitForServer(migrationOrigin, () => migrationLogs);
+  const migrated = new Database(migrationPath, { readonly: true });
+  assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '20');
+  assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='idempotency_key'").pluck().get(), 'v18 数据库应补齐幂等字段');
+  assert.equal(migrated.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('users','sessions')").pluck().get(), 0, '迁移后不应保留登录表');
+  for (const [table, column] of [['orders_simple', 'created_by_user_id'], ['reimbursements_simple', 'employee_user_id'], ['reimbursements_simple', 'voucher_archived_by_user_id'], ['order_attachments', 'uploaded_by_user_id'], ['reimbursement_attachments', 'uploaded_by_user_id'], ['catalog_sources', 'maintained_by_user_id'], ['audit_logs', 'actor_user_id']]) {
+    assert.equal(migrated.prepare(`SELECT COUNT(*) FROM pragma_table_info('${table}') WHERE name=?`).pluck().get(column), 0, `迁移后不应保留 ${table}.${column}`);
+  }
+  assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, '迁移不应丢失订单');
+  assert.deepEqual(migrated.prepare('PRAGMA foreign_key_check').all(), []);
+  migrated.close();
+  migrationServer.kill('SIGTERM');
+  migrationServer = undefined;
+  console.log('Smoke test passed: public workbench, catalog import, creator snapshots, order totals, reimbursement state machine, voucher idempotency, export, audit and v18 migration.');
+} finally {
+  migrationServer?.kill('SIGTERM');
+  server.kill('SIGTERM');
+  await new Promise((resolve) => { server.once('exit', resolve); setTimeout(resolve, 1000); });
+  rmSync(directory, { recursive: true, force: true });
+}

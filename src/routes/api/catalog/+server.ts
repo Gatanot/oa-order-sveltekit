@@ -6,5 +6,5 @@ import type { RequestHandler } from './$types';
 export const GET: RequestHandler = () => json({ data: listCatalog() });
 export const POST: RequestHandler = async (event) => {
   const data = await body(event);
-  return action(() => ({ data: importCatalog(Array.isArray(data.rows) ? data.rows as Array<Record<string, unknown>> : []) }));
+  return action(() => ({ data: importCatalog(Array.isArray(data.rows) ? data.rows as Array<Record<string, unknown>> : [], String(data.source_id || ''), { actorName: String(data.actor || '财务模式'), replace: Boolean(data.replace) }) }));
 };

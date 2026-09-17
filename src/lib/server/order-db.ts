@@ -11,6 +11,12 @@ let instance: Database.Database | undefined;
 
 const now = () => new Date().toISOString();
 export const uuid = () => randomUUID();
+type AuditInput = { actorName?: string; action: string; entityType: string; entityId?: string; fromValue?: string; toValue?: string; detail?: Record<string, unknown> };
+function recordAudit(db: Database.Database, input: AuditInput) {
+  db.prepare('INSERT INTO audit_logs(id,actor_name,action,entity_type,entity_id,from_value,to_value,detail_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)')
+    .run(uuid(), input.actorName || '', input.action, input.entityType, input.entityId || '', input.fromValue || '', input.toValue || '', JSON.stringify(input.detail || {}), now());
+}
+export function addAuditLog(input: AuditInput) { recordAudit(getOrderDb(), input); }
 function reimbursementVoucherNo(id: string, date: string): string {
   return `BX-${String(date || '').replaceAll('-', '')}-${String(id).replaceAll('-', '').slice(0, 6).toUpperCase()}`;
 }
@@ -48,7 +54,149 @@ export function moneyToCents(value: unknown): number {
 function migrate(db: Database.Database) {
   db.exec('CREATE TABLE IF NOT EXISTS schema_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)');
   const version = db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").get() as { value: string } | undefined;
-  if (version?.value === '11') return;
+  if (version?.value === '20') return;
+  if (version?.value === '19') {
+    db.exec(`
+      CREATE TABLE catalog_sources_v20(id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('quote','cost')), owner_name TEXT NOT NULL, source_file TEXT NOT NULL DEFAULT '', source_method TEXT NOT NULL DEFAULT 'manual', active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, import_summary_json TEXT NOT NULL DEFAULT '{}', UNIQUE(kind,owner_name));
+      CREATE TABLE orders_simple_v20(id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, customer_id TEXT NOT NULL, project_id TEXT NOT NULL, catalog_id TEXT, service_name TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 1, unit TEXT NOT NULL DEFAULT '项', quote_amount INTEGER NOT NULL DEFAULT 0, cost_amount INTEGER NOT NULL DEFAULT 0, order_date TEXT NOT NULL, delivery_date TEXT NOT NULL DEFAULT '', contact TEXT NOT NULL DEFAULT '', customer_department TEXT NOT NULL DEFAULT '', designer TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL, status TEXT NOT NULL DEFAULT '制作中', payment_status TEXT NOT NULL DEFAULT '未结款', note TEXT NOT NULL DEFAULT '', specification TEXT NOT NULL DEFAULT '', products_json TEXT NOT NULL DEFAULT '[]', costs_json TEXT NOT NULL DEFAULT '[]', is_extra INTEGER NOT NULL DEFAULT 0, idempotency_key TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, FOREIGN KEY(customer_id) REFERENCES customers_simple(id), FOREIGN KEY(project_id) REFERENCES projects_simple(id), FOREIGN KEY(catalog_id) REFERENCES catalog_items(id));
+      CREATE TABLE order_attachments_v20(id TEXT PRIMARY KEY, order_id TEXT NOT NULL, file_name TEXT NOT NULL, mime_type TEXT NOT NULL DEFAULT '', file_size INTEGER NOT NULL DEFAULT 0, storage_path TEXT NOT NULL DEFAULT '', attachment_kind TEXT NOT NULL DEFAULT 'note', visibility TEXT NOT NULL DEFAULT 'order', created_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE);
+      CREATE TABLE reimbursements_simple_v20(id TEXT PRIMARY KEY, employee TEXT NOT NULL, item TEXT NOT NULL, amount INTEGER NOT NULL DEFAULT 0, advance_date TEXT NOT NULL, order_id TEXT, invoice TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending_review' CHECK(status IN ('pending_review','rejected','pending_payment','paid')), reject_reason TEXT NOT NULL DEFAULT '', reviewed_by TEXT NOT NULL DEFAULT '', reviewed_at TEXT, reimbursed_by TEXT NOT NULL DEFAULT '', reimbursed_at TEXT, voucher_no TEXT NOT NULL DEFAULT '', voucher_created_at TEXT, voucher_archived_at TEXT, created_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE);
+      CREATE TABLE reimbursement_attachments_v20(id TEXT PRIMARY KEY, reimbursement_id TEXT NOT NULL, file_name TEXT NOT NULL, mime_type TEXT NOT NULL DEFAULT '', file_size INTEGER NOT NULL DEFAULT 0, storage_path TEXT NOT NULL DEFAULT '', attachment_kind TEXT NOT NULL DEFAULT 'invoice', visibility TEXT NOT NULL DEFAULT 'participants', created_at TEXT NOT NULL, FOREIGN KEY(reimbursement_id) REFERENCES reimbursements_simple(id) ON DELETE CASCADE);
+      CREATE TABLE audit_logs_v20(id TEXT PRIMARY KEY, actor_name TEXT NOT NULL DEFAULT '', action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL DEFAULT '', from_value TEXT NOT NULL DEFAULT '', to_value TEXT NOT NULL DEFAULT '', detail_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL);
+
+      INSERT INTO catalog_sources_v20(id,kind,owner_name,source_file,source_method,active,created_at,updated_at,import_summary_json) SELECT id,kind,owner_name,source_file,source_method,active,created_at,updated_at,import_summary_json FROM catalog_sources;
+      INSERT INTO orders_simple_v20(id,code,customer_id,project_id,catalog_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,delivery_date,contact,customer_department,designer,created_by,status,payment_status,note,specification,products_json,costs_json,is_extra,idempotency_key,created_at) SELECT id,code,customer_id,project_id,catalog_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,delivery_date,contact,customer_department,designer,created_by,status,payment_status,note,specification,products_json,costs_json,is_extra,idempotency_key,created_at FROM orders_simple;
+      INSERT INTO order_attachments_v20(id,order_id,file_name,mime_type,file_size,storage_path,attachment_kind,visibility,created_at) SELECT id,order_id,file_name,mime_type,file_size,storage_path,attachment_kind,visibility,created_at FROM order_attachments;
+      INSERT INTO reimbursements_simple_v20(id,employee,item,amount,advance_date,order_id,invoice,note,status,reject_reason,reviewed_by,reviewed_at,reimbursed_by,reimbursed_at,voucher_no,voucher_created_at,voucher_archived_at,created_at) SELECT id,employee,item,amount,advance_date,order_id,invoice,note,status,reject_reason,reviewed_by,reviewed_at,reimbursed_by,reimbursed_at,voucher_no,voucher_created_at,voucher_archived_at,created_at FROM reimbursements_simple;
+      INSERT INTO reimbursement_attachments_v20(id,reimbursement_id,file_name,mime_type,file_size,storage_path,attachment_kind,visibility,created_at) SELECT id,reimbursement_id,file_name,mime_type,file_size,storage_path,attachment_kind,visibility,created_at FROM reimbursement_attachments;
+      INSERT INTO audit_logs_v20(id,actor_name,action,entity_type,entity_id,from_value,to_value,detail_json,created_at) SELECT id,actor_name,action,entity_type,entity_id,from_value,to_value,detail_json,created_at FROM audit_logs;
+
+      DROP TABLE reimbursement_attachments;
+      DROP TABLE order_attachments;
+      DROP TABLE reimbursements_simple;
+      DROP TABLE orders_simple;
+      DROP TABLE catalog_sources;
+      DROP TABLE audit_logs;
+      ALTER TABLE catalog_sources_v20 RENAME TO catalog_sources;
+      ALTER TABLE orders_simple_v20 RENAME TO orders_simple;
+      ALTER TABLE order_attachments_v20 RENAME TO order_attachments;
+      ALTER TABLE reimbursements_simple_v20 RENAME TO reimbursements_simple;
+      ALTER TABLE reimbursement_attachments_v20 RENAME TO reimbursement_attachments;
+      ALTER TABLE audit_logs_v20 RENAME TO audit_logs;
+      DROP TABLE IF EXISTS sessions;
+      DROP TABLE IF EXISTS users;
+      CREATE INDEX idx_simple_orders_date ON orders_simple(order_date DESC);
+      CREATE INDEX idx_simple_orders_customer ON orders_simple(customer_id,project_id);
+      CREATE UNIQUE INDEX idx_orders_idempotency ON orders_simple(idempotency_key) WHERE idempotency_key <> '';
+      CREATE INDEX idx_simple_reimbursements_date ON reimbursements_simple(advance_date DESC);
+      CREATE INDEX idx_simple_reimbursements_order ON reimbursements_simple(order_id);
+      CREATE UNIQUE INDEX idx_reimbursements_voucher_no ON reimbursements_simple(voucher_no) WHERE voucher_no <> '';
+      CREATE INDEX idx_audit_entity ON audit_logs(entity_type,entity_id,created_at DESC);
+      UPDATE schema_meta SET value='20' WHERE key='order_app_version';
+    `);
+    return;
+  }
+  if (version?.value === '18') {
+    db.exec(`
+      ALTER TABLE orders_simple ADD COLUMN idempotency_key TEXT NOT NULL DEFAULT '';
+      CREATE UNIQUE INDEX idx_orders_idempotency ON orders_simple(idempotency_key) WHERE idempotency_key <> '';
+      UPDATE schema_meta SET value='19' WHERE key='order_app_version';
+    `);
+    migrate(db);
+    return;
+  }
+  if (version?.value === '17') {
+    db.exec(`
+      DROP TABLE IF EXISTS sessions;
+      DROP TABLE IF EXISTS users;
+      UPDATE schema_meta SET value='18' WHERE key='order_app_version';
+    `);
+    migrate(db);
+    return;
+  }
+  if (version?.value === '16') {
+    db.exec(`
+      ALTER TABLE reimbursements_simple ADD COLUMN voucher_archived_at TEXT;
+      ALTER TABLE catalog_sources ADD COLUMN import_summary_json TEXT NOT NULL DEFAULT '{}';
+      UPDATE catalog_items SET customer_name=(SELECT owner_name FROM catalog_sources WHERE id=catalog_items.source_id)
+        WHERE customer_name='' AND source_id IN (SELECT id FROM catalog_sources WHERE kind='cost');
+      UPDATE schema_meta SET value='17' WHERE key='order_app_version';
+    `);
+    migrate(db);
+    return;
+  }
+  if (version?.value === '15') {
+    db.exec(`
+      ALTER TABLE order_attachments ADD COLUMN visibility TEXT NOT NULL DEFAULT 'order';
+      ALTER TABLE reimbursement_attachments ADD COLUMN visibility TEXT NOT NULL DEFAULT 'participants';
+      UPDATE schema_meta SET value='16' WHERE key='order_app_version';
+    `);
+    migrate(db);
+    return;
+  }
+  if (version?.value === '14') {
+    db.exec(`
+      CREATE TABLE order_products(id TEXT PRIMARY KEY, order_id TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, catalog_item_id TEXT, name TEXT NOT NULL, specification TEXT NOT NULL DEFAULT '', unit TEXT NOT NULL DEFAULT '项', quantity REAL NOT NULL DEFAULT 1, unit_price INTEGER NOT NULL DEFAULT 0, subtotal INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE, FOREIGN KEY(catalog_item_id) REFERENCES catalog_items(id) ON DELETE SET NULL);
+      CREATE TABLE order_costs(id TEXT PRIMARY KEY, order_id TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, catalog_item_id TEXT, name TEXT NOT NULL, vendor TEXT NOT NULL DEFAULT '', unit TEXT NOT NULL DEFAULT '项', quantity REAL NOT NULL DEFAULT 1, unit_price INTEGER NOT NULL DEFAULT 0, subtotal INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE, FOREIGN KEY(catalog_item_id) REFERENCES catalog_items(id) ON DELETE SET NULL);
+      CREATE INDEX idx_order_products_order ON order_products(order_id,position);
+      CREATE INDEX idx_order_costs_order ON order_costs(order_id,position);
+    `);
+    const productInsert = db.prepare('INSERT INTO order_products(id,order_id,position,catalog_item_id,name,specification,unit,quantity,unit_price,subtotal) VALUES(?,?,?,?,?,?,?,?,?,?)');
+    const costInsert = db.prepare('INSERT INTO order_costs(id,order_id,position,catalog_item_id,name,vendor,unit,quantity,unit_price,subtotal) VALUES(?,?,?,?,?,?,?,?,?,?)');
+    const oldOrders = db.prepare('SELECT id,products_json,costs_json FROM orders_simple').all() as Array<Record<string, unknown>>;
+    for (const order of oldOrders) {
+      parseList(order.products_json).forEach((item, index) => productInsert.run(uuid(), order.id, index, text(item.catalog_id) || null, text(item.name), text(item.specification), text(item.unit) || '项', Number(item.quantity || 1), optionalMoneyToCents(item.unit_price), optionalMoneyToCents(item.subtotal || lineTotalYuan(item))));
+      parseList(order.costs_json).forEach((item, index) => costInsert.run(uuid(), order.id, index, text(item.catalog_id) || null, text(item.name), text(item.vendor), text(item.unit) || '项', Number(item.quantity || 1), optionalMoneyToCents(item.unit_price), optionalMoneyToCents(item.subtotal || lineTotalYuan(item))));
+    }
+    db.prepare("UPDATE schema_meta SET value='15' WHERE key='order_app_version'").run();
+    migrate(db);
+    return;
+  }
+  if (version?.value === '13') {
+    db.exec(`
+      CREATE TABLE catalog_sources(id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('quote','cost')), owner_name TEXT NOT NULL, source_file TEXT NOT NULL DEFAULT '', source_method TEXT NOT NULL DEFAULT 'manual', active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(kind,owner_name));
+      ALTER TABLE catalog_items ADD COLUMN source_id TEXT REFERENCES catalog_sources(id) ON DELETE SET NULL;
+      CREATE INDEX idx_catalog_source ON catalog_items(source_id,active);
+    `);
+    const rows = db.prepare('SELECT DISTINCT source_type,source_file,customer_name FROM catalog_items').all() as Array<Record<string, unknown>>;
+    const insertSource = db.prepare('INSERT OR IGNORE INTO catalog_sources(id,kind,owner_name,source_file,source_method,created_at,updated_at) VALUES(?,?,?,?,?,?,?)');
+    for (const row of rows) {
+      const kind = text(row.source_type) === 'supplier_cost' ? 'cost' : 'quote';
+      const owner = kind === 'quote' ? text(row.customer_name) || '通用客户报价' : text(row.source_file).replace(/\.(xlsx?|csv)$/i, '') || '通用厂商成本';
+      insertSource.run(uuid(), kind, owner, text(row.source_file), text(row.source_type) || 'legacy', now(), now());
+      db.prepare('UPDATE catalog_items SET source_id=(SELECT id FROM catalog_sources WHERE kind=? AND owner_name=?) WHERE source_type=? AND source_file=? AND customer_name=?').run(kind, owner, text(row.source_type), text(row.source_file), text(row.customer_name));
+    }
+    db.prepare("UPDATE schema_meta SET value='14' WHERE key='order_app_version'").run();
+    migrate(db);
+    return;
+  }
+  if (version?.value === '12') {
+    db.exec(`
+      ALTER TABLE reimbursement_attachments RENAME TO reimbursement_attachments_v12;
+      ALTER TABLE reimbursements_simple RENAME TO reimbursements_simple_v12;
+      CREATE TABLE reimbursements_simple(id TEXT PRIMARY KEY, employee TEXT NOT NULL, item TEXT NOT NULL, amount INTEGER NOT NULL DEFAULT 0, advance_date TEXT NOT NULL, order_id TEXT, invoice TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending_review' CHECK(status IN ('pending_review','rejected','pending_payment','paid')), reject_reason TEXT NOT NULL DEFAULT '', reviewed_by TEXT NOT NULL DEFAULT '', reviewed_at TEXT, reimbursed_by TEXT NOT NULL DEFAULT '', reimbursed_at TEXT, voucher_no TEXT NOT NULL DEFAULT '', voucher_created_at TEXT, created_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE);
+      CREATE TABLE reimbursement_attachments(id TEXT PRIMARY KEY, reimbursement_id TEXT NOT NULL, file_name TEXT NOT NULL, mime_type TEXT NOT NULL DEFAULT '', file_size INTEGER NOT NULL DEFAULT 0, storage_path TEXT NOT NULL DEFAULT '', attachment_kind TEXT NOT NULL DEFAULT 'invoice', created_at TEXT NOT NULL, FOREIGN KEY(reimbursement_id) REFERENCES reimbursements_simple(id) ON DELETE CASCADE);
+      INSERT INTO reimbursements_simple(id,employee,item,amount,advance_date,order_id,invoice,note,status,reject_reason,reviewed_by,reviewed_at,reimbursed_by,reimbursed_at,voucher_no,voucher_created_at,created_at)
+        SELECT id,employee,item,amount,advance_date,order_id,invoice,note,CASE status WHEN '待核验' THEN 'pending_review' WHEN '待审核' THEN 'pending_review' WHEN '已打回' THEN 'rejected' WHEN '待报销' THEN 'pending_payment' WHEN '已报销' THEN 'paid' ELSE 'pending_review' END,reject_reason,reviewed_by,reviewed_at,reimbursed_by,reimbursed_at,voucher_no,voucher_created_at,created_at FROM reimbursements_simple_v12;
+      INSERT INTO reimbursement_attachments(id,reimbursement_id,file_name,mime_type,file_size,storage_path,created_at)
+        SELECT id,reimbursement_id,file_name,mime_type,file_size,storage_path,created_at FROM reimbursement_attachments_v12;
+      DROP TABLE reimbursement_attachments_v12;
+      DROP TABLE reimbursements_simple_v12;
+      CREATE TABLE audit_logs(id TEXT PRIMARY KEY, actor_name TEXT NOT NULL DEFAULT '', action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL DEFAULT '', from_value TEXT NOT NULL DEFAULT '', to_value TEXT NOT NULL DEFAULT '', detail_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL);
+      CREATE INDEX idx_simple_reimbursements_date ON reimbursements_simple(advance_date DESC);
+      CREATE INDEX idx_simple_reimbursements_order ON reimbursements_simple(order_id);
+      CREATE UNIQUE INDEX idx_reimbursements_voucher_no ON reimbursements_simple(voucher_no) WHERE voucher_no <> '';
+      CREATE INDEX idx_audit_entity ON audit_logs(entity_type,entity_id,created_at DESC);
+      UPDATE schema_meta SET value='13' WHERE key='order_app_version';
+    `);
+    migrate(db);
+    return;
+  }
+  if (version?.value === '11') {
+    db.prepare("UPDATE schema_meta SET value='12' WHERE key='order_app_version'").run();
+    migrate(db);
+    return;
+  }
   if (version?.value === '10') {
     db.exec(`
       ALTER TABLE reimbursements_simple ADD COLUMN voucher_no TEXT NOT NULL DEFAULT '';
@@ -57,6 +205,7 @@ function migrate(db: Database.Database) {
       UPDATE reimbursements_simple SET voucher_no='BX-' || replace(advance_date, '-', '') || '-' || upper(substr(replace(id, '-', ''), 1, 6)), voucher_created_at=created_at WHERE status IN ('待报销','已报销') AND voucher_no='';
       UPDATE schema_meta SET value='11' WHERE key='order_app_version';
     `);
+    migrate(db);
     return;
   }
   if (version?.value === '9') {
@@ -80,30 +229,32 @@ function migrate(db: Database.Database) {
       UPDATE reimbursements_simple SET voucher_no='BX-' || replace(advance_date, '-', '') || '-' || upper(substr(replace(id, '-', ''), 1, 6)), voucher_created_at=created_at WHERE status IN ('待报销','已报销') AND voucher_no='';
       UPDATE schema_meta SET value='11' WHERE key='order_app_version';
     `);
+    migrate(db);
     return;
   }
   db.exec(`
-    DROP TABLE IF EXISTS reimbursement_attachments;
-    DROP TABLE IF EXISTS reimbursements_simple;
-    DROP TABLE IF EXISTS order_attachments;
-    DROP TABLE IF EXISTS orders_simple;
-    DROP TABLE IF EXISTS catalog_items;
-    DROP TABLE IF EXISTS projects_simple;
-    DROP TABLE IF EXISTS customers_simple;
     CREATE TABLE customers_simple(id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, contact TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
-    CREATE TABLE projects_simple(id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, name TEXT NOT NULL, owner TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '进行中', created_at TEXT NOT NULL, UNIQUE(customer_id, name), FOREIGN KEY(customer_id) REFERENCES customers_simple(id) ON DELETE CASCADE);
-    CREATE TABLE catalog_items(id TEXT PRIMARY KEY, category TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, unit TEXT NOT NULL DEFAULT '项', quote_unit INTEGER NOT NULL DEFAULT 0, cost_unit INTEGER NOT NULL DEFAULT 0, customer_name TEXT NOT NULL DEFAULT '', project_name TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, source_file TEXT NOT NULL DEFAULT '', source_sheet TEXT NOT NULL DEFAULT '', source_type TEXT NOT NULL DEFAULT 'manual', item_no TEXT NOT NULL DEFAULT '', specification TEXT NOT NULL DEFAULT '', estimated_quantity TEXT NOT NULL DEFAULT '', max_quote_unit INTEGER NOT NULL DEFAULT 0, supplier_remark TEXT NOT NULL DEFAULT '', raw_data TEXT NOT NULL DEFAULT '{}', UNIQUE(category, name, customer_name, project_name, specification, estimated_quantity));
-    CREATE TABLE orders_simple(id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, customer_id TEXT NOT NULL, project_id TEXT NOT NULL, catalog_id TEXT, service_name TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 1, unit TEXT NOT NULL DEFAULT '项', quote_amount INTEGER NOT NULL DEFAULT 0, cost_amount INTEGER NOT NULL DEFAULT 0, order_date TEXT NOT NULL, delivery_date TEXT NOT NULL DEFAULT '', contact TEXT NOT NULL DEFAULT '', customer_department TEXT NOT NULL DEFAULT '', designer TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL, status TEXT NOT NULL DEFAULT '制作中', payment_status TEXT NOT NULL DEFAULT '未结款', note TEXT NOT NULL DEFAULT '', specification TEXT NOT NULL DEFAULT '', products_json TEXT NOT NULL DEFAULT '[]', costs_json TEXT NOT NULL DEFAULT '[]', is_extra INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, FOREIGN KEY(customer_id) REFERENCES customers_simple(id), FOREIGN KEY(project_id) REFERENCES projects_simple(id), FOREIGN KEY(catalog_id) REFERENCES catalog_items(id));
-    CREATE TABLE order_attachments(id TEXT PRIMARY KEY, order_id TEXT NOT NULL, file_name TEXT NOT NULL, mime_type TEXT NOT NULL DEFAULT '', file_size INTEGER NOT NULL DEFAULT 0, storage_path TEXT NOT NULL DEFAULT '', attachment_kind TEXT NOT NULL DEFAULT 'note', created_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE);
-    CREATE TABLE reimbursements_simple(id TEXT PRIMARY KEY, employee TEXT NOT NULL, item TEXT NOT NULL, amount INTEGER NOT NULL DEFAULT 0, advance_date TEXT NOT NULL, order_id TEXT, invoice TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '待核验' CHECK(status IN ('待核验','已打回','待报销','已报销')), reject_reason TEXT NOT NULL DEFAULT '', reviewed_by TEXT NOT NULL DEFAULT '', reviewed_at TEXT, reimbursed_by TEXT NOT NULL DEFAULT '', reimbursed_at TEXT, voucher_no TEXT NOT NULL DEFAULT '', voucher_created_at TEXT, created_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE);
-    CREATE TABLE reimbursement_attachments(id TEXT PRIMARY KEY, reimbursement_id TEXT NOT NULL, file_name TEXT NOT NULL, mime_type TEXT NOT NULL DEFAULT '', file_size INTEGER NOT NULL DEFAULT 0, storage_path TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, FOREIGN KEY(reimbursement_id) REFERENCES reimbursements_simple(id) ON DELETE CASCADE);
+    CREATE TABLE projects_simple(id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, name TEXT NOT NULL, owner TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '进行中', created_at TEXT NOT NULL, UNIQUE(customer_id,name), FOREIGN KEY(customer_id) REFERENCES customers_simple(id) ON DELETE CASCADE);
+    CREATE TABLE catalog_sources(id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('quote','cost')), owner_name TEXT NOT NULL, source_file TEXT NOT NULL DEFAULT '', source_method TEXT NOT NULL DEFAULT 'manual', active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, import_summary_json TEXT NOT NULL DEFAULT '{}', UNIQUE(kind,owner_name));
+    CREATE TABLE catalog_items(id TEXT PRIMARY KEY, category TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, unit TEXT NOT NULL DEFAULT '项', quote_unit INTEGER NOT NULL DEFAULT 0, cost_unit INTEGER NOT NULL DEFAULT 0, customer_name TEXT NOT NULL DEFAULT '', project_name TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, source_file TEXT NOT NULL DEFAULT '', source_sheet TEXT NOT NULL DEFAULT '', source_type TEXT NOT NULL DEFAULT 'manual', item_no TEXT NOT NULL DEFAULT '', specification TEXT NOT NULL DEFAULT '', estimated_quantity TEXT NOT NULL DEFAULT '', max_quote_unit INTEGER NOT NULL DEFAULT 0, supplier_remark TEXT NOT NULL DEFAULT '', raw_data TEXT NOT NULL DEFAULT '{}', source_id TEXT REFERENCES catalog_sources(id) ON DELETE SET NULL, UNIQUE(category,name,customer_name,project_name,specification,estimated_quantity));
+    CREATE TABLE orders_simple(id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, customer_id TEXT NOT NULL, project_id TEXT NOT NULL, catalog_id TEXT, service_name TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 1, unit TEXT NOT NULL DEFAULT '项', quote_amount INTEGER NOT NULL DEFAULT 0, cost_amount INTEGER NOT NULL DEFAULT 0, order_date TEXT NOT NULL, delivery_date TEXT NOT NULL DEFAULT '', contact TEXT NOT NULL DEFAULT '', customer_department TEXT NOT NULL DEFAULT '', designer TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL, status TEXT NOT NULL DEFAULT '制作中', payment_status TEXT NOT NULL DEFAULT '未结款', note TEXT NOT NULL DEFAULT '', specification TEXT NOT NULL DEFAULT '', products_json TEXT NOT NULL DEFAULT '[]', costs_json TEXT NOT NULL DEFAULT '[]', is_extra INTEGER NOT NULL DEFAULT 0, idempotency_key TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, FOREIGN KEY(customer_id) REFERENCES customers_simple(id), FOREIGN KEY(project_id) REFERENCES projects_simple(id), FOREIGN KEY(catalog_id) REFERENCES catalog_items(id));
+    CREATE TABLE order_products(id TEXT PRIMARY KEY, order_id TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, catalog_item_id TEXT, name TEXT NOT NULL, specification TEXT NOT NULL DEFAULT '', unit TEXT NOT NULL DEFAULT '项', quantity REAL NOT NULL DEFAULT 1, unit_price INTEGER NOT NULL DEFAULT 0, subtotal INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE, FOREIGN KEY(catalog_item_id) REFERENCES catalog_items(id) ON DELETE SET NULL);
+    CREATE TABLE order_costs(id TEXT PRIMARY KEY, order_id TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, catalog_item_id TEXT, name TEXT NOT NULL, vendor TEXT NOT NULL DEFAULT '', unit TEXT NOT NULL DEFAULT '项', quantity REAL NOT NULL DEFAULT 1, unit_price INTEGER NOT NULL DEFAULT 0, subtotal INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE, FOREIGN KEY(catalog_item_id) REFERENCES catalog_items(id) ON DELETE SET NULL);
+    CREATE TABLE order_attachments(id TEXT PRIMARY KEY, order_id TEXT NOT NULL, file_name TEXT NOT NULL, mime_type TEXT NOT NULL DEFAULT '', file_size INTEGER NOT NULL DEFAULT 0, storage_path TEXT NOT NULL DEFAULT '', attachment_kind TEXT NOT NULL DEFAULT 'note', visibility TEXT NOT NULL DEFAULT 'order', created_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE);
+    CREATE TABLE reimbursements_simple(id TEXT PRIMARY KEY, employee TEXT NOT NULL, item TEXT NOT NULL, amount INTEGER NOT NULL DEFAULT 0, advance_date TEXT NOT NULL, order_id TEXT, invoice TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending_review' CHECK(status IN ('pending_review','rejected','pending_payment','paid')), reject_reason TEXT NOT NULL DEFAULT '', reviewed_by TEXT NOT NULL DEFAULT '', reviewed_at TEXT, reimbursed_by TEXT NOT NULL DEFAULT '', reimbursed_at TEXT, voucher_no TEXT NOT NULL DEFAULT '', voucher_created_at TEXT, voucher_archived_at TEXT, created_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE);
+    CREATE TABLE reimbursement_attachments(id TEXT PRIMARY KEY, reimbursement_id TEXT NOT NULL, file_name TEXT NOT NULL, mime_type TEXT NOT NULL DEFAULT '', file_size INTEGER NOT NULL DEFAULT 0, storage_path TEXT NOT NULL DEFAULT '', attachment_kind TEXT NOT NULL DEFAULT 'invoice', visibility TEXT NOT NULL DEFAULT 'participants', created_at TEXT NOT NULL, FOREIGN KEY(reimbursement_id) REFERENCES reimbursements_simple(id) ON DELETE CASCADE);
+    CREATE TABLE audit_logs(id TEXT PRIMARY KEY, actor_name TEXT NOT NULL DEFAULT '', action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL DEFAULT '', from_value TEXT NOT NULL DEFAULT '', to_value TEXT NOT NULL DEFAULT '', detail_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL);
     CREATE INDEX idx_simple_orders_date ON orders_simple(order_date DESC);
+    CREATE INDEX idx_simple_orders_customer ON orders_simple(customer_id,project_id);
+    CREATE UNIQUE INDEX idx_orders_idempotency ON orders_simple(idempotency_key) WHERE idempotency_key <> '';
     CREATE INDEX idx_simple_reimbursements_date ON reimbursements_simple(advance_date DESC);
     CREATE INDEX idx_simple_reimbursements_order ON reimbursements_simple(order_id);
-    CREATE INDEX idx_simple_orders_customer ON orders_simple(customer_id, project_id);
     CREATE UNIQUE INDEX idx_reimbursements_voucher_no ON reimbursements_simple(voucher_no) WHERE voucher_no <> '';
-    DELETE FROM schema_meta WHERE key='order_app_version';
-    INSERT INTO schema_meta(key,value) VALUES('order_app_version','11');
+    CREATE INDEX idx_catalog_source ON catalog_items(source_id,active);
+    CREATE INDEX idx_order_products_order ON order_products(order_id,position);
+    CREATE INDEX idx_order_costs_order ON order_costs(order_id,position);
+    CREATE INDEX idx_audit_entity ON audit_logs(entity_type,entity_id,created_at DESC);
+    INSERT INTO schema_meta(key,value) VALUES('order_app_version','20');
   `);
 }
 
@@ -111,9 +262,15 @@ export function getOrderDb() {
   if (!instance) {
     mkdirSync(dirname(databasePath), { recursive: true });
     instance = new Database(databasePath);
-    instance.pragma('foreign_keys = ON');
     instance.pragma('journal_mode = WAL');
-    instance.transaction(() => { migrate(instance!); })();
+    instance.pragma('foreign_keys = OFF');
+    try {
+      instance.transaction(() => { migrate(instance!); })();
+    } finally {
+      instance.pragma('foreign_keys = ON');
+    }
+    const violations = instance.pragma('foreign_key_check') as Array<Record<string, unknown>>;
+    if (violations.length) throw new Error(`数据库迁移后存在 ${violations.length} 条外键异常`);
 
 
 
@@ -140,17 +297,26 @@ function importBundledExcel(db: Database.Database) {
   const dir = join(process.cwd(), 'excel');
   if (!existsSync(dir)) return;
   const files = ['【佛山广电集采价-AI测试版】2023年至2025年宣传广告活动资格标种类表报价表-广东省瑜鹏传媒科技有限公司(1).xls', '【供应商成本价-测试版】硕达2026年喷画结算价.xlsx'];
-  const upsert = db.prepare(`INSERT INTO catalog_items(id,category,name,unit,quote_unit,cost_unit,customer_name,project_name,active,created_at,source_file,source_sheet,source_type,item_no,specification,estimated_quantity,max_quote_unit,supplier_remark,raw_data)
-    VALUES(?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT DO UPDATE SET category=excluded.category,unit=excluded.unit,quote_unit=excluded.quote_unit,cost_unit=excluded.cost_unit,estimated_quantity=excluded.estimated_quantity,max_quote_unit=excluded.max_quote_unit,supplier_remark=excluded.supplier_remark,raw_data=excluded.raw_data,active=1,source_file=excluded.source_file,source_sheet=excluded.source_sheet,source_type=excluded.source_type,item_no=excluded.item_no,specification=excluded.specification`);
-  const add = (row: Record<string, unknown>, meta: { file: string; sheet: string; type: string; no: string; category: string }) => {
+  const upsert = db.prepare(`INSERT INTO catalog_items(id,category,name,unit,quote_unit,cost_unit,customer_name,project_name,active,created_at,source_file,source_sheet,source_type,item_no,specification,estimated_quantity,max_quote_unit,supplier_remark,raw_data,source_id)
+    VALUES(?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT DO UPDATE SET category=excluded.category,unit=excluded.unit,quote_unit=excluded.quote_unit,cost_unit=excluded.cost_unit,estimated_quantity=excluded.estimated_quantity,max_quote_unit=excluded.max_quote_unit,supplier_remark=excluded.supplier_remark,raw_data=excluded.raw_data,active=1,source_file=excluded.source_file,source_sheet=excluded.source_sheet,source_type=excluded.source_type,item_no=excluded.item_no,specification=excluded.specification,source_id=excluded.source_id`);
+  const add = (row: Record<string, unknown>, meta: { file: string; sheet: string; type: string; no: string; category: string; sourceId: string }) => {
     const name = text(row.name) || text(row.product_name);
     if (!name) return;
-    upsert.run(uuid(), meta.category, name, text(row.unit) || '项', Number(row.quote_unit || 0), Number(row.cost_unit || 0), '', '', now(), meta.file, meta.sheet, meta.type, meta.no, text(row.specification), text(row.estimated_quantity), Number(row.max_quote_unit || 0), text(row.supplier_remark), JSON.stringify(row));
+    upsert.run(uuid(), meta.category, name, text(row.unit) || '项', Number(row.quote_unit || 0), Number(row.cost_unit || 0), '', '', now(), meta.file, meta.sheet, meta.type, meta.no, text(row.specification), text(row.estimated_quantity), Number(row.max_quote_unit || 0), text(row.supplier_remark), JSON.stringify(row), meta.sourceId);
   };
   db.transaction(() => {
     for (const file of files) {
       const path = join(dir, file); if (!existsSync(path)) continue;
+      const kind = file.endsWith('.xls') ? 'quote' : 'cost';
+      const owner = kind === 'quote' ? '佛山广电客户报价' : '硕达厂商成本';
+      let source = db.prepare('SELECT id FROM catalog_sources WHERE source_file=?').get(file) as { id: string } | undefined;
+      if (!source) {
+        const sourceId = uuid();
+        db.prepare('INSERT OR IGNORE INTO catalog_sources(id,kind,owner_name,source_file,source_method,active,created_at,updated_at) VALUES(?,?,?,?,?,1,?,?)').run(sourceId, kind, owner, file, 'bundled', now(), now());
+        source = db.prepare('SELECT id FROM catalog_sources WHERE kind=? AND owner_name=?').get(kind, owner) as { id: string };
+      }
+      db.prepare('UPDATE catalog_items SET source_id=? WHERE source_file=? AND source_id IS NULL').run(source.id, file);
       const workbook = XLSX.read(readFileSync(path), { type: 'buffer' });
       for (const sheet of workbook.SheetNames) {
         const rows = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[sheet], { header: 1, defval: '' });
@@ -160,7 +326,7 @@ function importBundledExcel(db: Database.Database) {
             const r = rows[i] || []; const no = text(r[0]);
             if (!no || !/^\d+$/.test(no)) { if (text(r[0])) category = text(r[0]).replace(/类$/, ''); continue; }
             const name = text(r[1]) || previousName; if (name) previousName = name;
-            add({ name, unit: text(r[2]), estimated_quantity: r[3], specification: r[4], max_quote_unit: excelMoney(r[5]), quote_unit: excelMoney(r[6]) }, { file, sheet, type: 'enterprise_quote', no, category });
+            add({ name, unit: text(r[2]), estimated_quantity: r[3], specification: r[4], max_quote_unit: excelMoney(r[5]), quote_unit: excelMoney(r[6]) }, { file, sheet, type: 'enterprise_quote', no, category, sourceId: source.id });
           }
         } else {
           let category = sheet, header = -1;
@@ -174,7 +340,7 @@ function importBundledExcel(db: Database.Database) {
           for (let i = header + 1; i < rows.length; i++) {
             const r = rows[i] || []; const name = text(r[0]);
             if (!name) { if (text(r[1])) previousCategory = text(r[1]); continue; }
-            add({ name, unit: r[1], cost_unit: excelMoney(r[2]), supplier_remark: r[3] }, { file, sheet, type: 'supplier_cost', no: String(i + 1), category: previousCategory });
+            add({ name, unit: r[1], cost_unit: excelMoney(r[2]), supplier_remark: r[3] }, { file, sheet, type: 'supplier_cost', no: String(i + 1), category: previousCategory, sourceId: source.id });
           }
         }
       }
@@ -194,7 +360,26 @@ export function listProjects(customerId?: string) {
 }
 
 export function listCatalog() {
-  return getOrderDb().prepare('SELECT * FROM catalog_items WHERE active=1 ORDER BY category,name').all();
+  return getOrderDb().prepare(`SELECT ci.*,cs.kind AS library_kind,cs.owner_name AS source_owner,cs.source_file AS library_file,cs.updated_at AS source_updated_at
+    FROM catalog_items ci LEFT JOIN catalog_sources cs ON cs.id=ci.source_id WHERE ci.active=1 ORDER BY cs.kind,cs.owner_name,ci.category,ci.name`).all();
+}
+
+export function listCatalogSources() {
+  return getOrderDb().prepare(`SELECT cs.*,COUNT(ci.id) AS item_count
+    FROM catalog_sources cs
+    LEFT JOIN catalog_items ci ON ci.source_id=cs.id AND ci.active=1
+    GROUP BY cs.id ORDER BY cs.kind,cs.owner_name`).all();
+}
+
+export function createCatalogSource(data: Record<string, unknown>) {
+  const kind = text(data.kind);
+  const owner = text(data.owner_name);
+  if (!['quote', 'cost'].includes(kind) || !owner) throw new Error('请填写有效的资料库类型和公司名称');
+  const db = getOrderDb();
+  const id = uuid();
+  db.prepare('INSERT INTO catalog_sources(id,kind,owner_name,source_file,source_method,active,created_at,updated_at) VALUES(?,?,?,?,?,1,?,?)')
+    .run(id, kind, owner, text(data.source_file), text(data.source_method) || 'manual', now(), now());
+  return db.prepare('SELECT *,0 AS item_count FROM catalog_sources WHERE id=?').get(id);
 }
 
 function parseList(value: unknown): Array<Record<string, unknown>> {
@@ -202,33 +387,44 @@ function parseList(value: unknown): Array<Record<string, unknown>> {
 }
 
 
+type ReimbursementStatus = 'pending_review' | 'rejected' | 'pending_payment' | 'paid';
+const reimbursementStatusLabels: Record<ReimbursementStatus, string> = {
+  pending_review: '待审核', rejected: '已打回', pending_payment: '待打款', paid: '已报销'
+};
+function reimbursementStatusCode(value: unknown): ReimbursementStatus {
+  const status = text(value);
+  const aliases: Record<string, ReimbursementStatus> = { '待核验': 'pending_review', '待审核': 'pending_review', '已打回': 'rejected', '待报销': 'pending_payment', '待打款': 'pending_payment', '已报销': 'paid' };
+  return aliases[status] || (status in reimbursementStatusLabels ? status as ReimbursementStatus : 'pending_review');
+}
+function reimbursementStatusLabel(value: unknown): string { return reimbursementStatusLabels[reimbursementStatusCode(value)]; }
 function reimbursementStatusFor(advances: Array<Record<string, unknown>>): string {
   if (!advances.length) return '无需报销';
-  if (advances.some((item) => ['待审核', '待核验'].includes(text(item.status)))) return '待核验';
-  if (advances.some((item) => text(item.status) === '待报销')) return '待报销';
+  if (advances.some((item) => reimbursementStatusCode(item.status) === 'pending_review')) return '待审核';
+  if (advances.some((item) => reimbursementStatusCode(item.status) === 'rejected')) return '已打回';
+  if (advances.some((item) => reimbursementStatusCode(item.status) === 'pending_payment')) return '待打款';
   return '已报销';
 }
 
-function normalizedReimbursementStatus(value: unknown): string {
-  const status = text(value);
-  return status === '待审核' || !['待核验', '待报销', '已报销'].includes(status) ? '待核验' : status;
+function normalizedReimbursementStatus(value: unknown): ReimbursementStatus {
+  return reimbursementStatusCode(value);
 }
 
-function insertReimbursements(db: Database.Database, orderId: string, advances: Array<Record<string, unknown>>) {
+function insertReimbursements(db: Database.Database, orderId: string, advances: Array<Record<string, unknown>>, userName = '') {
   const insert = db.prepare('INSERT INTO reimbursements_simple(id,employee,item,amount,advance_date,order_id,invoice,note,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)');
   for (const item of advances) {
     const amount = Number(item.amount || 0);
     if (!text(item.item) && !(amount > 0)) continue;
-    insert.run(text(item.id) || uuid(), text(item.employee), text(item.item), moneyToCents(String(amount)), text(item.date) || now().slice(0, 10), orderId, text(item.invoice), text(item.note), normalizedReimbursementStatus(item.status), now());
+    const employee = text(item.employee) || userName;
+    insert.run(text(item.id) || uuid(), employee, text(item.item), moneyToCents(String(amount)), text(item.date) || now().slice(0, 10), orderId, text(item.invoice), text(item.note), normalizedReimbursementStatus(item.status), now());
   }
 }
 
-function syncOrderReimbursements(db: Database.Database, orderId: string, advances: Array<Record<string, unknown>>) {
+function syncOrderReimbursements(db: Database.Database, orderId: string, advances: Array<Record<string, unknown>>, userName = '') {
   const existing = db.prepare('SELECT id,status FROM reimbursements_simple WHERE order_id=?').all(orderId) as Array<{ id: string; status: string }>;
   const byId = new Map(existing.map((item) => [item.id, item]));
   const keep = new Set<string>();
   const insert = db.prepare('INSERT INTO reimbursements_simple(id,employee,item,amount,advance_date,order_id,invoice,note,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)');
-  const update = db.prepare("UPDATE reimbursements_simple SET employee=?,item=?,amount=?,advance_date=?,invoice=?,note=? WHERE id=? AND order_id=? AND status='待核验'");
+  const update = db.prepare("UPDATE reimbursements_simple SET employee=?,item=?,amount=?,advance_date=?,invoice=?,note=? WHERE id=? AND order_id=? AND status='pending_review'");
   for (const item of advances) {
     const amount = Number(item.amount || 0);
     if (!text(item.item) && !(amount > 0)) continue;
@@ -239,21 +435,37 @@ function syncOrderReimbursements(db: Database.Database, orderId: string, advance
     } else {
       const nextId = id || uuid();
       keep.add(nextId);
-      insert.run(nextId, text(item.employee), text(item.item), moneyToCents(String(amount)), text(item.date) || now().slice(0, 10), orderId, text(item.invoice), text(item.note), '待核验', now());
+      const employee = text(item.employee) || userName;
+      insert.run(nextId, employee, text(item.item), moneyToCents(String(amount)), text(item.date) || now().slice(0, 10), orderId, text(item.invoice), text(item.note), 'pending_review', now());
     }
   }
-  const removable = existing.filter((item) => item.status === '待核验' && !keep.has(item.id));
+  const removable = existing.filter((item) => item.status === 'pending_review' && !keep.has(item.id));
   const paths = removable.flatMap((item) => db.prepare('SELECT storage_path FROM reimbursement_attachments WHERE reimbursement_id=?').all(item.id) as Array<{ storage_path: string }>);
   for (const item of removable) db.prepare('DELETE FROM reimbursements_simple WHERE id=?').run(item.id);
   return paths;
 }
 
+function syncNormalizedOrderLines(db: Database.Database, orderId: string, products: Array<Record<string, unknown>>, costs: Array<Record<string, unknown>>) {
+  db.prepare('DELETE FROM order_products WHERE order_id=?').run(orderId);
+  db.prepare('DELETE FROM order_costs WHERE order_id=?').run(orderId);
+  const productInsert = db.prepare('INSERT INTO order_products(id,order_id,position,catalog_item_id,name,specification,unit,quantity,unit_price,subtotal) VALUES(?,?,?,?,?,?,?,?,?,?)');
+  const costInsert = db.prepare('INSERT INTO order_costs(id,order_id,position,catalog_item_id,name,vendor,unit,quantity,unit_price,subtotal) VALUES(?,?,?,?,?,?,?,?,?,?)');
+  products.forEach((item, index) => productInsert.run(uuid(), orderId, index, text(item.catalog_id) || null, text(item.name), text(item.specification), text(item.unit) || '项', Number(item.quantity || 1), optionalMoneyToCents(item.unit_price), moneyToCents(lineTotalYuan(item))));
+  costs.forEach((item, index) => costInsert.run(uuid(), orderId, index, text(item.catalog_id) || null, text(item.name), text(item.vendor), text(item.unit) || '项', Number(item.quantity || 1), optionalMoneyToCents(item.unit_price), moneyToCents(lineTotalYuan(item))));
+}
+
 function hydrateOrder(row: Record<string, unknown>): Record<string, any> {
   const db = getOrderDb();
-  const products = parseList(row.products_json);
-  const costs = parseList(row.costs_json);
-  const advances = db.prepare('SELECT id,employee,item,amount / 100.0 AS amount,advance_date AS date,invoice,note,status FROM reimbursements_simple WHERE order_id=? ORDER BY advance_date,id').all(row.id) as Array<Record<string, unknown>>;
+  const normalizedProducts = db.prepare('SELECT catalog_item_id AS catalog_id,name,specification,unit,quantity,unit_price / 100.0 AS unit_price,subtotal / 100.0 AS subtotal FROM order_products WHERE order_id=? ORDER BY position').all(row.id) as Array<Record<string, unknown>>;
+  const normalizedCosts = db.prepare('SELECT catalog_item_id AS catalog_id,name,vendor,unit,quantity,unit_price / 100.0 AS unit_price,subtotal / 100.0 AS subtotal FROM order_costs WHERE order_id=? ORDER BY position').all(row.id) as Array<Record<string, unknown>>;
+  const products = normalizedProducts.length ? normalizedProducts : parseList(row.products_json);
+  const costs = normalizedCosts.length ? normalizedCosts : parseList(row.costs_json);
+  const advances = (db.prepare('SELECT id,employee,item,amount / 100.0 AS amount,advance_date AS date,invoice,note,status FROM reimbursements_simple WHERE order_id=? ORDER BY advance_date,id').all(row.id) as Array<Record<string, unknown>>).map((item) => ({ ...item, status: reimbursementStatusLabel(item.status) }));
   return { ...row, products, costs, advances, reimbursement_status: reimbursementStatusFor(advances) };
+}
+
+export function getOrderAccessInfo(id: string) {
+  return getOrderDb().prepare('SELECT id,created_by,status,payment_status FROM orders_simple WHERE id=?').get(id) as { id: string; created_by: string; status: string; payment_status: string } | undefined;
 }
 
 export function listOrders(): Array<Record<string, any>> {
@@ -285,7 +497,7 @@ export function exportOrders(filters: Record<string, string>) {
   );
   if (filters.mode === 'settlement') {
     const title = text(filters.title) || '订单结算明细';
-    const detailRows: unknown[][] = [[title], [`客户：${text(filters.partyA) || '—'}`, `合同编号：${text(filters.contract) || '—'}`], [`乙方：${text(filters.partyB) || '—'}`, `项目跟进人：${text(filters.followB) || '—'}`], [], ['分类', '产品名称', '制作要求', '单位', '数量', '单价（元）', '金额（元）', '订单编号', '备注']];
+    const detailRows: unknown[][] = [[title], [`甲方：${text(filters.partyA) || '—'}`, `合同编号：${text(filters.contract) || '—'}`], [`乙方：${text(filters.partyB) || '—'}`, `项目跟进人：${text(filters.followB) || '—'}`], [`联系电话：${text(filters.contactPhone) || '—'}`], [], ['分类', '产品名称', '制作要求', '单位', '数量', '单价（元）', '金额（元）', '订单编号', '备注']];
     let grandTotal = 0;
     const categories = new Map<string, unknown[][]>();
     for (const order of orders) {
@@ -365,6 +577,11 @@ export function createProject(data: CreateProjectInput) {
 
 export function createOrder(data: Record<string, unknown>) {
   const db = getOrderDb();
+  const idempotencyKey = text(data.idempotency_key).slice(0, 100);
+  if (idempotencyKey) {
+    const duplicate = db.prepare('SELECT * FROM orders_simple WHERE idempotency_key=?').get(idempotencyKey) as Record<string, unknown> | undefined;
+    if (duplicate) return hydrateOrder(duplicate);
+  }
   const projectId = String(data.project_id || '');
   const project = db.prepare('SELECT * FROM projects_simple WHERE id=?').get(projectId) as { id: string; customer_id: string } | undefined;
   if (!project) throw new Error('请选择项目');
@@ -395,8 +612,9 @@ export function createOrder(data: Record<string, unknown>) {
   const quoteCents = products.length ? products.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0) : optionalMoneyToCents(data.quote_amount);
   const costCents = costs.length ? costs.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0) : optionalMoneyToCents(data.cost_amount);
   db.transaction(() => {
-    db.prepare('INSERT INTO orders_simple(id,code,customer_id,project_id,catalog_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,created_by,status,note,created_at,specification,is_extra,delivery_date,contact,customer_department,designer,payment_status,products_json,costs_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id, code, project.customer_id, projectId, catalogId, serviceName, quantity, String(data.unit || products[0]?.unit || '项'), quoteCents, costCents, date, String(data.created_by || '当前用户'), String(data.status || '制作中'), String(data.note || '').trim(), created, text(data.specification || products[0]?.specification), data.is_extra ? 1 : 0, deliveryDate, contact, department, designer, text(data.payment_status) || '未结款', JSON.stringify(products), JSON.stringify(costs));
-    insertReimbursements(db, id, advances);
+    db.prepare('INSERT INTO orders_simple(id,code,customer_id,project_id,catalog_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,created_by,status,note,created_at,specification,is_extra,delivery_date,contact,customer_department,designer,payment_status,products_json,costs_json,idempotency_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id, code, project.customer_id, projectId, catalogId, serviceName, quantity, String(data.unit || products[0]?.unit || '项'), quoteCents, costCents, date, String(data.created_by || '填写人'), String(data.status || '制作中'), String(data.note || '').trim(), created, text(data.specification || products[0]?.specification), data.is_extra ? 1 : 0, deliveryDate, contact, department, designer, text(data.payment_status) || '未结款', JSON.stringify(products), JSON.stringify(costs), idempotencyKey);
+    syncNormalizedOrderLines(db, id, products, costs);
+    insertReimbursements(db, id, advances, text(data.created_by));
   })();
   return hydrateOrder(db.prepare('SELECT * FROM orders_simple WHERE id=?').get(id) as Record<string, unknown>);
 }
@@ -425,7 +643,8 @@ export function updateOrder(id: string, data: Record<string, unknown>) {
   const contact = text(data.contact);
   const staleFiles = db.transaction(() => {
     db.prepare(`UPDATE orders_simple SET project_id=?,customer_id=(SELECT customer_id FROM projects_simple WHERE id=?),service_name=?,quantity=?,unit=?,quote_amount=?,cost_amount=?,order_date=?,delivery_date=?,contact=?,customer_department=?,designer=?,created_by=?,status=?,payment_status=?,note=?,specification=?,products_json=?,costs_json=? WHERE id=?`).run(targetProject, targetProject, service, Number(products[0]?.quantity || existing.quantity), text(products[0]?.unit || existing.unit), quote, cost, text(data.order_date || existing.order_date), deliveryDate, contact, department, designer, text(data.created_by || existing.created_by), text(data.status || existing.status), text(data.payment_status || existing.payment_status), text(data.note), text(products[0]?.specification || existing.specification), JSON.stringify(products), JSON.stringify(costs), id);
-    return syncOrderReimbursements(db, id, advances);
+    syncNormalizedOrderLines(db, id, products, costs);
+    return syncOrderReimbursements(db, id, advances, text(data.created_by));
   })();
   for (const file of staleFiles) removeAttachmentFile(file.storage_path);
   return hydrateOrder(db.prepare(`SELECT o.*,c.name customer_name,p.name project_name,p.owner project_owner FROM orders_simple o JOIN customers_simple c ON c.id=o.customer_id JOIN projects_simple p ON p.id=o.project_id WHERE o.id=?`).get(id) as Record<string, unknown>);
@@ -465,18 +684,37 @@ export function listReimbursementOrders(filters: Record<string, string> = {}) {
     advance_date: item.advance_date,
     advance_amount: item.amount,
     employee: item.employee,
+    status: item.status,
     invoice: item.invoice,
-    reimbursement_status: item.status,
+    note: item.note || '',
+    reimbursement_status: reimbursementStatusLabel(item.status),
     voucher_no: item.voucher_no || '',
     voucher_created_at: item.voucher_created_at || '',
+    voucher_archived_at: item.voucher_archived_at || '',
     source_type: item.order_id ? '订单报销' : '内务报销'
   })).filter((item) =>
     (!filters.project || item.project_id === filters.project) &&
     (!filters.person || item.employee === filters.person) &&
+    (!filters.type || (filters.type === 'order' ? Boolean(item.order_id) : filters.type === 'internal' ? !item.order_id : true)) &&
     (!filters.from || item.advance_date >= filters.from) &&
     (!filters.to || item.advance_date <= filters.to) &&
-    (!filters.status || item.reimbursement_status === filters.status)
+    (!filters.status || reimbursementStatusCode(item.reimbursement_status) === reimbursementStatusCode(filters.status))
   );
+}
+
+export function exportReimbursements(filters: Record<string, string>) {
+  const rows = listReimbursementOrders(filters).filter((row) => !filters.ids || filters.ids.split(',').includes(row.id));
+  const mode = filters.mode || 'detail';
+  if (mode === 'payment') {
+    const groups = new Map<string, Array<Record<string, any>>>();
+    for (const row of rows.filter((item) => item.status === 'pending_payment')) groups.set(row.employee, [...(groups.get(row.employee) || []), row]);
+    const summary = [...groups.entries()].map(([employee, items]) => ({ 员工: employee, 待付款单数: items.length, 应付金额: items.reduce((sum, item) => sum + Number(item.advance_amount || 0), 0) / 100, 明细: items.map((item) => item.advance_item).join('、'), 最近日期: items.map((item) => item.advance_date).sort().at(-1) || '' }));
+    const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summary), '待付款汇总');
+    return { data: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }), count: summary.length, name: '待付款汇总' };
+  }
+  const output = rows.map((row) => ({ 来源类型: row.source_type, 来源订单: row.code, 客户: row.customer_name, 项目: row.project_name, 报销人: row.employee, 报销物品: row.advance_item, 垫付日期: row.advance_date, 金额: Number(row.advance_amount || 0) / 100, 发票附件: row.invoice || '未上传', 状态: row.reimbursement_status, 单据编号: row.voucher_no || '', 归档时间: row.voucher_archived_at || '', 备注: row.note || '' }));
+  const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(output), mode === 'voucher' ? '报销单据' : '报销明细');
+  return { data: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }), count: output.length, name: mode === 'voucher' ? '报销单据' : '报销明细' };
 }
 
 export function createReimbursement(data: Record<string, unknown>) {
@@ -488,66 +726,84 @@ export function createReimbursement(data: Record<string, unknown>) {
   const orderId = text(data.order_id);
   if (orderId && !getOrderDb().prepare('SELECT id FROM orders_simple WHERE id=?').get(orderId)) throw new Error('关联订单不存在');
   const id = uuid();
-  getOrderDb().prepare('INSERT INTO reimbursements_simple(id,employee,item,amount,advance_date,order_id,invoice,note,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run(id, employee, item, amount, advanceDate, orderId || null, text(data.invoice), text(data.note), now());
-  return { id, employee, item, amount, advance_date: advanceDate, order_id: orderId, reimbursement_status: '待核验' };
+  const db = getOrderDb();
+  db.transaction(() => {
+    db.prepare('INSERT INTO reimbursements_simple(id,employee,item,amount,advance_date,order_id,invoice,note,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run(id, employee, item, amount, advanceDate, orderId || null, text(data.invoice), text(data.note), now());
+    recordAudit(db, { actorName: employee, action: 'create', entityType: 'reimbursement', entityId: id, detail: { amount, order_id: orderId } });
+  })();
+  return { id, employee, item, amount, advance_date: advanceDate, order_id: orderId, reimbursement_status: '待审核' };
 }
 
 export function updateReimbursement(id: string, status: string, actor: string, rejectReason = '') {
-  if (!['待核验', '已打回', '待报销', '已报销'].includes(status)) throw new Error('INVALID_REIMBURSEMENT_STATUS');
+  const target = reimbursementStatusCode(status);
   const db = getOrderDb();
   const reimbursement = db.prepare('SELECT * FROM reimbursements_simple WHERE id=?').get(id) as Record<string, any> | undefined;
   if (!reimbursement) throw new Error('REIMBURSEMENT_NOT_FOUND');
-  const transitions: Record<string, string[]> = {
-    待核验: ['待报销', '已打回'],
-    待报销: ['已报销'],
+  const transitions: Record<ReimbursementStatus, ReimbursementStatus[]> = {
+    pending_review: ['pending_payment', 'rejected'], rejected: [], pending_payment: ['paid'], paid: []
   };
-  if (reimbursement.status !== status && !transitions[reimbursement.status]?.includes(status)) {
-    throw new Error('INVALID_REIMBURSEMENT_TRANSITION');
-  }
-  if (status === '已打回' && !text(rejectReason)) throw new Error('请填写打回原因');
-  const reviewedAt = now();
-  db.prepare(`UPDATE reimbursements_simple SET status=?, reject_reason=CASE WHEN ?='已打回' THEN ? WHEN ?='待核验' THEN '' ELSE reject_reason END, reviewed_by=CASE WHEN ? IN ('待报销','已打回') THEN ? ELSE reviewed_by END, reviewed_at=CASE WHEN ? IN ('待报销','已打回') THEN ? ELSE reviewed_at END, reimbursed_by=CASE WHEN ?='已报销' THEN ? ELSE reimbursed_by END, reimbursed_at=CASE WHEN ?='已报销' THEN ? ELSE reimbursed_at END WHERE id=?`).run(status, status, rejectReason, status, status, actor, status, reviewedAt, status, actor, status, reviewedAt, id);
-  return { ...reimbursement, status, order_id: reimbursement.order_id || '', reimbursement_status: status, reject_reason: status === '已打回' ? rejectReason : reimbursement.reject_reason || '' };
+  if (reimbursement.status !== target && !transitions[reimbursement.status as ReimbursementStatus]?.includes(target)) throw new Error('INVALID_REIMBURSEMENT_TRANSITION');
+  if (target === 'rejected' && !text(rejectReason)) throw new Error('请填写打回原因');
+  const changedAt = now();
+  db.transaction(() => {
+    db.prepare(`UPDATE reimbursements_simple SET status=?, reject_reason=CASE WHEN ?='rejected' THEN ? WHEN ?='pending_review' THEN '' ELSE reject_reason END, reviewed_by=CASE WHEN ? IN ('pending_payment','rejected') THEN ? ELSE reviewed_by END, reviewed_at=CASE WHEN ? IN ('pending_payment','rejected') THEN ? ELSE reviewed_at END, reimbursed_by=CASE WHEN ?='paid' THEN ? ELSE reimbursed_by END, reimbursed_at=CASE WHEN ?='paid' THEN ? ELSE reimbursed_at END WHERE id=?`).run(target, target, rejectReason, target, target, actor, target, changedAt, target, actor, target, changedAt, id);
+    recordAudit(db, { actorName: actor, action: 'status_change', entityType: 'reimbursement', entityId: id, fromValue: reimbursement.status, toValue: target, detail: { reject_reason: target === 'rejected' ? rejectReason : '' } });
+  })();
+  return { ...reimbursement, status: target, order_id: reimbursement.order_id || '', reimbursement_status: reimbursementStatusLabel(target), reject_reason: target === 'rejected' ? rejectReason : reimbursement.reject_reason || '' };
 }
 
 export function updateReimbursementsBatch(ids: string[], status: string, actor: string, rejectReason = '') {
-  if (!['待核验', '已打回', '待报销', '已报销'].includes(status)) throw new Error('INVALID_REIMBURSEMENT_STATUS');
+  const target = reimbursementStatusCode(status);
   const uniqueIds = [...new Set(ids.map((id) => text(id)).filter(Boolean))];
   if (!uniqueIds.length) throw new Error('请选择报销记录');
-  if (status === '已打回' && !text(rejectReason)) throw new Error('请填写打回原因');
+  if (target === 'rejected' && !text(rejectReason)) throw new Error('请填写打回原因');
   const db = getOrderDb();
-  const transitions: Record<string, string[]> = { 待核验: ['待报销', '已打回'], 待报销: ['已报销'] };
+  const transitions: Record<ReimbursementStatus, ReimbursementStatus[]> = { pending_review: ['pending_payment', 'rejected'], rejected: [], pending_payment: ['paid'], paid: [] };
   const rows = uniqueIds.map((id) => db.prepare('SELECT * FROM reimbursements_simple WHERE id=?').get(id) as Record<string, any> | undefined);
   if (rows.some((row) => !row)) throw new Error('REIMBURSEMENT_NOT_FOUND');
-  for (const row of rows as Array<Record<string, any>>) {
-    if (row.status !== status && !transitions[row.status]?.includes(status)) throw new Error('INVALID_REIMBURSEMENT_TRANSITION');
-  }
+  for (const row of rows as Array<Record<string, any>>) if (row.status !== target && !transitions[row.status as ReimbursementStatus]?.includes(target)) throw new Error('INVALID_REIMBURSEMENT_TRANSITION');
   const changedAt = now();
   db.transaction(() => {
-    const update = db.prepare(`UPDATE reimbursements_simple SET status=?, reject_reason=CASE WHEN ?='已打回' THEN ? WHEN ?='待核验' THEN '' ELSE reject_reason END, reviewed_by=CASE WHEN ? IN ('待报销','已打回') THEN ? ELSE reviewed_by END, reviewed_at=CASE WHEN ? IN ('待报销','已打回') THEN ? ELSE reviewed_at END, reimbursed_by=CASE WHEN ?='已报销' THEN ? ELSE reimbursed_by END, reimbursed_at=CASE WHEN ?='已报销' THEN ? ELSE reimbursed_at END WHERE id=?`);
-    for (const id of uniqueIds) update.run(status, status, rejectReason, status, status, actor, status, changedAt, status, actor, status, changedAt, id);
+    const update = db.prepare(`UPDATE reimbursements_simple SET status=?, reject_reason=CASE WHEN ?='rejected' THEN ? WHEN ?='pending_review' THEN '' ELSE reject_reason END, reviewed_by=CASE WHEN ? IN ('pending_payment','rejected') THEN ? ELSE reviewed_by END, reviewed_at=CASE WHEN ? IN ('pending_payment','rejected') THEN ? ELSE reviewed_at END, reimbursed_by=CASE WHEN ?='paid' THEN ? ELSE reimbursed_by END, reimbursed_at=CASE WHEN ?='paid' THEN ? ELSE reimbursed_at END WHERE id=?`);
+    for (const row of rows as Array<Record<string, any>>) {
+      update.run(target, target, rejectReason, target, target, actor, target, changedAt, target, actor, target, changedAt, row.id);
+      recordAudit(db, { actorName: actor, action: 'status_change', entityType: 'reimbursement', entityId: row.id, fromValue: row.status, toValue: target, detail: { batch: true, reject_reason: target === 'rejected' ? rejectReason : '' } });
+    }
   })();
   return uniqueIds.map((id) => {
     const row = db.prepare('SELECT * FROM reimbursements_simple WHERE id=?').get(id) as Record<string, any>;
-    return { ...row, order_id: row.order_id || '', reimbursement_status: row.status };
+    return { ...row, order_id: row.order_id || '', reimbursement_status: reimbursementStatusLabel(row.status) };
   });
 }
 
-export function generateReimbursementVoucher(id: string) {
+export function generateReimbursementVoucher(id: string, actor = '财务人员') {
   const db = getOrderDb();
   const row = db.prepare('SELECT * FROM reimbursements_simple WHERE id=?').get(id) as Record<string, any> | undefined;
   if (!row) throw new Error('REIMBURSEMENT_NOT_FOUND');
-  if (!['待报销', '已报销'].includes(row.status)) throw new Error('报销确认后才能生成单据');
+  if (!['pending_payment', 'paid'].includes(row.status)) throw new Error('报销确认后才能生成单据');
   const voucherNo = row.voucher_no || reimbursementVoucherNo(row.id, row.advance_date);
   const createdAt = row.voucher_created_at || now();
   db.prepare('UPDATE reimbursements_simple SET voucher_no=?, voucher_created_at=? WHERE id=?').run(voucherNo, createdAt, id);
-  return { ...row, voucher_no: voucherNo, voucher_created_at: createdAt, order_id: row.order_id || '', reimbursement_status: row.status };
+  recordAudit(db, { actorName: actor, action: 'generate_voucher', entityType: 'reimbursement', entityId: id, detail: { voucher_no: voucherNo } });
+  return { ...row, voucher_no: voucherNo, voucher_created_at: createdAt, order_id: row.order_id || '', reimbursement_status: reimbursementStatusLabel(row.status) };
+}
+
+export function archiveReimbursementVoucher(id: string, actor = '财务人员') {
+  const db = getOrderDb();
+  const row = db.prepare("SELECT status,voucher_no FROM reimbursements_simple WHERE id=?").get(id) as { status: string; voucher_no: string } | undefined;
+  if (!row) throw new Error('REIMBURSEMENT_NOT_FOUND');
+  if (!row.voucher_no) throw new Error('请先生成报销单据');
+  if (!['pending_payment', 'paid'].includes(row.status)) throw new Error('当前状态不能归档单据');
+  const archivedAt = now();
+  db.prepare('UPDATE reimbursements_simple SET voucher_archived_at=? WHERE id=?').run(archivedAt, id);
+  recordAudit(db, { actorName: actor, action: 'archive_voucher', entityType: 'reimbursement', entityId: id, detail: { voucher_no: row.voucher_no } });
+  return { id, voucher_no: row.voucher_no, voucher_archived_at: archivedAt };
 }
 
 export function deleteReimbursement(id: string) {
   const db = getOrderDb();
   const files = db.prepare('SELECT storage_path FROM reimbursement_attachments WHERE reimbursement_id=?').all(id) as Array<{ storage_path: string }>;
-  const result = db.prepare("DELETE FROM reimbursements_simple WHERE id=? AND status='待核验'").run(id);
+  const result = db.prepare("DELETE FROM reimbursements_simple WHERE id=? AND status='pending_review'").run(id);
   if (!result.changes) throw new Error('REIMBURSEMENT_NOT_FOUND');
   for (const file of files) removeAttachmentFile(file.storage_path);
 }
@@ -570,9 +826,9 @@ export function listOrderAttachments(orderId: string) {
 
 export function addStandaloneReimbursementAttachment(reimbursementId: string, file: { name: string; data: Buffer }) {
   const db = getOrderDb();
-  const reimbursement = db.prepare('SELECT id,status FROM reimbursements_simple WHERE id=?').get(reimbursementId) as { id: string; status: string } | undefined;
+  const reimbursement = db.prepare('SELECT id,employee,status FROM reimbursements_simple WHERE id=?').get(reimbursementId) as { id: string; employee: string; status: string } | undefined;
   if (!reimbursement) throw new Error('REIMBURSEMENT_NOT_FOUND');
-  if (!['待核验', '已打回'].includes(reimbursement.status)) throw new Error('当前状态不允许上传发票');
+  if (!['pending_review', 'rejected'].includes(reimbursement.status)) throw new Error('当前状态不允许上传发票');
   if (!file.data?.length) throw new Error('附件内容为空');
   if (file.data.length > maxAttachmentSize) throw new Error('单个附件不能超过 10MB');
   const mime = detectAttachmentMime(file.data);
@@ -583,9 +839,15 @@ export function addStandaloneReimbursementAttachment(reimbursementId: string, fi
   const storagePath = join(`reimbursements/${reimbursementId}`, `${id}${extension}`);
   mkdirSync(join(attachmentDir, `reimbursements/${reimbursementId}`), { recursive: true });
   writeFileSync(join(attachmentDir, storagePath), file.data);
-  db.prepare('INSERT INTO reimbursement_attachments(id,reimbursement_id,file_name,mime_type,file_size,storage_path,created_at) VALUES(?,?,?,?,?,?,?)').run(id, reimbursementId, safeName, mime, file.data.length, storagePath, now());
-  db.prepare("UPDATE reimbursements_simple SET invoice=?, status=CASE WHEN status='已打回' THEN '待核验' ELSE status END, reject_reason=CASE WHEN status='已打回' THEN '' ELSE reject_reason END WHERE id=?").run(safeName, reimbursementId);
+  db.prepare('INSERT INTO reimbursement_attachments(id,reimbursement_id,file_name,mime_type,file_size,storage_path,attachment_kind,created_at) VALUES(?,?,?,?,?,?,?,?)').run(id, reimbursementId, safeName, mime, file.data.length, storagePath, 'invoice', now());
+  const status = (reimbursement.status === 'rejected' ? 'pending_review' : reimbursement.status);
+  db.prepare("UPDATE reimbursements_simple SET invoice=?, status=?, reject_reason=CASE WHEN ?='pending_review' THEN '' ELSE reject_reason END WHERE id=?").run(safeName, status, status, reimbursementId);
+  recordAudit(db, { actorName: reimbursement.employee, action: reimbursement.status === 'rejected' ? 'reupload_attachment' : 'upload_attachment', entityType: 'reimbursement', entityId: reimbursementId, detail: { file_name: safeName, file_size: file.data.length } });
   return { id, reimbursement_id: reimbursementId, file_name: safeName, mime_type: mime, file_size: file.data.length, created_at: now() };
+}
+
+export function getReimbursementAccessInfo(reimbursementId: string) {
+  return getOrderDb().prepare('SELECT id,employee,status FROM reimbursements_simple WHERE id=?').get(reimbursementId) as { id: string; employee: string; status: string } | undefined;
 }
 
 export function listReimbursementAttachments(reimbursementId: string) {
@@ -611,7 +873,7 @@ function removeAttachmentFile(storagePath: string) {
   if (!storagePath) return;
   const path = resolve(attachmentDir, storagePath);
   if (!path.startsWith(attachmentDir + sep) || !existsSync(path)) return;
-  try { unlinkSync(path); } catch { /* 忽略清理失败，不影响主流程 */ }
+  try { unlinkSync(path); } catch (reason) { console.warn(`附件清理失败: ${path}`, reason); }
 }
 
 export function addOrderAttachment(orderId: string, file: { name: string; data: Buffer; kind?: string; advanceId?: string }) {
@@ -629,22 +891,32 @@ export function addOrderAttachment(orderId: string, file: { name: string; data: 
   mkdirSync(join(attachmentDir, order.id), { recursive: true });
   writeFileSync(join(attachmentDir, storagePath), file.data);
   db.prepare('INSERT INTO order_attachments(id,order_id,file_name,mime_type,file_size,created_at,storage_path,attachment_kind) VALUES(?,?,?,?,?,?,?,?)').run(id, order.id, safeName, mime, file.data.length, now(), storagePath, 'note');
+  recordAudit(db, { actorName: '填写人', action: 'upload_attachment', entityType: 'order', entityId: order.id, detail: { file_name: safeName, file_size: file.data.length } });
   return db.prepare('SELECT id,order_id,file_name,mime_type,file_size,attachment_kind,created_at FROM order_attachments WHERE id=?').get(id);
 }
 
-export function importCatalog(rows: Array<Record<string, unknown>>) {
+export function importCatalog(rows: Array<Record<string, unknown>>, sourceId = '', options: { replace?: boolean; actorName?: string } = {}) {
   const db = getOrderDb();
-  const insert = db.prepare(`INSERT INTO catalog_items(id,category,name,unit,quote_unit,cost_unit,customer_name,project_name,active,created_at,source_file,source_sheet,source_type,item_no,specification,estimated_quantity,max_quote_unit,supplier_remark,raw_data)
-    VALUES(?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(category,name,customer_name,project_name,specification,estimated_quantity) DO UPDATE SET unit=excluded.unit,quote_unit=excluded.quote_unit,cost_unit=excluded.cost_unit,active=1,max_quote_unit=excluded.max_quote_unit,supplier_remark=excluded.supplier_remark,raw_data=excluded.raw_data`);
+  const source = sourceId ? db.prepare('SELECT * FROM catalog_sources WHERE id=?').get(sourceId) as Record<string, unknown> | undefined : undefined;
+  if (sourceId && !source) throw new Error('资料库来源不存在');
+  const insert = db.prepare(`INSERT INTO catalog_items(id,category,name,unit,quote_unit,cost_unit,customer_name,project_name,active,created_at,source_file,source_sheet,source_type,item_no,specification,estimated_quantity,max_quote_unit,supplier_remark,raw_data,source_id)
+    VALUES(?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(category,name,customer_name,project_name,specification,estimated_quantity) DO UPDATE SET unit=excluded.unit,quote_unit=excluded.quote_unit,cost_unit=excluded.cost_unit,active=1,max_quote_unit=excluded.max_quote_unit,supplier_remark=excluded.supplier_remark,raw_data=excluded.raw_data,source_id=excluded.source_id,source_file=excluded.source_file`);
   return db.transaction(() => {
     let count = 0;
+    if (source && options.replace) db.prepare('UPDATE catalog_items SET active=0 WHERE source_id=?').run(sourceId);
     for (const row of rows) {
       const name = text(row.name || row['名称'] || row['服务名称'] || row['产品名称'] || row['材料名称']);
       if (!name) continue;
       const quote = row.quote_unit ?? row['报价'] ?? row['报价单价'] ?? row['含税投标单价报价'] ?? 0;
       const cost = row.cost_unit ?? row['成本'] ?? row['成本单价'] ?? row['含13%税单价(元）'] ?? 0;
-      insert.run(uuid(), text(row.category || row['分类'] || ''), name, text(row.unit || row['单位'] || '项'), excelMoney(quote), excelMoney(cost), text(row.customer_name || row['客户'] || row['公司'] || row['企业'] || ''), text(row.project_name || row['项目'] || row['项目名称'] || ''), now(), text(row.source_file), text(row.source_sheet), 'upload', text(row.item_no || row['序号'] || count + 1), text(row.specification || row['规格和技术要求'] || row['备注'] || ''), text(row.estimated_quantity || row['预估数量'] || ''), excelMoney(row.max_quote_unit || row['含税最高单价限价'] || 0), text(row.supplier_remark || row['备注'] || ''), JSON.stringify(row));
+      const owner = text(source?.owner_name);
+      insert.run(uuid(), text(row.category || row['分类'] || ''), name, text(row.unit || row['单位'] || '项'), excelMoney(quote), excelMoney(cost), text(row.customer_name || row['客户'] || row['公司'] || row['企业'] || (source ? owner : '')), text(row.project_name || row['项目'] || row['项目名称'] || ''), now(), text(source?.source_file || row.source_file), text(row.source_sheet), source ? String(source.kind === 'cost' ? 'supplier_cost' : 'customer_quote') : 'upload', text(row.item_no || row['序号'] || count + 1), text(row.specification || row['规格和技术要求'] || row['备注'] || ''), text(row.estimated_quantity || row['预估数量'] || ''), excelMoney(row.max_quote_unit || row['含税最高单价限价'] || 0), text(row.supplier_remark || row['备注'] || (source?.kind === 'cost' ? owner : '')), JSON.stringify(row), sourceId || null);
       count++;
+    }
+    if (source) {
+      const summary = JSON.stringify({ rows: rows.length, imported: count, replaced: Boolean(options.replace), imported_at: now() });
+      db.prepare("UPDATE catalog_sources SET source_file=COALESCE(NULLIF(?,''),source_file),source_method='upload',import_summary_json=?,updated_at=? WHERE id=?").run(text(rows[0]?.source_file), summary, now(), sourceId);
+      recordAudit(db, { actorName: options.actorName, action: options.replace ? 'replace_catalog' : 'import_catalog', entityType: 'catalog_source', entityId: sourceId, detail: { rows: rows.length, imported: count } });
     }
     return count;
   })();

@@ -23,6 +23,7 @@
     }
   }
 </script>
+<svelte:window onkeydown={(event) => { if (event.key === 'Escape') detailItem = null; }} />
 
 <section class="page-section">
   <div class="section-heading">
@@ -31,12 +32,12 @@
       <h2>{desk.reimbursementRole === "finance" ? "报销审核与付款" : "我的报销"}</h2>
       <span>{desk.reimbursementRole === "finance" ? "审核员工提交的报销，并集中处理待付款记录。" : "查看本人提交的报销记录和当前处理进度。"}</span>
     </div>
-    <div class="top-actions"><button class="primary-action" type="button" onclick={desk.openStandaloneReimbursement}><Paperclip size={15} />新建报销</button></div>
+    {#if desk.canWrite}<div class="top-actions"><button class="primary-action" type="button" onclick={desk.openStandaloneReimbursement}><Paperclip size={15} />新建报销</button></div>{/if}
   </div>
   <div class="summary-row reimbursement-summary">
     {#if desk.reimbursementRole === "finance"}
       <div><span>报销单总数</span><b>{desk.reimbursementStats.total}<small> 单</small></b></div>
-      <div><span>待核验</span><b>{desk.reimbursementStats.pendingReview}<small> 单 · {desk.money(desk.reimbursementStats.pendingReviewAmount)}</small></b></div>
+      <div><span>待审核</span><b>{desk.reimbursementStats.pendingReview}<small> 单 · {desk.money(desk.reimbursementStats.pendingReviewAmount)}</small></b></div>
       <div><span>待付款</span><b>{desk.reimbursementStats.pendingPay}<small> 单 · {desk.money(desk.reimbursementStats.pendingPayAmount)}</small></b></div>
       <div><span>已打回</span><b class="negative">{desk.reimbursementStats.rejected}<small> 单</small></b></div>
     {:else}
@@ -61,8 +62,8 @@
     ><select bind:value={desk.reimbursementType}
       ><option value="">全部类型</option><option value="order">订单报销</option><option value="internal">内务报销</option></select
     ><select bind:value={desk.reimbursementStatus}
-      ><option value="">全部状态</option><option value="待核验">待核验</option
-      ><option value="已打回">已打回</option><option value="待报销">待报销</option><option value="已报销"
+      ><option value="">全部状态</option><option value="待审核">待审核</option
+      ><option value="已打回">已打回</option><option value="待打款">待打款</option><option value="已报销"
         >已报销</option
       ></select
     ><label class="date-field"
@@ -88,7 +89,7 @@
       <div class="payment-summary-list">
         {#each desk.reimbursementPaymentSummary as group}
           <div class="payment-summary-item">
-            <button class="payment-summary-select" type="button" onclick={() => desk.selectedReimbursementIds = desk.reimbursements.filter((item: any) => item.reimbursement_status === "待报销" && item.employee === group.employee).map((item: any) => item.id)}>
+            <button class="payment-summary-select" type="button" onclick={() => desk.selectedReimbursementIds = desk.reimbursements.filter((item: any) => item.reimbursement_status === "待打款" && item.employee === group.employee).map((item: any) => item.id)}>
               <span><b>{group.employee}</b><small>{group.count} 笔待付款</small></span><strong>{desk.money(group.amount)}</strong>
             </button>
             <button class="link-action" type="button" disabled={desk.busy} onclick={() => desk.markEmployeeReimbursed(group.employee)}>确认已打款</button>
@@ -109,7 +110,7 @@
           ></thead
         ><tbody
           >{#each desk.reimbursementRows() as item}<tr
-              ><td><input type="checkbox" aria-label={`选择报销 ${item.advance_item || item.item}`} disabled={desk.reimbursementRole !== "finance" || item.reimbursement_status !== "待核验"} checked={desk.selectedReimbursementIds.includes(item.id)} onchange={() => desk.toggleReimbursement(item.id)} /></td><td>{#if item.order_id}<button class="link-action" type="button" onclick={() => desk.openDetail(desk.orders.find((order: any) => order.id === item.order_id))}><b>{item.code}</b></button>{:else}<b class="muted">内务报销</b>{/if}</td><td
+              ><td><input type="checkbox" aria-label={`选择报销 ${item.advance_item || item.item}`} disabled={desk.reimbursementRole !== "finance" || item.reimbursement_status !== "待审核"} checked={desk.selectedReimbursementIds.includes(item.id)} onchange={() => desk.toggleReimbursement(item.id)} /></td><td>{#if item.order_id}<button class="link-action" type="button" onclick={() => desk.openDetail(desk.orders.find((order: any) => order.id === item.order_id))}><b>{item.code}</b></button>{:else}<b class="muted">内务报销</b>{/if}</td><td
                 ><b>{item.project_name}</b><small>{item.employee}</small></td
               ><td>{item.advance_date}</td><td>{item.advance_item || "—"}</td><td
                 class="money">{desk.money(item.advance_amount)}</td
@@ -124,19 +125,19 @@
               ><td
                 ><span class:reimbursement-rejected={item.reimbursement_status === "已打回"} class="status-dot">{item.reimbursement_status}</span>{#if item.reimbursement_status === "已打回" && item.reject_reason}<small class="reject-reason">{item.reject_reason}</small>{/if}</td
               ><td
-                >{#if item.voucher_no}<button class="link-action" type="button" onclick={() => detailItem = item}>查看单据</button>{:else if desk.reimbursementRole === "finance" && (item.reimbursement_status === "待报销" || item.reimbursement_status === "已报销")}<button class="link-action" type="button" disabled={desk.busy} onclick={() => desk.generateReimbursementVoucher(item)}>生成单据</button>{:else}<span class="muted">查看明细</span>{/if}<br />{#if desk.reimbursementRole === "employee"}{#if item.reimbursement_status === "已打回"}<button class="outline-action reupload-action" type="button" disabled={desk.busy} onclick={() => desk.reuploadReimbursement(item)}>重新上传发票</button>{:else}<span class="muted">{item.reimbursement_status === "待核验" ? "等待财务核验" : item.reimbursement_status === "待报销" ? "等待付款" : "已完成"}</span>{/if}{:else if item.reimbursement_status === "待核验"}<button
+                >{#if item.voucher_no}<button class="link-action" type="button" onclick={() => detailItem = item}>查看单据</button>{:else if desk.reimbursementRole === "finance" && (item.reimbursement_status === "待打款" || item.reimbursement_status === "已报销")}<button class="link-action" type="button" disabled={desk.busy} onclick={() => desk.generateReimbursementVoucher(item)}>生成单据</button>{:else}<span class="muted">查看明细</span>{/if}<br />{#if desk.reimbursementRole === "employee"}{#if desk.canWrite && item.reimbursement_status === "已打回"}<button class="outline-action reupload-action" type="button" disabled={desk.busy} onclick={() => desk.reuploadReimbursement(item)}>重新上传发票</button>{:else}<span class="muted">{item.reimbursement_status === "待审核" ? "等待财务核验" : item.reimbursement_status === "待打款" ? "等待付款" : "已完成"}</span>{/if}{:else if item.reimbursement_status === "待审核"}<button
                     class="primary-action"
                     type="button"
                     disabled={desk.busy}
-                    onclick={() => desk.markReimbursement(item, "待报销")}
-                    >确认待报销</button><button class="delete-action" type="button" disabled={desk.busy} onclick={() => desk.rejectReimbursement(item)}>打回</button
-                  >{:else if item.reimbursement_status === "待报销"}<button
+                    onclick={() => desk.markReimbursement(item, "待打款")}
+                    >确认待打款</button><button class="delete-action" type="button" disabled={desk.busy} onclick={() => desk.rejectReimbursement(item)}>打回</button
+                  >{:else if item.reimbursement_status === "待打款"}<button
                     class="primary-action"
                     type="button"
                     disabled={desk.busy}
                     onclick={() => desk.markReimbursement(item, "已报销")}
                     >标记已报销</button
-                  >{:else}<span class="muted">{item.reimbursement_status === "已打回" ? "等待员工补充发票" : "已完成"}</span>{/if}{#if desk.reimbursementRole === "employee" && item.reimbursement_status === "待核验"}<button class="delete-action" type="button" onclick={() => desk.deleteReimbursement(item)}>删除</button>{/if}</td
+                  >{:else}<span class="muted">{item.reimbursement_status === "已打回" ? "等待员工补充发票" : "已完成"}</span>{/if}{#if desk.canWrite && desk.reimbursementRole === "employee" && item.reimbursement_status === "待审核"}<button class="delete-action" type="button" onclick={() => desk.deleteReimbursement(item)}>删除</button>{/if}</td
               ></tr
             >{#if attachmentsByOrder[item.id]?.length}<tr class="attachment-row"
                 ><td colspan="9"
@@ -165,7 +166,7 @@
   {#if desk.reimbursementRole === "finance"}
     <section class="finance-workbench voucher-archive" aria-label="报销单据存档">
       <div class="finance-workbench-head"><div><b>单据存档</b><span>已确认和已完成报销的可追溯记录</span></div><strong>{desk.reimbursementStats.paid} 笔已报销</strong></div>
-      <div class="table-panel archive-table"><div class="table-scroll"><table><thead><tr><th>单据编号</th><th>报销人</th><th>报销物品</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>{#each desk.reimbursementVouchers as voucher}<tr><td><b>{voucher.voucherNo}</b><small>{voucher.advance_date}</small></td><td>{voucher.employee}</td><td>{voucher.advance_item || voucher.item}</td><td class="money">{desk.money(voucher.advance_amount)}</td><td><span class="status-dot">{voucher.reimbursement_status}</span></td><td><button class="link-action" type="button" onclick={() => detailItem = voucher}>查看单据</button></td></tr>{:else}<tr><td colspan="6"><div class="empty-table">尚无已确认的报销单据。</div></td></tr>{/each}</tbody></table></div></div>
+      <div class="table-panel archive-table"><div class="table-scroll"><table><thead><tr><th>单据编号</th><th>报销人</th><th>报销物品</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>{#each desk.reimbursementVouchers as voucher}<tr><td><b>{voucher.voucherNo}</b><small>{voucher.advance_date}</small></td><td>{voucher.employee}</td><td>{voucher.advance_item || voucher.item}</td><td class="money">{desk.money(voucher.advance_amount)}</td><td><span class="status-dot">{voucher.reimbursement_status}</span></td><td><button class="link-action" type="button" onclick={() => detailItem = voucher}>查看单据</button><a class="link-action" href={`/api/reimbursements/export?mode=voucher&ids=${encodeURIComponent(voucher.id)}&actor=${encodeURIComponent(desk.creatorName || '财务人员')}`}>下载</a>{#if voucher.voucher_archived_at}<small class="muted">已归档</small>{:else}<button class="outline-action" type="button" disabled={desk.busy} onclick={() => desk.archiveReimbursementVoucher(voucher)}>归档</button>{/if}</td></tr>{:else}<tr><td colspan="6"><div class="empty-table">尚无已确认的报销单据。</div></td></tr>{/each}</tbody></table></div></div>
     </section>
   {/if}
   {#if detailItem}

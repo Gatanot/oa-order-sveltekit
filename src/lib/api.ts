@@ -13,9 +13,9 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const fallback = `请求失败（HTTP ${response.status}）`;
     const text = await response.text();
     if (!text) throw new Error(fallback);
-    let body: { detail?: string; message?: string } | undefined;
+    let body: { detail?: string; message?: string; error?: { message?: string } } | undefined;
     try { body = JSON.parse(text) as typeof body; } catch { /* non-JSON error response */ }
-    throw new Error(body?.detail || body?.message || text || fallback);
+    throw new Error(body?.error?.message || body?.detail || body?.message || text || fallback);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;

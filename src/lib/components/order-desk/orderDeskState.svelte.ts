@@ -24,6 +24,10 @@ import { api } from "$lib/api";
     source_type?: string;
     supplier_remark?: string;
     raw_data?: string;
+    source_id?: string;
+    library_kind?: "quote" | "cost";
+    source_owner?: string;
+    library_file?: string;
   };
   type Order = {
     id: string;
@@ -62,6 +66,7 @@ export type Data = {
     customers: Customer[];
     projects: Project[];
     catalog: Catalog[];
+    catalogSources: Array<Record<string, any>>;
     orders: Order[];
     reimbursements: Reimbursement[];
   };
@@ -69,10 +74,12 @@ export type Data = {
 
 export function createOrderDesk(data: Data) {
   let view = $state<"overview" | "entry" | "catalog" | "finance">("overview");
+  let workMode = $state<"view" | "entry" | "finance">("view");
   let sidebarCollapsed = $state(false);
   let customers = $state(data.customers);
   let projects = $state(data.projects);
   let catalog = $state(data.catalog);
+  let catalogSources = $state(data.catalogSources);
   let orders = $state(data.orders);
   let reimbursements = $state(data.reimbursements);
   let customerId = $state("");
@@ -100,11 +107,11 @@ export function createOrderDesk(data: Data) {
   let costs = $state<Array<Record<string, any>>>([]);
   let advances = $state<Array<Record<string, any>>>([]);
   let editingOrderId = $state("");
+  let submissionKey = $state("");
   let detailOrder = $state<any>(null);
   let detailAttachments = $state<any[]>([]);
   let detailAttachmentsLoading = $state(false);
   let uploadingFiles = $state(false);
-  const creatorNameStorageKey = "orbit-oa-creator-name";
   let creatorName = $state("");
   let creatorNameDraft = $state("");
   let settingsOpen = $state(false);
@@ -124,7 +131,19 @@ export function createOrderDesk(data: Data) {
   let reimbursementTo = $state("");
   let search = $state("");
   let catalogSearch = $state("");
+  let catalogKind = $state<"quote" | "cost">("quote");
+  let catalogSourceId = $state("");
   let catalogCategory = $state("");
+  let catalogImportPreview = $state<any>(null);
+  let catalogImportFile = $state<File | null>(null);
+  let catalogImportOwner = $state("");
+  let reimbursementRejectOpen = $state(false);
+  let reimbursementRejectReason = $state("");
+  let reimbursementRejectIds = $state<string[]>([]);
+  let confirmOpen = $state(false);
+  let confirmTitle = $state("");
+  let confirmMessage = $state("");
+  let confirmAction = $state<null | (() => Promise<void>)>(null);
   let filterCustomer = $state("");
   let filterProject = $state("");
   let filterOwner = $state("");
@@ -143,6 +162,7 @@ export function createOrderDesk(data: Data) {
   let exportPartyA = $state("");
   let exportPartyB = $state("");
   let exportFollowB = $state("");
+  let exportContactPhone = $state("");
   let exportRemarkOrder = $state(true);
   let exportTotal = $state(true);
   let exportSign = $state(true);
@@ -221,6 +241,8 @@ export function createOrderDesk(data: Data) {
   const visibleCatalog = $derived(
     catalog.filter(
       (item) =>
+        (!item.library_kind || item.library_kind === catalogKind) &&
+        (!catalogSourceId || item.source_id === catalogSourceId) &&
         (!catalogSearch ||
           `${item.name} ${item.category} ${item.customer_name || ""} ${item.project_name || ""}`
             .toLowerCase()
@@ -328,17 +350,17 @@ export function createOrderDesk(data: Data) {
   );
   const reimbursementStats = $derived({
     total: reimbursementRowsForRole.length,
-    pendingReview: reimbursementRowsForRole.filter((item: any) => item.reimbursement_status === "待核验").length,
-    pendingReviewAmount: reimbursementRowsForRole.filter((item: any) => item.reimbursement_status === "待核验").reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
-    pendingPay: reimbursementRowsForRole.filter((item: any) => item.reimbursement_status === "待报销").length,
+    pendingReview: reimbursementRowsForRole.filter((item: any) => item.reimbursement_status === "待审核").length,
+    pendingReviewAmount: reimbursementRowsForRole.filter((item: any) => item.reimbursement_status === "待审核").reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
+    pendingPay: reimbursementRowsForRole.filter((item: any) => item.reimbursement_status === "待打款").length,
     paid: reimbursementRowsForRole.filter((item: any) => item.reimbursement_status === "已报销").length,
     rejected: reimbursementRowsForRole.filter((item: any) => item.reimbursement_status === "已打回").length,
     amount: reimbursementRowsForRole.reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
-    pendingPayAmount: reimbursementRowsForRole.filter((item: any) => item.reimbursement_status === "待报销").reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
+    pendingPayAmount: reimbursementRowsForRole.filter((item: any) => item.reimbursement_status === "待打款").reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
   });
   const reimbursementPaymentSummary = $derived(
     reimbursements
-      .filter((item: any) => item.reimbursement_status === "待报销")
+      .filter((item: any) => item.reimbursement_status === "待打款")
       .reduce((groups: Array<any>, item: any) => {
         const employee = item.employee || "未填写";
         const existing = groups.find((group) => group.employee === employee);
@@ -369,6 +391,18 @@ export function createOrderDesk(data: Data) {
       error = "";
     }, 3500);
   }
+  function askConfirm(title: string, text: string, action: () => Promise<void>) {
+    confirmTitle = title;
+    confirmMessage = text;
+    confirmAction = action;
+    confirmOpen = true;
+  }
+  async function runConfirm() {
+    const action = confirmAction;
+    confirmOpen = false;
+    confirmAction = null;
+    if (action) await action();
+  }
   function closeSubmitMenu() {
     submitMenuOpen = false;
   }
@@ -381,16 +415,29 @@ export function createOrderDesk(data: Data) {
     }
   }
   onMount(() => {
-    const storedName = window.localStorage.getItem(creatorNameStorageKey) || "";
-    creatorName = storedName;
-    creatorNameDraft = storedName;
-    createdBy = storedName;
+    const savedName = localStorage.getItem("oa-creator-name") || "";
+    const savedMode = localStorage.getItem("oa-work-mode");
+    creatorName = savedName;
+    creatorNameDraft = savedName;
+    createdBy = savedName;
+    if (savedMode === "entry" || savedMode === "finance" || savedMode === "view") {
+      workMode = savedMode;
+      reimbursementRole = savedMode === "finance" ? "finance" : "employee";
+    }
     const close = (event: MouseEvent) => {
       if (!(event.target as HTMLElement).closest(".submit-dropdown"))
         closeSubmitMenu();
     };
     const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeSubmitMenu();
+      if (event.key !== "Escape") return;
+      closeSubmitMenu();
+      showExport = false;
+      showOrderFilters = false;
+      showStandaloneReimbursement = false;
+      showProjectForm = false;
+      settingsOpen = false;
+      reimbursementRejectOpen = false;
+      confirmOpen = false;
     };
     window.addEventListener("click", close);
     window.addEventListener("keydown", escape);
@@ -400,24 +447,28 @@ export function createOrderDesk(data: Data) {
     };
   });
   function saveCreatorName() {
-    const name = creatorNameDraft.trim();
-    if (!name) {
-      notify("请输入要保存的名字", true);
-      return;
-    }
-    window.localStorage.setItem(creatorNameStorageKey, name);
-    creatorName = name;
-    createdBy = name;
+    creatorName = creatorNameDraft.trim();
+    createdBy = creatorName;
+    if (creatorName) localStorage.setItem("oa-creator-name", creatorName);
+    else localStorage.removeItem("oa-creator-name");
     settingsOpen = false;
     notify("填写人名字已保存，将在订单录入时自动填入");
   }
   function removeCreatorName() {
-    window.localStorage.removeItem(creatorNameStorageKey);
     creatorName = "";
     creatorNameDraft = "";
     createdBy = "";
+    localStorage.removeItem("oa-creator-name");
     settingsOpen = false;
-    notify("已删除保存的填写人名字");
+    notify("已删除填写人名字");
+  }
+  function setWorkMode(mode: "view" | "entry" | "finance") {
+    workMode = mode;
+    reimbursementRole = mode === "finance" ? "finance" : "employee";
+    localStorage.setItem("oa-work-mode", mode);
+    resetReimbursementFilters();
+    if (mode === "view" && view === "entry") navigate("/orders");
+    notify(`已切换到${mode === "finance" ? "财务" : mode === "entry" ? "填写" : "查看"}模式`);
   }
   function openSettings() {
     creatorNameDraft = creatorName;
@@ -457,6 +508,9 @@ export function createOrderDesk(data: Data) {
   function onQuantityChange() {
     syncTotals();
   }
+  function navigate(path: string) {
+    window.location.href = path;
+  }
   async function refresh() {
     const [o, c, p, k, r] = await Promise.all([
       api.get<{ data: Order[] }>("/api/orders"),
@@ -469,6 +523,8 @@ export function createOrderDesk(data: Data) {
     customers = c.data;
     projects = p.data;
     catalog = k.data;
+    const sources = await api.get<{ data: Array<Record<string, any>> }>("/api/catalog/sources");
+    catalogSources = sources.data;
     reimbursements = r.data;
   }
   function openStandaloneReimbursement() {
@@ -500,7 +556,13 @@ export function createOrderDesk(data: Data) {
       }
       await refresh();
       showStandaloneReimbursement = false;
-      notify("报销记录已保存，等待核验");
+      if (!creatorName) {
+        creatorName = standaloneEmployee.trim();
+        creatorNameDraft = creatorName;
+        createdBy = creatorName;
+        localStorage.setItem("oa-creator-name", creatorName);
+      }
+      notify("报销记录已保存，等待审核");
     } catch (e) {
       if (createdId) await api.delete(`/api/reimbursements/${encodeURIComponent(createdId)}`).catch(() => undefined);
       notify(e instanceof Error ? e.message : "报销保存失败", true);
@@ -551,11 +613,11 @@ export function createOrderDesk(data: Data) {
     return (await response.json()).data as Array<any>;
   }
   async function batchReviewReimbursements() {
-    const targets = reimbursementRows().filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "待核验");
-    if (!targets.length) { notify("请选择待核验记录", true); return; }
+    const targets = reimbursementRows().filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "待审核");
+    if (!targets.length) { notify("请选择待审核记录", true); return; }
     busy = true;
     try {
-      await batchUpdateReimbursements(targets.map((item) => item.id), "待报销");
+      await batchUpdateReimbursements(targets.map((item) => item.id), "待打款");
       selectedReimbursementIds = [];
       await refresh();
       notify(`已确认 ${targets.length} 条报销，进入待付款队列`);
@@ -563,29 +625,22 @@ export function createOrderDesk(data: Data) {
     finally { busy = false; }
   }
   async function exportReimbursements() {
-    const XLSX = await loadXlsx();
-    const rows = reimbursementRows().map((item: any) => ({
-      来源类型: item.source_type || (item.order_id ? "订单报销" : "内务报销"),
-      来源订单: item.code || "内务报销",
-      客户: item.customer_name || "",
-      项目: item.project_name || "内务报销",
-      报销人: item.employee,
-      报销物品: item.advance_item,
-      垫付日期: item.advance_date,
-      金额: Number(item.advance_amount || 0) / 100,
-      发票附件: item.invoice || "未上传",
-      状态: item.reimbursement_status,
-      备注: item.note || ""
-    }));
+    const rows = reimbursementRows();
     if (!rows.length) { notify("当前筛选没有可导出的报销记录", true); return; }
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), "报销明细");
-    XLSX.writeFile(workbook, `报销明细-${new Date().toISOString().slice(0, 10)}.xlsx`);
-    notify(`已导出 ${rows.length} 条报销记录`);
+    const params = new URLSearchParams({ mode: "detail" });
+    if (reimbursementProject) params.set("project", reimbursementProject);
+    if (reimbursementPerson) params.set("person", reimbursementPerson);
+    if (reimbursementType) params.set("type", reimbursementType);
+    if (reimbursementStatus) params.set("status", reimbursementStatus);
+    if (reimbursementFrom) params.set("from", reimbursementFrom);
+    if (reimbursementTo) params.set("to", reimbursementTo);
+    params.set("actor", creatorName || "财务人员");
+    window.location.href = `/api/reimbursements/export?${params}`;
+    notify(`正在导出 ${rows.length} 条报销记录`);
   }
   async function batchMarkReimbursed() {
-    const targets = reimbursements.filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "待报销");
-    if (!targets.length) { notify("请选择待报销记录", true); return; }
+    const targets = reimbursements.filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "待打款");
+    if (!targets.length) { notify("请选择待打款记录", true); return; }
     busy = true;
     try {
       await batchUpdateReimbursements(targets.map((item) => item.id), "已报销");
@@ -596,28 +651,13 @@ export function createOrderDesk(data: Data) {
     finally { busy = false; }
   }
   async function exportPaymentSummary() {
-    const XLSX = await loadXlsx();
-    const rows = reimbursements.filter((item: any) => item.reimbursement_status === "待报销");
+    const rows = reimbursements.filter((item: any) => item.reimbursement_status === "待打款");
     if (!rows.length) { notify("暂无待付款记录", true); return; }
-    const groups = new Map<string, any[]>();
-    for (const item of rows) {
-      const employee = (item as any).employee || "未填写";
-      groups.set(employee, [...(groups.get(employee) || []), item]);
-    }
-    const summary = [...groups.entries()].map(([employee, items]) => ({
-      员工: employee,
-      待付款单数: items.length,
-      应付金额: items.reduce((sum, item) => sum + Number(item.advance_amount || 0), 0) / 100,
-      明细: items.map((item) => item.advance_item || item.item).join("、"),
-      最近日期: items.map((item) => item.advance_date).sort().at(-1) || "",
-    }));
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summary), "待付款汇总");
-    XLSX.writeFile(workbook, `最近应付汇总单-${new Date().toISOString().slice(0, 10)}.xlsx`);
-    notify(`已导出 ${summary.length} 位员工的待付款汇总`);
+    window.location.href = `/api/reimbursements/export?mode=payment&actor=${encodeURIComponent(creatorName || "财务人员")}`;
+    notify("正在导出待付款汇总");
   }
   async function markEmployeeReimbursed(employee: string) {
-    const targets = reimbursements.filter((item: any) => item.employee === employee && item.reimbursement_status === "待报销");
+    const targets = reimbursements.filter((item: any) => item.employee === employee && item.reimbursement_status === "待打款");
     if (!targets.length) { notify("该员工暂无待付款报销", true); return; }
     busy = true;
     try {
@@ -626,6 +666,17 @@ export function createOrderDesk(data: Data) {
       await refresh();
       notify(`${employee} 已确认打款`);
     } catch (e) { notify(e instanceof Error ? e.message : "确认打款失败", true); }
+    finally { busy = false; }
+  }
+  async function archiveReimbursementVoucher(item: any) {
+    busy = true;
+    try {
+      const response = await fetch(`/api/reimbursements/${encodeURIComponent(item.id)}/archive`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ actor: creatorName || "财务人员" }) });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error?.message || payload.message || "归档失败");
+      await refresh();
+      notify("报销单据已归档");
+    } catch (e) { notify(e instanceof Error ? e.message : "归档失败", true); }
     finally { busy = false; }
   }
   async function generateReimbursementVoucher(item: any) {
@@ -641,34 +692,31 @@ export function createOrderDesk(data: Data) {
     } catch (e) { notify(e instanceof Error ? e.message : "生成单据失败", true); }
     finally { busy = false; }
   }
-  async function rejectReimbursement(item: any) {
-    const reason = window.prompt("打回原因（员工可见）：", item.reject_reason || "");
-    if (reason === null) return;
-    busy = true;
-    try {
-      const response = await fetch(`/api/reimbursements/${encodeURIComponent(item.id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "已打回", reject_reason: reason.trim() || "附件不清晰，请重新上传", actor: creatorName || "财务人员" }) });
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(body.message || body.detail || "打回失败");
-      }
-      selectedReimbursementIds = selectedReimbursementIds.filter((id) => id !== item.id);
-      await refresh();
-      notify("报销已打回，员工可查看原因并重新上传发票");
-    } catch (e) { notify(e instanceof Error ? e.message : "打回失败", true); }
-    finally { busy = false; }
+  function rejectReimbursement(item: any) {
+    reimbursementRejectIds = [item.id];
+    reimbursementRejectReason = item.reject_reason || "";
+    reimbursementRejectOpen = true;
   }
-  async function batchRejectReimbursements() {
-    const targets = reimbursementRows().filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "待核验");
-    if (!targets.length) { notify("请选择待核验记录", true); return; }
-    const reason = window.prompt("批量打回原因（员工可见）：", "附件不清晰，请重新上传");
-    if (reason === null) return;
+  function batchRejectReimbursements() {
+    const targets = reimbursementRows().filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "待审核");
+    if (!targets.length) { notify("请选择待审核记录", true); return; }
+    reimbursementRejectIds = targets.map((item: any) => item.id);
+    reimbursementRejectReason = "附件不清晰，请重新上传";
+    reimbursementRejectOpen = true;
+  }
+  async function confirmRejectReimbursements() {
+    const reason = reimbursementRejectReason.trim();
+    if (!reason) { notify("请填写员工可见的打回原因", true); return; }
+    const ids = [...reimbursementRejectIds];
     busy = true;
     try {
-      await batchUpdateReimbursements(targets.map((item) => item.id), "已打回", reason.trim() || "附件不清晰，请重新上传");
-      selectedReimbursementIds = [];
+      await batchUpdateReimbursements(ids, "已打回", reason);
+      selectedReimbursementIds = selectedReimbursementIds.filter((id) => !ids.includes(id));
+      reimbursementRejectOpen = false;
+      reimbursementRejectIds = [];
       await refresh();
-      notify(`已打回 ${targets.length} 条报销`);
-    } catch (e) { notify(e instanceof Error ? e.message : "批量打回失败", true); }
+      notify(ids.length > 1 ? `已打回 ${ids.length} 条报销` : "报销已打回，员工可查看原因并重新上传发票");
+    } catch (e) { notify(e instanceof Error ? e.message : "打回失败", true); }
     finally { busy = false; }
   }
   async function reuploadReimbursement(item: any) {
@@ -694,16 +742,17 @@ export function createOrderDesk(data: Data) {
   function toggleReimbursement(id: string) {
     selectedReimbursementIds = selectedReimbursementIds.includes(id) ? selectedReimbursementIds.filter((item) => item !== id) : [...selectedReimbursementIds, id];
   }
-  async function deleteReimbursement(item: any) {
-    if (!window.confirm(`确认删除报销“${item.advance_item || item.item}”？此操作不可恢复。`)) return;
-    busy = true;
-    try {
-      await api.delete(`/api/reimbursements/${encodeURIComponent(item.id)}`);
-      selectedReimbursementIds = selectedReimbursementIds.filter((id) => id !== item.id);
-      await refresh();
-      notify("报销记录已删除");
-    } catch (e) { notify(e instanceof Error ? e.message : "报销删除失败", true); }
-    finally { busy = false; }
+  function deleteReimbursement(item: any) {
+    askConfirm("删除报销", `确认删除报销“${item.advance_item || item.item}”？此操作不可恢复。`, async () => {
+      busy = true;
+      try {
+        await api.delete(`/api/reimbursements/${encodeURIComponent(item.id)}`);
+        selectedReimbursementIds = selectedReimbursementIds.filter((id) => id !== item.id);
+        await refresh();
+        notify("报销记录已删除");
+      } catch (e) { notify(e instanceof Error ? e.message : "报销删除失败", true); }
+      finally { busy = false; }
+    });
   }
   async function markReimbursement(item: Reimbursement, status: string) {
     busy = true;
@@ -840,7 +889,7 @@ export function createOrderDesk(data: Data) {
     }
     busy = true;
     try {
-      const payload = { project_id: projectId, catalog_id: catalogId, service_name: serviceName, quantity, unit, quote_amount: quoteAmount, cost_amount: costAmount, order_date: orderDate, delivery_date: deliveryDate, contact, customer_department: customerDepartment, designer, payment_status: paymentStatus, status, created_by: createdBy, note, specification, products: validProducts, costs: validCosts, advances: validAdvances, submit_reimbursement: submitMode === "reimburse" };
+      const payload = { project_id: projectId, catalog_id: catalogId, service_name: serviceName, quantity, unit, quote_amount: quoteAmount, cost_amount: costAmount, order_date: orderDate, delivery_date: deliveryDate, contact, customer_department: customerDepartment, designer, payment_status: paymentStatus, status, created_by: createdBy.trim() || creatorName || "未填写", note, specification, products: validProducts, costs: validCosts, advances: validAdvances, submit_reimbursement: submitMode === "reimburse", idempotency_key: editingOrderId ? "" : (submissionKey ||= crypto.randomUUID()) };
       const result = editingOrderId
         ? await api.patch<{ data: Order }>(`/api/orders/${editingOrderId}`, payload)
         : await api.post<{ data: Order }>("/api/orders", payload);
@@ -853,6 +902,7 @@ export function createOrderDesk(data: Data) {
       );
       view = "overview";
       editingOrderId = "";
+      submissionKey = crypto.randomUUID();
       detailOrder = null;
       products = [];
       costs = [];
@@ -904,31 +954,67 @@ export function createOrderDesk(data: Data) {
     }
   }
   async function importFile(event: Event) {
-    const file = (event.currentTarget as HTMLInputElement).files?.[0];
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = "";
     if (!file) return;
     busy = true;
     try {
-      const XLSX = await loadXlsx();
-      const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
-      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(
-        workbook.Sheets[workbook.SheetNames[0]],
-      );
-      const result = await api.post<{ data: number }>("/api/catalog", { rows });
-      await refresh();
-      notify(`已导入 ${result.data} 条报价成本记录`);
+      const form = new FormData();
+      form.append("file", file, file.name);
+      form.append("mode", "preview");
+      const response = await fetch("/api/catalog/import", { method: "POST", body: form });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error?.message || result.message || "文件解析失败");
+      catalogImportFile = file;
+      catalogImportOwner = "";
+      catalogImportPreview = result.data;
     } catch (e) {
-      notify(e instanceof Error ? e.message : "文件导入失败", true);
-    } finally {
-      busy = false;
-      (event.currentTarget as HTMLInputElement).value = "";
+      notify(e instanceof Error ? e.message : "文件解析失败", true);
+    } finally { busy = false; }
+  }
+  function cancelCatalogImport() {
+    catalogImportFile = null;
+    catalogImportOwner = "";
+    catalogImportPreview = null;
+  }
+  async function confirmCatalogImport() {
+    if (!catalogImportFile || !catalogImportPreview?.valid_rows) return;
+    if (!catalogSourceId && !catalogImportOwner.trim()) {
+      notify(`请填写${catalogKind === "quote" ? "客户公司" : "厂商"}名称`, true);
+      return;
     }
+    busy = true;
+    try {
+      let sourceId = catalogSourceId;
+      if (!sourceId) {
+        const source = await api.post<{ data: Record<string, any> }>("/api/catalog/sources", { kind: catalogKind, owner_name: catalogImportOwner.trim(), source_file: catalogImportFile.name, source_method: "upload", actor: creatorName || "财务人员" });
+        sourceId = String(source.data.id);
+        catalogSourceId = sourceId;
+      }
+      const form = new FormData();
+      form.append("file", catalogImportFile, catalogImportFile.name);
+      form.append("source_id", sourceId);
+      form.append("mode", "import");
+      form.append("replace", "true");
+      form.append("actor", creatorName || "财务人员");
+      const response = await fetch("/api/catalog/import", { method: "POST", body: form });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error?.message || result.message || "文件导入失败");
+      cancelCatalogImport();
+      await refresh();
+      notify(`已导入 ${result.data.imported} 条报价成本记录${result.data.ignored ? `，忽略 ${result.data.ignored} 条` : ""}`);
+    } catch (e) { notify(e instanceof Error ? e.message : "文件导入失败", true); }
+    finally { busy = false; }
   }
   function openDetail(order: any) {
+    if (window.location.pathname !== `/orders/${order.id}`) window.history.pushState({}, '', `/orders/${order.id}`);
     detailOrder = order;
     detailAttachments = [];
     loadDetailAttachments(order.id);
   }
   function editOrder(order: any) {
+    if (window.location.pathname !== `/orders/${order.id}/edit`) window.history.pushState({}, '', `/orders/${order.id}/edit`);
     editingOrderId = order.id;
     customerId = order.customer_id;
     projectId = order.project_id;
@@ -990,7 +1076,7 @@ export function createOrderDesk(data: Data) {
     let found: { item: Catalog; vendor: string } | undefined;
     for (const item of catalog) {
       const raw = (item.raw_data ? (() => { try { return JSON.parse(item.raw_data as string); } catch { return {}; } })() : {}) as Record<string, unknown>;
-      const vendor = String(raw.vendor || raw.supplier || item.supplier_remark || (item.source_type === "supplier_cost" ? (item as any).source_file?.match(/硕达|印客邦|[^】]+(?=202\d)/)?.[0] || "成本库" : ""));
+      const vendor = String(raw.vendor || raw.supplier || (item as any).source_owner || item.supplier_remark || (item.source_type === "supplier_cost" ? (item as any).source_file?.match(/硕达|印客邦|[^】]+(?=202\d)/)?.[0] || "成本库" : ""));
       const isCost = item.cost_unit > 0 && (!item.quote_unit || item.source_type === "supplier_cost");
       if (isCost && (item.name.toLowerCase() === keyword || item.name.toLowerCase().includes(keyword) || keyword.includes(item.name.toLowerCase()))) { found = { item, vendor }; break; }
     }
@@ -1002,6 +1088,7 @@ export function createOrderDesk(data: Data) {
   function updateAdvance(index: number, key: string, value: unknown) { advances[index] = { ...advances[index], [key]: value }; advances = [...advances]; }
   function startNewOrder() {
     editingOrderId = "";
+    submissionKey = crypto.randomUUID();
     detailOrder = null;
     customerId = "";
     projectId = "";
@@ -1051,6 +1138,7 @@ export function createOrderDesk(data: Data) {
     exportPartyB = "";
     exportContract = "";
     exportFollowB = creatorName || "";
+    exportContactPhone = first?.contact || "";
     exportMode = "detail";
     showExport = true;
   }
@@ -1070,9 +1158,11 @@ export function createOrderDesk(data: Data) {
       partyA: exportPartyA,
       partyB: exportPartyB,
       followB: exportFollowB,
+      contactPhone: exportContactPhone,
       remarkOrder: String(exportRemarkOrder),
       total: String(exportTotal),
       sign: String(exportSign),
+      actor: creatorName || "查看模式",
     });
     window.location.href = `/api/orders/export?${params}`;
     showExport = false;
@@ -1087,33 +1177,32 @@ export function createOrderDesk(data: Data) {
       ? visibleOrderColumns.filter((item) => item !== key)
       : [...visibleOrderColumns, key];
   }
-  async function deleteOrder(order: Order) {
-    if (
-      !window.confirm(
-        `确认删除订单“${order.service_name}”（${order.code}）？删除后不可恢复。`,
-      )
-    )
-      return;
-    busy = true;
-    try {
-      await api.delete(`/api/orders/${encodeURIComponent(order.id)}`);
-      selectedOrderIds = selectedOrderIds.filter((id) => id !== order.id);
-      await refresh();
-      notify("订单已删除");
-    } catch (e) {
-      notify(e instanceof Error ? e.message : "订单删除失败", true);
-    } finally {
-      busy = false;
-    }
+  function deleteOrder(order: Order) {
+    askConfirm("删除订单", `确认删除订单“${order.service_name}”（${order.code}）？删除后不可恢复。`, async () => {
+      busy = true;
+      try {
+        await api.delete(`/api/orders/${encodeURIComponent(order.id)}`);
+        selectedOrderIds = selectedOrderIds.filter((id) => id !== order.id);
+        await refresh();
+        notify("订单已删除");
+      } catch (e) {
+        notify(e instanceof Error ? e.message : "订单删除失败", true);
+      } finally { busy = false; }
+    });
   }
 
 
   const desk = {} as Record<string, any>;
   Object.defineProperty(desk, "view", { get: () => view, set: (value) => { view = value; } });
+  Object.defineProperty(desk, "workMode", { get: () => workMode, set: (value) => { setWorkMode(value); } });
+  Object.defineProperty(desk, "canWrite", { get: () => workMode === "entry" });
+  Object.defineProperty(desk, "canFinance", { get: () => workMode === "finance" });
+  Object.defineProperty(desk, "canManageCatalog", { get: () => workMode === "finance" });
   Object.defineProperty(desk, "sidebarCollapsed", { get: () => sidebarCollapsed, set: (value) => { sidebarCollapsed = value; } });
   Object.defineProperty(desk, "customers", { get: () => customers, set: (value) => { customers = value; } });
   Object.defineProperty(desk, "projects", { get: () => projects, set: (value) => { projects = value; } });
   Object.defineProperty(desk, "catalog", { get: () => catalog, set: (value) => { catalog = value; } });
+  Object.defineProperty(desk, "catalogSources", { get: () => catalogSources, set: (value) => { catalogSources = value; } });
   Object.defineProperty(desk, "orders", { get: () => orders, set: (value) => { orders = value; } });
   Object.defineProperty(desk, "reimbursements", { get: () => reimbursements, set: (value) => { reimbursements = value; } });
   Object.defineProperty(desk, "customerId", { get: () => customerId, set: (value) => { customerId = value; } });
@@ -1164,7 +1253,17 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "reimbursementTo", { get: () => reimbursementTo, set: (value) => { reimbursementTo = value; } });
   Object.defineProperty(desk, "search", { get: () => search, set: (value) => { search = value; } });
   Object.defineProperty(desk, "catalogSearch", { get: () => catalogSearch, set: (value) => { catalogSearch = value; } });
+  Object.defineProperty(desk, "catalogKind", { get: () => catalogKind, set: (value) => { catalogKind = value; catalogSourceId = ""; } });
+  Object.defineProperty(desk, "catalogSourceId", { get: () => catalogSourceId, set: (value) => { catalogSourceId = value; } });
   Object.defineProperty(desk, "catalogCategory", { get: () => catalogCategory, set: (value) => { catalogCategory = value; } });
+  Object.defineProperty(desk, "catalogImportPreview", { get: () => catalogImportPreview });
+  Object.defineProperty(desk, "catalogImportOwner", { get: () => catalogImportOwner, set: (value) => { catalogImportOwner = value; } });
+  Object.defineProperty(desk, "reimbursementRejectOpen", { get: () => reimbursementRejectOpen, set: (value) => { reimbursementRejectOpen = value; } });
+  Object.defineProperty(desk, "reimbursementRejectReason", { get: () => reimbursementRejectReason, set: (value) => { reimbursementRejectReason = value; } });
+  Object.defineProperty(desk, "reimbursementRejectCount", { get: () => reimbursementRejectIds.length });
+  Object.defineProperty(desk, "confirmOpen", { get: () => confirmOpen, set: (value) => { confirmOpen = value; } });
+  Object.defineProperty(desk, "confirmTitle", { get: () => confirmTitle });
+  Object.defineProperty(desk, "confirmMessage", { get: () => confirmMessage });
   Object.defineProperty(desk, "filterCustomer", { get: () => filterCustomer, set: (value) => { filterCustomer = value; } });
   Object.defineProperty(desk, "filterProject", { get: () => filterProject, set: (value) => { filterProject = value; } });
   Object.defineProperty(desk, "filterOwner", { get: () => filterOwner, set: (value) => { filterOwner = value; } });
@@ -1183,6 +1282,7 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "exportPartyA", { get: () => exportPartyA, set: (value) => { exportPartyA = value; } });
   Object.defineProperty(desk, "exportPartyB", { get: () => exportPartyB, set: (value) => { exportPartyB = value; } });
   Object.defineProperty(desk, "exportFollowB", { get: () => exportFollowB, set: (value) => { exportFollowB = value; } });
+  Object.defineProperty(desk, "exportContactPhone", { get: () => exportContactPhone, set: (value) => { exportContactPhone = value; } });
   Object.defineProperty(desk, "exportRemarkOrder", { get: () => exportRemarkOrder, set: (value) => { exportRemarkOrder = value; } });
   Object.defineProperty(desk, "exportTotal", { get: () => exportTotal, set: (value) => { exportTotal = value; } });
   Object.defineProperty(desk, "exportSign", { get: () => exportSign, set: (value) => { exportSign = value; } });
@@ -1224,6 +1324,8 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "reimbursementVouchers", { get: () => reimbursementVouchers });
   Object.defineProperty(desk, "creators", { get: () => creators });
   desk.money = money;
+  desk.navigate = navigate;
+  desk.setWorkMode = setWorkMode;
   desk.refresh = refresh;
   desk.markReimbursement = markReimbursement;
   desk.openStandaloneReimbursement = openStandaloneReimbursement;
@@ -1235,6 +1337,7 @@ export function createOrderDesk(data: Data) {
   desk.batchRejectReimbursements = batchRejectReimbursements;
   desk.rejectReimbursement = rejectReimbursement;
   desk.generateReimbursementVoucher = generateReimbursementVoucher;
+  desk.archiveReimbursementVoucher = archiveReimbursementVoucher;
   desk.reuploadReimbursement = reuploadReimbursement;
   desk.setReimbursementRole = setReimbursementRole;
   desk.resetReimbursementFilters = resetReimbursementFilters;
@@ -1245,6 +1348,10 @@ export function createOrderDesk(data: Data) {
   desk.submitOrder = submitOrder;
   desk.submitProject = submitProject;
   desk.importFile = importFile;
+  desk.confirmCatalogImport = confirmCatalogImport;
+  desk.cancelCatalogImport = cancelCatalogImport;
+  desk.confirmRejectReimbursements = confirmRejectReimbursements;
+  desk.runConfirm = runConfirm;
   desk.toggleOrder = toggleOrder;
   desk.toggleFilteredOrders = toggleFilteredOrders;
   desk.openExport = openExport;

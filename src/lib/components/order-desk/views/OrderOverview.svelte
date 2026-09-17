@@ -14,7 +14,7 @@
 <section class="page-section">
   {#if desk.detailOrder}
     <div class="detail-card">
-      <div class="section-heading"><div><p class="section-kicker">ORDER DETAIL</p><h2>{desk.detailOrder.code}</h2><span>{desk.detailOrder.customer_name} · {desk.detailOrder.project_name}</span></div><div class="top-actions"><button class="outline-action" onclick={() => desk.detailOrder = null}>返回列表</button><button class="primary-action" onclick={() => desk.editOrder(desk.detailOrder)}>编辑订单</button></div></div>
+      <div class="section-heading"><div><p class="section-kicker">ORDER DETAIL</p><h2>{desk.detailOrder.code}</h2><span>{desk.detailOrder.customer_name} · {desk.detailOrder.project_name}</span></div><div class="top-actions"><button class="outline-action" onclick={() => desk.detailOrder = null}>返回列表</button>{#if desk.canWrite}<button class="primary-action" onclick={() => desk.editOrder(desk.detailOrder)}>编辑订单</button>{/if}</div></div>
       <div class="info-grid"><div><small>客户部门</small><b>{desk.detailOrder.customer_department || "—"}</b></div><div><small>联系人 / 下单人</small><b>{desk.detailOrder.contact || "—"}</b></div><div><small>录入人 / 开单员</small><b>{desk.detailOrder.created_by || "—"}</b></div><div><small>指定设计师</small><b>{desk.detailOrder.designer || "—"}</b></div><div><small>项目负责人</small><b>{desk.detailOrder.project_owner || "—"}</b></div><div><small>下单日期</small><b>{desk.detailOrder.order_date}</b></div><div><small>交货日期</small><b>{desk.detailOrder.delivery_date || "—"}</b></div><div><small>状态</small><b>{desk.detailOrder.status}</b></div><div><small>结款状态</small><b>{desk.detailOrder.payment_status || "未结款"}</b></div><div><small>销售总额</small><b>{desk.money(desk.detailOrder.quote_amount)}</b></div><div><small>制作成本</small><b>{desk.money(desk.detailOrder.cost_amount)}</b></div><div><small>员工垫付</small><b>{desk.money((desk.detailOrder.advances || []).reduce((sum: number, item: any) => sum + Math.round(Number(item.amount || 0) * 100), 0))}</b></div><div><small>预计毛利</small><b>{desk.money(desk.detailOrder.quote_amount - desk.detailOrder.cost_amount - (desk.detailOrder.advances || []).reduce((sum: number, item: any) => sum + Math.round(Number(item.amount || 0) * 100), 0))}</b></div></div>
       <h3>产品明细</h3><div class="table-panel"><div class="table-scroll"><table><thead><tr><th>名称</th><th>单位</th><th>数量</th><th>单价</th><th>小计</th><th>制作要求</th></tr></thead><tbody>{#each desk.detailOrder.products as p}<tr><td>{p.name}</td><td>{p.unit}</td><td>{p.quantity}</td><td>{Number(p.unit_price || 0).toFixed(2)}</td><td>{Number(p.subtotal || Number(p.quantity || 0) * Number(p.unit_price || 0)).toFixed(2)}</td><td>{p.specification || "—"}</td></tr>{/each}</tbody></table></div></div>
       {#if desk.detailOrder.costs?.length}<h3>固定成本</h3><div class="table-panel"><div class="table-scroll"><table><thead><tr><th>项目</th><th>供应商</th><th>单位</th><th>数量</th><th>单价</th><th>小计</th></tr></thead><tbody>{#each desk.detailOrder.costs as c}<tr><td>{c.name}</td><td>{c.vendor}</td><td>{c.unit || "项"}</td><td>{c.quantity}</td><td>{Number(c.unit_price || 0).toFixed(2)}</td><td>{Number(c.subtotal || Number(c.quantity || 0) * Number(c.unit_price || 0)).toFixed(2)}</td></tr>{/each}</tbody></table></div></div>{/if}
@@ -104,11 +104,10 @@
       ><span>从</span><input class="date-input" type="date" bind:value={desk.filterFrom} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} /></label
     ><label class="date-field secondary-filter"
       ><span>至</span><input class="date-input" type="date" bind:value={desk.filterTo} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} /></label
-    ><button
+    >{#if desk.canFinance}<button
       class="filter-icon"
       title="导出当前筛选结果"
-      onclick={desk.openExport}><ListFilter size={17} /></button
-    >
+      onclick={desk.openExport}><ListFilter size={17} /></button>{/if}
   </div>
   <div class="table-panel">
     <div class="table-scroll">
@@ -135,18 +134,15 @@
                 ></td
               >{#if desk.visibleOrderColumns.includes("department")}<td>{order.customer_department || "—"}</td>{/if}{#if desk.visibleOrderColumns.includes("contact")}<td>{order.contact || "—"}</td>{/if}{#if desk.visibleOrderColumns.includes("designer")}<td>{order.designer || "—"}</td>{/if}{#if desk.visibleOrderColumns.includes("owner")}<td>{order.project_owner || "未分配"}</td>{/if}{#if desk.visibleOrderColumns.includes("quote")}<td class="money">{desk.money(order.quote_amount)}</td>{/if}{#if desk.visibleOrderColumns.includes("cost")}<td class="money cost">{desk.money(order.cost_amount)}</td>{/if}{#if desk.visibleOrderColumns.includes("creator")}<td>{order.created_by}</td>{/if}{#if desk.visibleOrderColumns.includes("date")}<td>{order.order_date}</td>{/if}{#if desk.visibleOrderColumns.includes("delivery")}<td>{order.delivery_date || "—"}</td>{/if}{#if desk.visibleOrderColumns.includes("payment")}<td>{order.payment_status || "未结款"}</td>{/if}{#if desk.visibleOrderColumns.includes("status")}<td
                 ><span class="status-dot">{order.status}</span
-                >{#if order.reimbursement_status === "待核验" || order.reimbursement_status === "待报销"}<small
+                >{#if order.reimbursement_status === "待审核" || order.reimbursement_status === "待打款"}<small
                     class="status-dot">需报销</small
-                  >{/if}</td>{/if}<td
-                ><button
+                  >{/if}</td>{/if}<td>{#if desk.canFinance}<button
                   class="delete-action"
                   title="删除订单"
                   aria-label={`删除订单 ${order.service_name}`}
                   disabled={desk.busy}
                   onclick={(event) => { event.stopPropagation(); desk.deleteOrder(order); }}
-                  ><Trash2 size={15} /></button
-                ></td
-              ></tr
+                  ><Trash2 size={15} /></button>{:else}<span class="muted">—</span>{/if}</td></tr
             >{:else}<tr
               ><td colspan="15"
                 ><div class="empty-table">
