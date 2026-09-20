@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { FileText, Paperclip, Plus, Trash2, X } from "lucide-svelte";
+  import { Check, FileText, Paperclip, Plus, Trash2, X } from "lucide-svelte";
   import { getContext } from "svelte";
   const desk = getContext<any>("order-desk");
   function productTotal(p: any) { return (Number(p.quantity || 0) * Number(p.unit_price || 0)).toFixed(2); }
@@ -9,7 +9,16 @@
     if (current?.catalog_id) return [];
     const keyword = name.trim().toLowerCase();
     if (!keyword) return [];
-    return desk.catalog.filter((item: any) => item.quote_unit > 0 && (!item.customer_name || item.customer_name === desk.selectedCustomer) && (!item.project_name || item.project_name === desk.selectedProject) && item.name.toLowerCase().includes(keyword)).slice(0, 6);
+    return desk.catalog
+      .filter((item: any) => item.quote_unit > 0 && (!desk.selectedCustomer || !item.customer_name || item.customer_name === desk.selectedCustomer) && (!desk.selectedProject || !item.project_name || item.project_name === desk.selectedProject) && item.name.toLowerCase().includes(keyword))
+      .sort((a: any, b: any) => {
+        const aExact = a.name.toLowerCase() === keyword ? 1 : 0;
+        const bExact = b.name.toLowerCase() === keyword ? 1 : 0;
+        const aContext = (a.customer_name === desk.selectedCustomer ? 2 : 0) + (a.project_name === desk.selectedProject ? 1 : 0);
+        const bContext = (b.customer_name === desk.selectedCustomer ? 2 : 0) + (b.project_name === desk.selectedProject ? 1 : 0);
+        return bExact - aExact || bContext - aContext;
+      })
+      .slice(0, 6);
   }
   function costMatches(name: string, index: number) {
     const current = desk.costs[index];
@@ -40,7 +49,7 @@
     <div class="detail-editor"><div class="editor-heading"><h3>产品明细</h3><button type="button" class="outline-action" onclick={desk.addProduct}><Plus size={15}/>添加产品</button></div>
       {#if desk.products.length}<div class="repeat-header editor-row" aria-hidden="true"><span>产品名称 · 可匹配报价库</span><span>单位</span><span>数量</span><span>销售单价（元）</span><span>小计（元）</span><span></span></div>{/if}
       {#each desk.products as product, i}
-        <div class="repeat-row editor-row"><div class="autocomplete-field"><input value={product.name} oninput={(e) => desk.updateProduct(i, 'name', e.currentTarget.value)} placeholder="产品名称" />{#if product.name && productMatches(product.name, i).length}<div class="suggestion-menu">{#each productMatches(product.name, i) as item}<button type="button" onclick={() => desk.applyProductCatalog(i, item.id)}><span>{item.name}</span><small>{item.unit} · ¥{(item.quote_unit / 100).toFixed(2)} · {item.category || "报价库"}</small></button>{/each}</div>{/if}</div><input value={product.unit} oninput={(e) => desk.updateProduct(i, 'unit', e.currentTarget.value)} placeholder="单位" /><input type="number" inputmode="decimal" min="0.01" step="any" value={product.quantity} aria-label={`第 ${i + 1} 项产品数量`} oninput={(e) => desk.updateProduct(i, 'quantity', e.currentTarget.value)} placeholder="数量" /><input type="number" inputmode="decimal" min="0" step="0.01" value={product.unit_price} aria-label={`第 ${i + 1} 项产品销售单价`} oninput={(e) => desk.updateProduct(i, 'unit_price', e.currentTarget.value)} placeholder="销售单价" /><input readonly aria-label={`第 ${i + 1} 项产品小计`} value={productTotal(product)} placeholder="小计" /><button type="button" class="delete-action" onclick={() => desk.removeProduct(i)} aria-label="删除产品"><Trash2 size={15}/></button><textarea value={product.specification || ''} oninput={(e) => desk.updateProduct(i, 'specification', e.currentTarget.value)} placeholder="规格及制作要求（选填）"></textarea></div>
+        <div class="repeat-row editor-row"><div class:catalog-matched={Boolean(product.catalog_id)} class="autocomplete-field"><input value={product.name} oninput={(e) => desk.updateProduct(i, 'name', e.currentTarget.value)} onblur={() => setTimeout(() => desk.matchProductCatalog(i), 120)} placeholder="输入产品名称以匹配报价库" />{#if product.catalog_id}<span class="catalog-match-mark" title="已匹配报价库"><Check size={13} />已匹配</span>{/if}{#if product.name && productMatches(product.name, i).length}<div class="suggestion-menu">{#each productMatches(product.name, i) as item}<button type="button" onmousedown={(event) => event.preventDefault()} onclick={() => desk.applyProductCatalog(i, item.id)}><span>{item.name}</span><small>{item.unit} · ¥{(item.quote_unit / 100).toFixed(2)} · {item.category || "报价库"}{item.source_owner || item.customer_name ? ` · ${item.source_owner || item.customer_name}` : ''}</small>{#if item.specification}<small class="suggestion-spec">{item.specification}</small>{/if}</button>{/each}</div>{/if}</div><input value={product.unit} oninput={(e) => desk.updateProduct(i, 'unit', e.currentTarget.value)} placeholder="单位" /><input type="number" inputmode="decimal" min="0.01" step="any" value={product.quantity} aria-label={`第 ${i + 1} 项产品数量`} oninput={(e) => desk.updateProduct(i, 'quantity', e.currentTarget.value)} placeholder="数量" /><input type="number" inputmode="decimal" min="0" step="0.01" value={product.unit_price} aria-label={`第 ${i + 1} 项产品销售单价`} oninput={(e) => desk.updateProduct(i, 'unit_price', e.currentTarget.value)} placeholder="销售单价" /><input readonly aria-label={`第 ${i + 1} 项产品小计`} value={productTotal(product)} placeholder="小计" /><button type="button" class="delete-action" onclick={() => desk.removeProduct(i)} aria-label="删除产品"><Trash2 size={15}/></button><textarea value={product.specification || ''} oninput={(e) => desk.updateProduct(i, 'specification', e.currentTarget.value)} placeholder="规格及制作要求（选填）"></textarea></div>
       {:else}<p class="empty-table">请添加至少一项产品</p>{/each}
     </div>
     <div class="detail-editor"><div class="editor-heading"><h3>固定厂商成本</h3><button type="button" class="outline-action" onclick={desk.addCost}><Plus size={15}/>添加成本项目</button></div>

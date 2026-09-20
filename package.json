@@ -20,7 +20,8 @@
   "dependencies": {
     "better-sqlite3": "11.10.0",
     "lucide-svelte": "0.468.0",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "xlsx-js-style": "^1.2.0"
   },
   "devDependencies": {
     "@sveltejs/adapter-node": "5.2.12",

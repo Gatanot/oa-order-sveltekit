@@ -2417,8 +2417,40 @@ tbody tr:hover,
   box-shadow: 0 10px 28px rgba(24, 34, 48, .14);
 }
 
-.suggestion-menu button:hover {
+.suggestion-menu button:hover,
+.suggestion-menu button:focus-visible {
   background: #eef3ff;
+}
+
+.autocomplete-field.catalog-matched input {
+  padding-right: 82px;
+  border-color: #8bcbb7;
+  background: #f7fcfa;
+}
+
+.catalog-match-mark {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  right: 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 6px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: #dff5ec;
+  color: #176c58;
+  font-size: 10px;
+  font-weight: 800;
+  pointer-events: none;
+}
+
+.suggestion-menu .suggestion-spec {
+  overflow: hidden;
+  color: #77869a;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Reimbursements */
@@ -2579,6 +2611,11 @@ tbody tr:hover,
   white-space: nowrap;
 }
 
+.finance-head-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .payment-selected-total {
   display: inline-flex !important;
   align-items: center !important;
@@ -2589,6 +2626,13 @@ tbody tr:hover,
   color: var(--blue) !important;
   font-size: 12px !important;
   font-weight: 800;
+  white-space: nowrap;
+}
+
+.payment-batch-action {
+  min-height: 38px;
+  padding: 8px 12px;
+  font-size: 12px;
   white-space: nowrap;
 }
 

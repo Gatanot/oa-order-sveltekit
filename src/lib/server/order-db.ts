@@ -4,6 +4,7 @@ import { dirname, resolve, join, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import * as XLSX from 'xlsx';
+import XLSXStyle from 'xlsx-js-style';
 
 export const databasePath = resolve(process.env.DATABASE_PATH || './data/oa.db');
 export const attachmentDir = resolve(dirname(databasePath), 'attachments');
@@ -557,43 +558,138 @@ export function exportOrders(filters: Record<string, string>) {
   );
   if (filters.mode === 'settlement') {
     const title = text(filters.title) || '订单结算明细';
+    const partyA = text(filters.partyA) || '—';
+    const partyB = text(filters.partyB) || '—';
     const detailRows: unknown[][] = [
       [title],
-      [`甲方：${text(filters.partyA) || '—'}`],
-      [`乙方：${text(filters.partyB) || '—'}`],
+      [`甲方：${partyA}`],
+      [`乙方：${partyB}`],
       [`合同编号：${text(filters.contract) || '—'}`],
       [`甲方项目跟进人：${text(filters.followA) || '—'}`],
       [`乙方项目跟进人：${text(filters.followB) || '—'}   联系电话：${text(filters.contactPhone) || '—'}`],
-      [],
-      ['分类', '产品名称', '制作要求', '单位', '数量', '单价（元）', '金额（元）', '订单编号', '备注'],
+      ['序号', '产品名称', '单位', '数量', '规格和技术要求', '含税单价(元）', '小计（元）', '备注', ''],
     ];
-    let grandTotal = 0;
-    const categories = new Map<string, unknown[][]>();
+    const categories = new Map<string, Array<Record<string, any>>>();
     for (const order of orders) {
       const products = order.products?.length ? order.products : [{ name: order.service_name, specification: order.specification, unit: order.unit, quantity: order.quantity, unit_price: order.quote_amount / 100 }];
       for (const product of products as Array<Record<string, any>>) {
-        const category = String(product.category || order.catalog_category || '其他');
-        const quantity = Number(product.quantity || 0);
-        const unitPrice = Number(product.unit_price || 0);
-        const total = quantity * unitPrice;
-        grandTotal += total;
+        const category = String(product.category || order.catalog_category || '其他类');
         const rows = categories.get(category) || [];
-        rows.push([category, product.name || order.service_name, product.specification || order.specification || '', product.unit || order.unit || '项', quantity, unitPrice, total, order.code, filters.remarkOrder === 'true' ? order.code : '']);
+        rows.push({
+          name: product.name || order.service_name,
+          unit: product.unit || order.unit || '项',
+          quantity: Number(product.quantity || 0),
+          specification: product.specification || order.specification || '',
+          unitPrice: Number(product.unit_price || 0),
+          remark: filters.remarkOrder === 'true' ? order.code : text(order.note),
+        });
         categories.set(category, rows);
       }
     }
+
+    const merges: Array<{ s: { r: number; c: number }; e: { r: number; c: number } }> = [];
+    for (let row = 0; row < 6; row++) merges.push({ s: { r: row, c: 0 }, e: { r: row, c: 8 } });
+    merges.push({ s: { r: 6, c: 7 }, e: { r: 6, c: 8 } });
+    const subtotalRows: number[] = [];
+    const chineseNumbers = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
+    let grandTotal = 0;
+    let categoryIndex = 0;
     for (const [category, rows] of categories) {
-      detailRows.push(...rows);
-      detailRows.push([`${category}小计`, '', '', '', '', '', rows.reduce((sum, row) => sum + Number(row[6] || 0), 0), '', '']);
+      const categoryRow = detailRows.length;
+      detailRows.push([`${chineseNumbers[categoryIndex] || categoryIndex + 1}、${category}`]);
+      merges.push({ s: { r: categoryRow, c: 0 }, e: { r: categoryRow, c: 8 } });
+      const detailStart = detailRows.length;
+      rows.forEach((item, index) => {
+        const subtotal = item.quantity * item.unitPrice;
+        grandTotal += subtotal;
+        detailRows.push([index + 1, item.name, item.unit, item.quantity, item.specification, item.unitPrice, subtotal, item.remark, '']);
+        const row = detailRows.length - 1;
+        merges.push({ s: { r: row, c: 7 }, e: { r: row, c: 8 } });
+      });
+      const subtotalRow = detailRows.length;
+      detailRows.push(['小计', '', '', '', '', '', rows.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0), '', '']);
+      merges.push({ s: { r: subtotalRow, c: 0 }, e: { r: subtotalRow, c: 5 } });
+      merges.push({ s: { r: subtotalRow, c: 7 }, e: { r: subtotalRow, c: 8 } });
+      subtotalRows.push(subtotalRow);
+      categoryIndex++;
+      if (detailStart === detailRows.length) detailRows.push([]);
     }
-    if (filters.total !== 'false') detailRows.push([], ['合计', '', '', '', '', '', grandTotal, '', '']);
-    if (filters.sign === 'true') detailRows.push([], ['甲方（盖章）：', '', '', '乙方（盖章）：', '', '', '', '', ''], ['日期：', '', '', '日期：', '', '', '', '', '']);
-    const sheet = XLSX.utils.aoa_to_sheet(detailRows);
-    sheet['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 8 } }];
-    sheet['!cols'] = [{ wch: 14 }, { wch: 30 }, { wch: 42 }, { wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 22 }, { wch: 18 }];
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, sheet, '结算单');
-    return { data: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }), count: orders.length };
+
+    const totalRow = detailRows.length;
+    if (filters.total !== 'false') {
+      detailRows.push(['总计（元）', '', '', '', '', '', grandTotal, '', '']);
+      merges.push({ s: { r: totalRow, c: 0 }, e: { r: totalRow, c: 5 } });
+      merges.push({ s: { r: totalRow, c: 6 }, e: { r: totalRow, c: 8 } });
+    }
+    const signatureStart = detailRows.length;
+    if (filters.sign === 'true') {
+      detailRows.push([`甲  方：${partyA}`, '', '', '', '', `乙  方：${partyB}`]);
+      detailRows.push(['经办人：', '', '', '', '', '盖  章：']);
+      detailRows.push(['部门负责人：']);
+      detailRows.push(['盖  章：']);
+      for (let row = signatureStart; row < detailRows.length; row++) {
+        merges.push({ s: { r: row, c: 0 }, e: { r: row, c: 4 } });
+        merges.push({ s: { r: row, c: 5 }, e: { r: row, c: 8 } });
+      }
+    }
+
+    const sheet = XLSXStyle.utils.aoa_to_sheet(detailRows) as any;
+    const thinBorder = { style: 'thin', color: { rgb: '000000' } };
+    const bordered = { top: thinBorder, bottom: thinBorder, left: thinBorder, right: thinBorder };
+    const fontName = '宋体';
+    const ensureCell = (row: number, column: number) => {
+      const address = XLSXStyle.utils.encode_cell({ r: row, c: column });
+      if (!sheet[address]) sheet[address] = { t: 's', v: '' };
+      return sheet[address];
+    };
+    const applyRange = (startRow: number, endRow: number, style: Record<string, unknown>) => {
+      for (let row = startRow; row <= endRow; row++) for (let column = 0; column <= 8; column++) {
+        const cell = ensureCell(row, column);
+        cell.s = { ...(cell.s || {}), ...style };
+      }
+    };
+
+    applyRange(0, detailRows.length - 1, { font: { name: fontName, sz: 11 }, alignment: { vertical: 'center', wrapText: true } });
+    ensureCell(0, 0).s = { font: { name: fontName, sz: 20, bold: true }, alignment: { horizontal: 'center', vertical: 'center' } };
+    for (let row = 1; row <= 5; row++) ensureCell(row, 0).s = { font: { name: fontName, sz: 11 }, alignment: { horizontal: 'left', vertical: 'center' } };
+    applyRange(6, 6, { font: { name: fontName, sz: 11, bold: true }, alignment: { horizontal: 'center', vertical: 'center', wrapText: true }, border: bordered, fill: { fgColor: { rgb: 'E7E6E6' } } });
+
+    let cursor = 7;
+    for (const rows of categories.values()) {
+      applyRange(cursor, cursor, { font: { name: fontName, sz: 11, bold: true }, alignment: { horizontal: 'left', vertical: 'center' }, border: bordered, fill: { fgColor: { rgb: 'D9EAD3' } } });
+      cursor++;
+      for (let index = 0; index < rows.length; index++, cursor++) {
+        applyRange(cursor, cursor, { border: bordered, alignment: { vertical: 'center', wrapText: true } });
+        for (const column of [0, 2, 3, 5, 6]) ensureCell(cursor, column).s.alignment = { horizontal: 'center', vertical: 'center', wrapText: true };
+        ensureCell(cursor, 5).z = '¥#,##0.00;[Red](¥#,##0.00)';
+        ensureCell(cursor, 6).z = '¥#,##0.00;[Red](¥#,##0.00)';
+      }
+      applyRange(cursor, cursor, { font: { name: fontName, sz: 11, bold: true }, alignment: { horizontal: 'center', vertical: 'center' }, border: bordered, fill: { fgColor: { rgb: 'F2F2F2' } } });
+      const subtotal = subtotalRows.find((row) => row === cursor);
+      if (subtotal !== undefined) {
+        const detailStartExcel = cursor - rows.length + 1;
+        ensureCell(cursor, 6).f = `SUM(G${detailStartExcel}:G${cursor})`;
+        ensureCell(cursor, 6).z = '¥#,##0.00;[Red](¥#,##0.00)';
+      }
+      cursor++;
+    }
+    if (filters.total !== 'false') {
+      applyRange(totalRow, totalRow, { font: { name: fontName, sz: 13, bold: true }, alignment: { horizontal: 'center', vertical: 'center' }, border: bordered, fill: { fgColor: { rgb: 'FFF2CC' } } });
+      ensureCell(totalRow, 6).f = subtotalRows.length ? subtotalRows.map((row) => `G${row + 1}`).join('+') : '0';
+      ensureCell(totalRow, 6).z = '¥#,##0.00;[Red](¥#,##0.00)';
+    }
+    if (filters.sign === 'true') applyRange(signatureStart, detailRows.length - 1, { font: { name: fontName, sz: 11 }, alignment: { horizontal: 'left', vertical: 'top', wrapText: true } });
+
+    sheet['!merges'] = merges;
+    sheet['!cols'] = [{ wch: 8 }, { wch: 28 }, { wch: 9 }, { wch: 10 }, { wch: 48 }, { wch: 14 }, { wch: 15 }, { wch: 16 }, { wch: 22 }];
+    sheet['!rows'] = detailRows.map((_, row) => ({ hpt: row === 0 ? 30 : row < 6 ? 21 : row === 6 ? 30 : row >= signatureStart ? 38 : 42 }));
+    sheet['!margins'] = { left: 0.43, right: 0.28, top: 0.87, bottom: 0.12, header: 0.51, footer: 0.16 };
+    sheet['!pageSetup'] = { orientation: 'landscape', fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
+    sheet['!printHeader'] = [0, 6];
+    const workbook = XLSXStyle.utils.book_new();
+    XLSXStyle.utils.book_append_sheet(workbook, sheet, '结算');
+    (workbook as any).Workbook = { Names: [{ Name: 'Print_Area', Ref: `结算!$A$1:$I$${detailRows.length}`, Sheet: 0 }] };
+    return { data: XLSXStyle.write(workbook, { type: 'buffer', bookType: 'xlsx', cellStyles: true }), count: orders.length };
   }
   const expandProducts = filters.expand !== 'false';
   const rows = orders.flatMap((order) => {

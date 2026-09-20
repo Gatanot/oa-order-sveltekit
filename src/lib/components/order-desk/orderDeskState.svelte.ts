@@ -701,7 +701,7 @@ export function createOrderDesk(data: Data) {
     const allSelected = targets.length > 0 && targets.every((id: string) => selectedReimbursementIds.includes(id));
     selectedReimbursementIds = allSelected
       ? selectedReimbursementIds.filter((id) => !targets.includes(id))
-      : targets;
+      : [...new Set([...selectedReimbursementIds, ...targets])];
   }
   function markEmployeeReimbursed(employee: string) {
     const targets = reimbursementSummaryRows.filter((item: any) => item.employee === employee && item.reimbursement_status === "待打款");
@@ -1176,18 +1176,38 @@ export function createOrderDesk(data: Data) {
     if (!keyword) return undefined;
     const matches = catalog.filter((item) => {
       const text = item.name.toLowerCase();
-      const customerMatch = !item.customer_name || item.customer_name === selectedCustomer;
-      const projectMatch = !item.project_name || item.project_name === selectedProject;
+      const customerMatch = !selectedCustomer || !item.customer_name || item.customer_name === selectedCustomer;
+      const projectMatch = !selectedProject || !item.project_name || item.project_name === selectedProject;
       return item.quote_unit > 0 && customerMatch && projectMatch && (text === keyword || text.includes(keyword) || keyword.includes(text));
     });
-    return matches.sort((a, b) => (a.name.toLowerCase() === keyword ? -1 : 0) - (b.name.toLowerCase() === keyword ? -1 : 0))[0];
+    return matches.sort((a, b) => {
+      const aExact = a.name.toLowerCase() === keyword ? 1 : 0;
+      const bExact = b.name.toLowerCase() === keyword ? 1 : 0;
+      const aContext = (a.customer_name === selectedCustomer ? 2 : 0) + (a.project_name === selectedProject ? 1 : 0);
+      const bContext = (b.customer_name === selectedCustomer ? 2 : 0) + (b.project_name === selectedProject ? 1 : 0);
+      return bExact - aExact || bContext - aContext;
+    })[0];
   }
   function applyProductCatalog(index: number, value: string) {
     const item = catalog.find((entry) => entry.id === value) || findCatalogItem(value);
     if (!item) { updateProduct(index, "name", value); return; }
-    products[index] = { ...products[index], name: item.name, unit: item.unit, unit_price: (item.quote_unit / 100).toFixed(2), cost_unit: (item.cost_unit / 100).toFixed(2), specification: item.specification || "", catalog_id: item.id };
+    products[index] = {
+      ...products[index],
+      name: item.name,
+      unit: item.unit || "项",
+      unit_price: (item.quote_unit / 100).toFixed(2),
+      cost_unit: (item.cost_unit / 100).toFixed(2),
+      specification: item.specification || item.supplier_remark || "",
+      catalog_id: item.id,
+    };
     products = [...products];
     orderFormDirty = true;
+  }
+  function matchProductCatalog(index: number) {
+    const product = products[index];
+    if (!product || product.catalog_id || !String(product.name || "").trim()) return;
+    const item = findCatalogItem(String(product.name));
+    if (item && item.name.trim().toLowerCase() === String(product.name).trim().toLowerCase()) applyProductCatalog(index, item.id);
   }
   function addCost() { costs = [...costs, { name: "", vendor: "手工录入", unit: "项", quantity: 1, unit_price: 0, subtotal: 0 }]; orderFormDirty = true; }
   function removeCost(index: number) { costs = costs.filter((_, i) => i !== index); orderFormDirty = true; }
@@ -1574,6 +1594,7 @@ export function createOrderDesk(data: Data) {
   desk.removeProduct = removeProduct;
   desk.updateProduct = updateProduct;
   desk.applyProductCatalog = applyProductCatalog;
+  desk.matchProductCatalog = matchProductCatalog;
   desk.addCost = addCost;
   desk.removeCost = removeCost;
   desk.updateCost = updateCost;
