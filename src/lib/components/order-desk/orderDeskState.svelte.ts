@@ -1,4 +1,5 @@
 import { onMount } from "svelte";
+import { pushState, replaceState } from "$app/navigation";
 import type * as XLSXType from "xlsx";
 import { api } from "$lib/api";
 
@@ -85,15 +86,6 @@ export function createOrderDesk(data: Data) {
   let reimbursements = $state(data.reimbursements);
   let customerId = $state("");
   let projectId = $state("");
-  let catalogId = $state("");
-  let serviceName = $state("");
-  let quantity = $state(1);
-  let unit = $state("项");
-  let unitQuote = $state("");
-  let unitCost = $state("");
-  let quoteAmount = $state("");
-  let costAmount = $state("");
-  let specification = $state("");
   let orderDate = $state(new Date().toISOString().slice(0, 10));
   let createdBy = $state("");
   let note = $state("");
@@ -158,8 +150,6 @@ export function createOrderDesk(data: Data) {
   let filterFrom = $state("");
   let filterTo = $state("");
   let orderSort = $state("date_desc");
-  let submitMode = $state<"save" | "reimburse">("save");
-  let submitMenuOpen = $state(false);
   let showExport = $state(false);
   let exportMode = $state<"detail" | "settlement">("detail");
   let exportTitle = $state("");
@@ -265,28 +255,11 @@ export function createOrderDesk(data: Data) {
         .filter(Boolean),
     ),
   ]);
-  const selectedCatalog = $derived(
-    catalog.find((item) => item.id === catalogId),
-  );
   const selectedCustomer = $derived(
     customers.find((item) => item.id === customerId)?.name || "",
   );
   const selectedProject = $derived(
     projects.find((item) => item.id === projectId)?.name || "",
-  );
-  const catalogSuggestions = $derived(
-    catalog
-      .filter((item) => {
-        const keyword = serviceName.trim().toLowerCase();
-        const text = `${item.name} ${item.category}`.toLowerCase();
-        const keywordMatch = !keyword || text.includes(keyword);
-        const customerMatch =
-          !item.customer_name || item.customer_name === selectedCustomer;
-        const projectMatch =
-          !item.project_name || item.project_name === selectedProject;
-        return keywordMatch && customerMatch && projectMatch;
-      })
-      .slice(0, 8),
   );
   const filteredOrders = $derived(
     orders.filter(
@@ -439,17 +412,6 @@ export function createOrderDesk(data: Data) {
     confirmAction = null;
     if (action) await action();
   }
-  function closeSubmitMenu() {
-    submitMenuOpen = false;
-  }
-  function onServiceInput() {
-    // Editing a catalog-derived name means this is now a custom order.
-    // Do not silently retain the old catalog relationship and pricing.
-    if (catalogId) {
-      catalogId = "";
-      specification = "";
-    }
-  }
   onMount(() => {
     const savedName = localStorage.getItem("oa-creator-name") || "";
     const savedMode = localStorage.getItem("oa-work-mode");
@@ -461,13 +423,8 @@ export function createOrderDesk(data: Data) {
       reimbursementRole = savedMode === "finance" ? "finance" : "employee";
     }
     let restoringHistory = false;
-    const close = (event: MouseEvent) => {
-      if (!(event.target as HTMLElement).closest(".submit-dropdown"))
-        closeSubmitMenu();
-    };
     const escape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      closeSubmitMenu();
       showExport = false;
       showOrderFilters = false;
       showStandaloneReimbursement = false;
@@ -494,12 +451,10 @@ export function createOrderDesk(data: Data) {
       }
       syncViewFromPath();
     };
-    window.addEventListener("click", close);
     window.addEventListener("keydown", escape);
     window.addEventListener("beforeunload", beforeUnload);
     window.addEventListener("popstate", popstate);
     return () => {
-      window.removeEventListener("click", close);
       window.removeEventListener("keydown", escape);
       window.removeEventListener("beforeunload", beforeUnload);
       window.removeEventListener("popstate", popstate);
@@ -538,49 +493,24 @@ export function createOrderDesk(data: Data) {
     creatorNameDraft = creatorName;
     settingsOpen = true;
   }
-  function syncTotals() {
-    const q = Number(unitQuote || 0);
-    const c = Number(unitCost || 0);
-    const n = Number(quantity || 0);
-    quoteAmount = (q * n).toFixed(2);
-    costAmount = (c * n).toFixed(2);
-  }
-  function applyCatalog() {
-    if (!selectedCatalog) {
-      specification = "";
-      return;
-    }
-    serviceName = selectedCatalog.name;
-    unit = selectedCatalog.unit;
-    specification = selectedCatalog.specification || "";
-    unitQuote = (selectedCatalog.quote_unit / 100).toFixed(2);
-    unitCost = (selectedCatalog.cost_unit / 100).toFixed(2);
-    syncTotals();
-  }
-  function applySuggestion(item: Catalog) {
-    catalogId = item.id;
-    serviceName = item.name;
-    unit = item.unit;
-    specification = item.specification || "";
-    unitQuote = (item.quote_unit / 100).toFixed(2);
-    unitCost = (item.cost_unit / 100).toFixed(2);
-    syncTotals();
-  }
   function onCustomerChange() {
     projectId = "";
-  }
-  function onQuantityChange() {
-    syncTotals();
   }
   function navigate(path: string) {
     if (view === "entry" && orderFormDirty && !window.confirm("订单尚未保存，确定离开当前页面吗？")) return;
     orderFormDirty = false;
-    window.location.href = path;
+    if (window.location.pathname !== path) pushState(path, {});
+    syncViewFromPath();
   }
   function syncViewFromPath() {
     const path = window.location.pathname;
     const editMatch = path.match(/^\/orders\/([^/]+)\/edit$/);
     const detailMatch = path.match(/^\/orders\/([^/]+)$/);
+    if (path === "/orders/new") {
+      if (workMode === "entry") startNewOrder();
+      else navigate("/orders");
+      return;
+    }
     if (editMatch && workMode === "entry") {
       const order = orders.find((item) => item.id === decodeURIComponent(editMatch[1]));
       if (order) editOrder(order, false);
@@ -698,10 +628,6 @@ export function createOrderDesk(data: Data) {
     reimbursementFrom = "";
     reimbursementTo = "";
     selectedReimbursementIds = [];
-  }
-  function setReimbursementRole(role: "employee" | "finance") {
-    reimbursementRole = role;
-    resetReimbursementFilters();
   }
   async function batchUpdateReimbursements(ids: string[], status: string, rejectReason = "") {
     const response = await fetch("/api/reimbursements/batch", {
@@ -1044,7 +970,7 @@ export function createOrderDesk(data: Data) {
     }
     busy = true;
     try {
-      const payload = { project_id: projectId, catalog_id: catalogId, service_name: serviceName, quantity, unit, quote_amount: quoteAmount, cost_amount: costAmount, order_date: orderDate, delivery_date: deliveryDate, contact, customer_department: customerDepartment, designer, payment_status: paymentStatus, status, created_by: createdBy.trim() || creatorName || "未填写", note, specification, products: validProducts, costs: validCosts, advances: validAdvances, submit_reimbursement: submitMode === "reimburse", idempotency_key: editingOrderId ? "" : (submissionKey ||= crypto.randomUUID()) };
+      const payload = { project_id: projectId, order_date: orderDate, delivery_date: deliveryDate, contact, customer_department: customerDepartment, designer, payment_status: paymentStatus, status, created_by: createdBy.trim() || creatorName || "未填写", note, products: validProducts, costs: validCosts, advances: validAdvances, idempotency_key: editingOrderId ? "" : (submissionKey ||= crypto.randomUUID()) };
       const result = editingOrderId
         ? await api.patch<{ data: Order }>(`/api/orders/${editingOrderId}`, payload)
         : await api.post<{ data: Order }>("/api/orders", payload);
@@ -1054,9 +980,9 @@ export function createOrderDesk(data: Data) {
       } finally {
         await refresh();
       }
-      window.history.replaceState({}, "", "/orders");
+      replaceState("/orders", {});
       notify(
-        submitMode === "reimburse" || advances.length
+        advances.length
           ? "订单已提交报销，已进入报销核验"
           : editingOrderId ? "订单已更新" : "订单已保存",
       );
@@ -1067,14 +993,7 @@ export function createOrderDesk(data: Data) {
       products = [];
       costs = [];
       advances = [];
-      serviceName = "";
-      specification = "";
-      unitQuote = "";
-      unitCost = "";
-      quoteAmount = "";
-      costAmount = "";
       note = "";
-      catalogId = "";
       noteFiles = [];
       createdBy = creatorName;
       deliveryDate = "";
@@ -1082,8 +1001,6 @@ export function createOrderDesk(data: Data) {
       customerDepartment = "";
       designer = "";
       paymentStatus = "未结款";
-      submitMode = "save";
-      submitMenuOpen = false;
       orderFormDirty = false;
     } catch (e) {
       notify(e instanceof Error ? e.message : "订单保存失败", true);
@@ -1204,7 +1121,7 @@ export function createOrderDesk(data: Data) {
   }
   function openDetail(order: any, pushHistory = true) {
     if (!order) return;
-    if (pushHistory && window.location.pathname !== `/orders/${order.id}`) window.history.pushState({}, '', `/orders/${order.id}`);
+    if (pushHistory && window.location.pathname !== `/orders/${order.id}`) pushState(`/orders/${order.id}`, {});
     view = "overview";
     editingOrderId = "";
     orderFormDirty = false;
@@ -1213,15 +1130,10 @@ export function createOrderDesk(data: Data) {
     loadDetailAttachments(order.id);
   }
   function editOrder(order: any, pushHistory = true) {
-    if (pushHistory && window.location.pathname !== `/orders/${order.id}/edit`) window.history.pushState({}, '', `/orders/${order.id}/edit`);
+    if (pushHistory && window.location.pathname !== `/orders/${order.id}/edit`) pushState(`/orders/${order.id}/edit`, {});
     editingOrderId = order.id;
     customerId = order.customer_id;
     projectId = order.project_id;
-    serviceName = order.service_name;
-    quantity = Number(order.quantity || 1);
-    unit = order.unit || "项";
-    quoteAmount = (Number(order.quote_amount || 0) / 100).toFixed(2);
-    costAmount = (Number(order.cost_amount || 0) / 100).toFixed(2);
     orderDate = order.order_date;
     deliveryDate = order.delivery_date || "";
     contact = order.contact || "";
@@ -1230,7 +1142,6 @@ export function createOrderDesk(data: Data) {
     paymentStatus = order.payment_status || "未结款";
     status = order.status || "制作中";
     createdBy = order.created_by || creatorName;
-    specification = order.specification || "";
     note = order.note || "";
     products = order.products?.length ? order.products : [{ name: order.service_name, quantity: order.quantity, unit: order.unit, unit_price: Number(order.quote_amount || 0) / 100 / Number(order.quantity || 1), subtotal: Number(order.quote_amount || 0) / 100, specification: order.specification || "" }];
     costs = order.costs || [];
@@ -1299,15 +1210,6 @@ export function createOrderDesk(data: Data) {
     detailOrder = null;
     customerId = "";
     projectId = "";
-    catalogId = "";
-    serviceName = "";
-    quantity = 1;
-    unit = "项";
-    unitQuote = "";
-    unitCost = "";
-    quoteAmount = "";
-    costAmount = "";
-    specification = "";
     orderDate = new Date().toISOString().slice(0, 10);
     deliveryDate = "";
     contact = "";
@@ -1321,8 +1223,6 @@ export function createOrderDesk(data: Data) {
     products = [{ name: "", quantity: 1, unit: "项", unit_price: 0, cost_unit: 0, subtotal: 0, specification: "" }];
     costs = [];
     advances = [];
-    submitMode = "save";
-    submitMenuOpen = false;
     view = "entry";
     orderFormDirty = false;
   }
@@ -1495,18 +1395,8 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "catalog", { get: () => catalog, set: (value) => { catalog = value; } });
   Object.defineProperty(desk, "catalogSources", { get: () => catalogSources, set: (value) => { catalogSources = value; } });
   Object.defineProperty(desk, "orders", { get: () => orders, set: (value) => { orders = value; } });
-  Object.defineProperty(desk, "reimbursements", { get: () => reimbursements, set: (value) => { reimbursements = value; } });
   Object.defineProperty(desk, "customerId", { get: () => customerId, set: (value) => { customerId = value; } });
   Object.defineProperty(desk, "projectId", { get: () => projectId, set: (value) => { projectId = value; } });
-  Object.defineProperty(desk, "catalogId", { get: () => catalogId, set: (value) => { catalogId = value; } });
-  Object.defineProperty(desk, "serviceName", { get: () => serviceName, set: (value) => { serviceName = value; } });
-  Object.defineProperty(desk, "quantity", { get: () => quantity, set: (value) => { quantity = value; } });
-  Object.defineProperty(desk, "unit", { get: () => unit, set: (value) => { unit = value; } });
-  Object.defineProperty(desk, "unitQuote", { get: () => unitQuote, set: (value) => { unitQuote = value; } });
-  Object.defineProperty(desk, "unitCost", { get: () => unitCost, set: (value) => { unitCost = value; } });
-  Object.defineProperty(desk, "quoteAmount", { get: () => quoteAmount, set: (value) => { quoteAmount = value; } });
-  Object.defineProperty(desk, "costAmount", { get: () => costAmount, set: (value) => { costAmount = value; } });
-  Object.defineProperty(desk, "specification", { get: () => specification, set: (value) => { specification = value; } });
   Object.defineProperty(desk, "orderDate", { get: () => orderDate, set: (value) => { orderDate = value; } });
   Object.defineProperty(desk, "createdBy", { get: () => createdBy, set: (value) => { createdBy = value; } });
   Object.defineProperty(desk, "note", { get: () => note, set: (value) => { note = value; } });
@@ -1535,7 +1425,7 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "busy", { get: () => busy, set: (value) => { busy = value; } });
   Object.defineProperty(desk, "message", { get: () => message, set: (value) => { message = value; } });
   Object.defineProperty(desk, "error", { get: () => error, set: (value) => { error = value; } });
-  Object.defineProperty(desk, "reimbursementRole", { get: () => reimbursementRole, set: (value) => { setReimbursementRole(value); } });
+  Object.defineProperty(desk, "reimbursementRole", { get: () => reimbursementRole });
   Object.defineProperty(desk, "reimbursementProject", { get: () => reimbursementProject, set: (value) => { reimbursementProject = value; selectedReimbursementIds = []; } });
   Object.defineProperty(desk, "reimbursementPerson", { get: () => reimbursementPerson, set: (value) => { reimbursementPerson = value; selectedReimbursementIds = []; } });
   Object.defineProperty(desk, "reimbursementType", { get: () => reimbursementType, set: (value) => { reimbursementType = value; selectedReimbursementIds = []; } });
@@ -1567,8 +1457,6 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "filterFrom", { get: () => filterFrom, set: (value) => { filterFrom = value; } });
   Object.defineProperty(desk, "filterTo", { get: () => filterTo, set: (value) => { filterTo = value; } });
   Object.defineProperty(desk, "orderSort", { get: () => orderSort, set: (value) => { orderSort = value; } });
-  Object.defineProperty(desk, "submitMode", { get: () => submitMode, set: (value) => { submitMode = value; } });
-  Object.defineProperty(desk, "submitMenuOpen", { get: () => submitMenuOpen, set: (value) => { submitMenuOpen = value; } });
   Object.defineProperty(desk, "showExport", { get: () => showExport, set: (value) => { showExport = value; } });
   Object.defineProperty(desk, "exportMode", { get: () => exportMode, set: (value) => { exportMode = value; } });
   Object.defineProperty(desk, "exportTitle", { get: () => exportTitle, set: (value) => { exportTitle = value; } });
@@ -1599,10 +1487,8 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "filteredProjects", { get: () => filteredProjects });
   Object.defineProperty(desk, "visibleCatalog", { get: () => visibleCatalog });
   Object.defineProperty(desk, "catalogCategories", { get: () => catalogCategories });
-  Object.defineProperty(desk, "selectedCatalog", { get: () => selectedCatalog });
   Object.defineProperty(desk, "selectedCustomer", { get: () => selectedCustomer });
   Object.defineProperty(desk, "selectedProject", { get: () => selectedProject });
-  Object.defineProperty(desk, "catalogSuggestions", { get: () => catalogSuggestions });
   Object.defineProperty(desk, "filteredOrders", { get: () => filteredOrders });
   Object.defineProperty(desk, "projectStats", { get: () => projectStats });
   Object.defineProperty(desk, "allFilteredSelected", { get: () => allFilteredSelected });
@@ -1638,7 +1524,6 @@ export function createOrderDesk(data: Data) {
   desk.generateReimbursementVoucher = generateReimbursementVoucher;
   desk.archiveReimbursementVoucher = archiveReimbursementVoucher;
   desk.reuploadReimbursement = reuploadReimbursement;
-  desk.setReimbursementRole = setReimbursementRole;
   desk.resetReimbursementFilters = resetReimbursementFilters;
   desk.toggleReimbursement = toggleReimbursement;
   desk.deleteReimbursement = deleteReimbursement;
@@ -1664,18 +1549,6 @@ export function createOrderDesk(data: Data) {
   desk.onFilterCustomerChange = onFilterCustomerChange;
   desk.deleteOrder = deleteOrder;
   desk.openDetail = openDetail;
-  desk.fetchAttachments = async (orderId: string) => {
-    const result = await api.get<{ data: Array<Record<string, any>> }>(
-      `/api/orders/${encodeURIComponent(orderId)}/attachments`,
-    );
-    return result.data;
-  };
-  desk.fetchAdvanceAttachments = async (orderId: string, reimbursementId: string) => {
-    const result = await api.get<{ data: Array<Record<string, any>> }>(
-      `/api/reimbursements/${encodeURIComponent(reimbursementId)}/attachments`,
-    );
-    return result.data;
-  };
   desk.removeNoteFile = removeNoteFile;
   desk.onAdvanceInvoiceChange = onAdvanceInvoiceChange;
   desk.removeAdvanceInvoice = removeAdvanceInvoice;
@@ -1698,16 +1571,10 @@ export function createOrderDesk(data: Data) {
   desk.updateAdvance = updateAdvance;
   desk.canEditAdvance = canEditAdvance;
   desk.markOrderDirty = markOrderDirty;
-  desk.closeSubmitMenu = closeSubmitMenu;
-  desk.onServiceInput = onServiceInput;
   desk.onCustomerChange = onCustomerChange;
-  desk.onQuantityChange = onQuantityChange;
-  desk.applyCatalog = applyCatalog;
-  desk.applySuggestion = applySuggestion;
   desk.saveCreatorName = saveCreatorName;
   desk.removeCreatorName = removeCreatorName;
   desk.openSettings = openSettings;
-  desk.syncTotals = syncTotals;
   desk.exportColumns = exportColumns;
   return desk;
 }
