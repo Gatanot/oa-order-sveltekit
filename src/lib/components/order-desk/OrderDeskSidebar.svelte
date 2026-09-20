@@ -8,7 +8,7 @@
   <div class="order-brand"><div><b>广告订单 OA</b><span>订单、报价与报销工作台</span></div></div>
   <div class="role-switch">
     <label for="work-mode">当前身份</label>
-    <select id="work-mode" value={desk.workMode} onchange={(event) => desk.setWorkMode(event.currentTarget.value)}>
+    <select id="work-mode" value={desk.workMode} onchange={(event) => { if (!desk.setWorkMode(event.currentTarget.value)) event.currentTarget.value = desk.workMode; }}>
       <option value="view">业务成员 · 查看</option>
       <option value="entry">{desk.creatorName || "业务成员"} · 填写</option>
       <option value="finance">财务 · 管理员</option>

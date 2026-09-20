@@ -8,7 +8,7 @@ export const POST: RequestHandler = async (event) => {
   const contentType = event.request.headers.get('content-type') || '';
   if (!contentType.includes('multipart/form-data')) return json({ message: '请使用 multipart/form-data 上传附件' }, { status: 400 });
   const length = Number(event.request.headers.get('content-length') || 0);
-  if (Number.isFinite(length) && length > maxAttachmentSize + 1024 * 1024) return json({ message: '附件总大小不能超过 10MB' }, { status: 413 });
+  if (Number.isFinite(length) && length > maxAttachmentSize + 1024 * 1024) return json({ message: '单次附件上传不能超过 10MB，请分开上传' }, { status: 413 });
   let form: FormData;
   try { form = await event.request.formData(); } catch { return json({ message: '附件上传数据格式不正确' }, { status: 400 }); }
   const files = [...form.getAll('files'), ...form.getAll('file')].filter((item): item is File => item instanceof File && item.size > 0);

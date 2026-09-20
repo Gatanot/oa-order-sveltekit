@@ -755,6 +755,7 @@ button {
 .order-click-row { cursor: pointer; }
 .order-click-row:hover { background: #f3faf8; }
 .detail-card h3 { margin: 25px 0 12px; font-size: 15px; }
+.order-note { padding: 14px 16px; border: 1px solid var(--line); border-radius: 6px; background: #f8fafc; color: var(--ink); line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
 .link-action { border: 0; background: none; color: var(--teal); padding: 0; text-align: left; }
 .link-action:hover { text-decoration: underline; }
 .reimbursement-modal { width: min(560px, 94vw); }
@@ -2185,6 +2186,7 @@ select:disabled {
   width: 68px;
   min-width: 68px;
   padding-inline: 9px;
+  overflow-y: hidden;
 }
 
 .sidebar-collapsed .order-brand,
@@ -3062,6 +3064,11 @@ tbody tr:hover,
 
 .catalog-detail-viewer {
   width: min(1100px, calc(100vw - 32px));
+}
+
+.catalog-detail-viewer .drawer-body > .search-field {
+  max-width: 460px;
+  margin-bottom: 14px;
 }
 
 .export-mode-picker,

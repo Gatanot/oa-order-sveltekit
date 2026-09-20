@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import Database from 'better-sqlite3';
+import * as XLSX from 'xlsx';
 
 const directory = mkdtempSync(join(tmpdir(), 'oa-order-test-'));
 const databasePath = join(directory, 'oa.db');
@@ -63,23 +64,56 @@ try {
   assert.equal(result.response.status, 201, JSON.stringify(result.data));
   assert.equal(result.data.data.imported, 1);
 
-  const createPayload = { project_id: projectId, order_date: '2026-09-16', delivery_date: '2026-09-20', designer: '设计师甲', created_by: '填写人甲', idempotency_key: 'smoke-order-1', products: [{ name: '测试产品', unit: '项', quantity: 2, unit_price: '12.34', specification: '测试要求' }], costs: [{ name: '制作成本', vendor: '测试厂商', unit: '项', quantity: 2, unit_price: '3.21' }], advances: [] };
+  result = await request('/api/catalog/sources', { method: 'POST', json: { kind: 'cost', owner_name: '测试厂商副本', copy_from_id: sourceId, actor: '财务甲' } });
+  assert.equal(result.response.status, 201, JSON.stringify(result.data));
+  assert.equal(result.data.data.item_count, 1, '沿用资料库时应复制有效条目');
+  const copiedSourceId = result.data.data.id;
+  result = await request('/api/catalog');
+  assert.equal(result.data.data.filter((item) => item.source_id === copiedSourceId).length, 1, '沿用后的资料库应可直接用于录单');
+
+  const createPayload = { project_id: projectId, order_date: '2026-09-16', delivery_date: '2026-09-20', designer: '设计师甲', created_by: '填写人甲', idempotency_key: 'smoke-order-1', products: [{ name: '测试产品', unit: '项', quantity: 2, unit_price: '12.34', specification: '测试要求' }], costs: [{ name: '制作成本', vendor: '测试厂商', unit: '项', quantity: 2, unit_price: '3.21' }], advances: [{ employee: '垫付人乙', item: '打样费', amount: '8.50', date: '2026-09-16' }] };
   result = await request('/api/orders', { method: 'POST', json: createPayload });
   assert.equal(result.response.status, 201, JSON.stringify(result.data));
   assert.equal(result.data.data.created_by, '填写人甲');
   assert.equal(result.data.data.quote_amount, 2468);
   assert.equal(result.data.data.cost_amount, 642);
+  assert.equal(result.data.data.advances[0].employee, '垫付人乙', '每条垫付应保存独立员工姓名');
   const orderId = result.data.data.id;
   result = await request('/api/orders', { method: 'POST', json: createPayload });
   assert.equal(result.data.data.id, orderId, '重复提交必须返回原订单');
+
+  for (const fileName of ['note-a.png', 'note-b.png']) {
+    const attachment = new FormData();
+    attachment.append('file', new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], { type: 'image/png' }), fileName);
+    result = await request(`/api/orders/${orderId}/attachments`, { method: 'POST', body: attachment });
+    assert.equal(result.response.status, 201, JSON.stringify(result.data));
+  }
+  result = await request(`/api/orders/${orderId}/attachments`);
+  assert.equal(result.data.data.length, 2, '多附件应按文件独立上传并全部保留');
 
   result = await request(`/api/orders/${orderId}`, { method: 'PATCH', json: { project_id: projectId, order_date: '2026-09-16', delivery_date: '2026-09-21', designer: '设计师乙', created_by: '填写人乙', payment_status: '已结款', status: '已完成', products: [{ name: '测试产品', unit: '项', quantity: 1, unit_price: '20.00' }], costs: [], advances: [] } });
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
   assert.equal(result.data.data.created_by, '填写人乙');
 
+  result = await request(`/api/orders/export?ids=${encodeURIComponent(orderId)}&mode=detail&columns=code,product_name,quote_amount&expand=false&total=true&actor=财务甲`);
+  assert.equal(result.response.status, 200);
+  let workbook = XLSX.read(Buffer.from(result.data), { type: 'buffer' });
+  let exportRows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1, defval: '' });
+  assert.equal(exportRows.length, 3, '订单明细应包含表头、订单行和合计行');
+  assert.equal(exportRows[2][0], '合计');
+  result = await request(`/api/orders/export?ids=${encodeURIComponent(orderId)}&mode=settlement&followA=${encodeURIComponent('甲方联系人')}&followB=${encodeURIComponent('乙方跟进人')}&contactPhone=123456&actor=财务甲`);
+  assert.equal(result.response.status, 200);
+  workbook = XLSX.read(Buffer.from(result.data), { type: 'buffer' });
+  exportRows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1, defval: '' });
+  assert.match(String(exportRows.flat().find((cell) => String(cell).includes('甲方项目跟进人')) || ''), /甲方联系人/);
+
+  result = await request('/api/reimbursements', { method: 'POST', json: { employee: '填写人甲', item: '无效零金额', amount: '0', advance_date: '2026-09-16', order_id: orderId } });
+  assert.equal(result.response.status, 400, '零金额报销必须被服务端拒绝');
   result = await request('/api/reimbursements', { method: 'POST', json: { employee: '填写人甲', item: '交通费', amount: '12.34', advance_date: '2026-09-16', order_id: orderId } });
   assert.equal(result.response.status, 201, JSON.stringify(result.data));
   const reimbursementId = result.data.data.id;
+  result = await request('/api/reimbursements?status=未报销');
+  assert.ok(result.data.data.some((item) => item.id === reimbursementId), '未报销筛选应包含待审核记录');
   result = await request(`/api/reimbursements/${reimbursementId}`, { method: 'PATCH', json: { status: '已打回', reject_reason: '请补充发票', actor: '财务甲' } });
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
   assert.equal(result.data.data.reimbursement_status, '已打回');
@@ -91,11 +125,19 @@ try {
   assert.equal(result.data.data.find((item) => item.id === reimbursementId).reimbursement_status, '待审核', '补传发票后应回到待审核');
   result = await request('/api/reimbursements/batch', { method: 'POST', json: { ids: [reimbursementId], status: '待打款', actor: '财务甲' } });
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  const automaticVoucherNo = result.data.data[0].voucher_no;
+  assert.ok(automaticVoucherNo, '审核通过进入待打款时应自动生成单据');
   result = await request('/api/reimbursements/batch', { method: 'POST', json: { ids: [reimbursementId], status: '已报销', actor: '财务甲' } });
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  result = await request('/api/reimbursements?status=未报销');
+  assert.ok(!result.data.data.some((item) => item.id === reimbursementId), '未报销筛选不应包含已付款记录');
+  result = await request(`/api/orders/${orderId}`,  { method: 'PATCH', json: { project_id: projectId, order_date: '2026-09-16', delivery_date: '2026-09-21', designer: '设计师乙', created_by: '填写人乙', payment_status: '已结款', status: '已完成', products: [{ name: '测试产品', unit: '项', quantity: 1, unit_price: '20.00' }], costs: [], advances: [] } });
+  assert.equal(result.response.status, 400, '已进入报销流程的垫付不能通过订单接口删除');
+  assert.match(result.data.error?.message || '', /不可删除或修改/);
   result = await request(`/api/reimbursements/${reimbursementId}/voucher`, { method: 'POST' });
   assert.equal(result.response.status, 201, JSON.stringify(result.data));
   const voucherNo = result.data.data.voucher_no;
+  assert.equal(voucherNo, automaticVoucherNo, '手动生成不能替换自动生成的单号');
   result = await request(`/api/reimbursements/${reimbursementId}/voucher`, { method: 'POST' });
   assert.equal(result.data.data.voucher_no, voucherNo, '重复生成必须保持同一单号');
   result = await request(`/api/reimbursements/${reimbursementId}/archive`, { method: 'POST', json: { actor: '财务甲' } });
@@ -151,7 +193,7 @@ try {
   migrated.close();
   migrationServer.kill('SIGTERM');
   migrationServer = undefined;
-  console.log('Smoke test passed: public workbench, catalog import, creator snapshots, order totals, reimbursement state machine, voucher idempotency, export, audit and v18 migration.');
+  console.log('Smoke test passed: public workbench, catalog import/copy, creator snapshots, order totals, independent attachments, immutable processed advances, reimbursement filters/state machine, voucher idempotency, aligned exports, audit and v18 migration.');
 } finally {
   migrationServer?.kill('SIGTERM');
   server.kill('SIGTERM');

@@ -27,6 +27,7 @@ import { api } from "$lib/api";
     source_id?: string;
     library_kind?: "quote" | "cost";
     source_owner?: string;
+    source_file?: string;
     library_file?: string;
   };
   type Order = {
@@ -108,6 +109,7 @@ export function createOrderDesk(data: Data) {
   let advances = $state<Array<Record<string, any>>>([]);
   let editingOrderId = $state("");
   let submissionKey = $state("");
+  let orderFormDirty = $state(false);
   let detailOrder = $state<any>(null);
   let detailAttachments = $state<any[]>([]);
   let detailAttachmentsLoading = $state(false);
@@ -137,6 +139,9 @@ export function createOrderDesk(data: Data) {
   let catalogImportPreview = $state<any>(null);
   let catalogImportFile = $state<File | null>(null);
   let catalogImportOwner = $state("");
+  let catalogSourceOpen = $state(false);
+  let catalogSourceName = $state("");
+  let catalogSourceCopyId = $state("");
   let reimbursementRejectOpen = $state(false);
   let reimbursementRejectReason = $state("");
   let reimbursementRejectIds = $state<string[]>([]);
@@ -161,9 +166,11 @@ export function createOrderDesk(data: Data) {
   let exportContract = $state("");
   let exportPartyA = $state("");
   let exportPartyB = $state("");
+  let exportFollowA = $state("");
   let exportFollowB = $state("");
   let exportContactPhone = $state("");
   let exportRemarkOrder = $state(true);
+  let exportExpand = $state(true);
   let exportTotal = $state(true);
   let exportSign = $state(true);
   let showOrderFilters = $state(false);
@@ -251,7 +258,12 @@ export function createOrderDesk(data: Data) {
     ),
   );
   const catalogCategories = $derived([
-    ...new Set(catalog.map((item) => item.category).filter(Boolean)),
+    ...new Set(
+      catalog
+        .filter((item) => !item.library_kind || item.library_kind === catalogKind)
+        .map((item) => item.category)
+        .filter(Boolean),
+    ),
   ]);
   const selectedCatalog = $derived(
     catalog.find((item) => item.id === catalogId),
@@ -304,6 +316,16 @@ export function createOrderDesk(data: Data) {
     filterDesigner = ""; filterCreator = ""; filterPayment = ""; filterFrom = "";
     filterTo = ""; orderSort = "date_desc";
   }
+  function onFilterCustomerChange() {
+    if (
+      filterProject &&
+      !projects.some(
+        (project) =>
+          project.id === filterProject &&
+          (!filterCustomer || project.customer_id === filterCustomer),
+      )
+    ) filterProject = "";
+  }
   const projectStats = $derived(
     projects
       .map((project) => {
@@ -348,18 +370,26 @@ export function createOrderDesk(data: Data) {
       reimbursementRole === "finance" || (creatorName !== "" && item.employee === creatorName),
     ),
   );
+  const reimbursementSummaryRows = $derived(
+    reimbursementRowsForRole.filter((item: any) =>
+      (reimbursementRole !== "finance" || !reimbursementProject || item.project_id === reimbursementProject) &&
+      (reimbursementRole !== "finance" || !reimbursementType || (reimbursementType === "order" ? !!item.order_id : !item.order_id)) &&
+      (reimbursementRole !== "finance" || !reimbursementFrom || item.advance_date >= reimbursementFrom) &&
+      (reimbursementRole !== "finance" || !reimbursementTo || item.advance_date <= reimbursementTo),
+    ),
+  );
   const reimbursementStats = $derived({
-    total: reimbursementRowsForRole.length,
-    pendingReview: reimbursementRowsForRole.filter((item: any) => item.reimbursement_status === "待审核").length,
-    pendingReviewAmount: reimbursementRowsForRole.filter((item: any) => item.reimbursement_status === "待审核").reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
-    pendingPay: reimbursementRowsForRole.filter((item: any) => item.reimbursement_status === "待打款").length,
-    paid: reimbursementRowsForRole.filter((item: any) => item.reimbursement_status === "已报销").length,
-    rejected: reimbursementRowsForRole.filter((item: any) => item.reimbursement_status === "已打回").length,
-    amount: reimbursementRowsForRole.reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
-    pendingPayAmount: reimbursementRowsForRole.filter((item: any) => item.reimbursement_status === "待打款").reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
+    total: reimbursementSummaryRows.length,
+    pendingReview: reimbursementSummaryRows.filter((item: any) => item.reimbursement_status === "待审核").length,
+    pendingReviewAmount: reimbursementSummaryRows.filter((item: any) => item.reimbursement_status === "待审核").reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
+    pendingPay: reimbursementSummaryRows.filter((item: any) => item.reimbursement_status === "待打款").length,
+    paid: reimbursementSummaryRows.filter((item: any) => item.reimbursement_status === "已报销").length,
+    rejected: reimbursementSummaryRows.filter((item: any) => item.reimbursement_status === "已打回").length,
+    amount: reimbursementSummaryRows.reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
+    pendingPayAmount: reimbursementSummaryRows.filter((item: any) => item.reimbursement_status === "待打款").reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
   });
   const reimbursementPaymentSummary = $derived(
-    reimbursements
+    reimbursementSummaryRows
       .filter((item: any) => item.reimbursement_status === "待打款")
       .reduce((groups: Array<any>, item: any) => {
         const employee = item.employee || "未填写";
@@ -378,6 +408,12 @@ export function createOrderDesk(data: Data) {
     reimbursements
       .filter((item: any) => item.voucher_no)
       .map((item: any) => ({ ...item, voucherNo: item.voucher_no })),
+  );
+  const selectedPendingReviewCount = $derived(
+    reimbursements.filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "待审核").length,
+  );
+  const selectedPendingPaymentCount = $derived(
+    reimbursements.filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "待打款").length,
   );
   const creators = $derived([
     ...new Set(orders.map((o) => o.created_by).filter(Boolean)),
@@ -424,6 +460,7 @@ export function createOrderDesk(data: Data) {
       workMode = savedMode;
       reimbursementRole = savedMode === "finance" ? "finance" : "employee";
     }
+    let restoringHistory = false;
     const close = (event: MouseEvent) => {
       if (!(event.target as HTMLElement).closest(".submit-dropdown"))
         closeSubmitMenu();
@@ -436,14 +473,36 @@ export function createOrderDesk(data: Data) {
       showStandaloneReimbursement = false;
       showProjectForm = false;
       settingsOpen = false;
+      catalogSourceOpen = false;
       reimbursementRejectOpen = false;
       confirmOpen = false;
     };
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (view !== "entry" || !orderFormDirty) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    const popstate = () => {
+      if (restoringHistory) {
+        restoringHistory = false;
+        return;
+      }
+      if (view === "entry" && orderFormDirty && !window.confirm("订单尚未保存，确定离开当前页面吗？")) {
+        restoringHistory = true;
+        window.history.go(1);
+        return;
+      }
+      syncViewFromPath();
+    };
     window.addEventListener("click", close);
     window.addEventListener("keydown", escape);
+    window.addEventListener("beforeunload", beforeUnload);
+    window.addEventListener("popstate", popstate);
     return () => {
       window.removeEventListener("click", close);
       window.removeEventListener("keydown", escape);
+      window.removeEventListener("beforeunload", beforeUnload);
+      window.removeEventListener("popstate", popstate);
     };
   });
   function saveCreatorName() {
@@ -463,12 +522,17 @@ export function createOrderDesk(data: Data) {
     notify("已删除填写人名字");
   }
   function setWorkMode(mode: "view" | "entry" | "finance") {
+    if (mode !== workMode && view === "entry" && orderFormDirty) {
+      if (!window.confirm("订单尚未保存，确定切换工作模式吗？")) return false;
+      orderFormDirty = false;
+    }
     workMode = mode;
     reimbursementRole = mode === "finance" ? "finance" : "employee";
     localStorage.setItem("oa-work-mode", mode);
     resetReimbursementFilters();
-    if (mode === "view" && view === "entry") navigate("/orders");
+    if (mode !== "entry" && view === "entry") navigate("/orders");
     notify(`已切换到${mode === "finance" ? "财务" : mode === "entry" ? "填写" : "查看"}模式`);
+    return true;
   }
   function openSettings() {
     creatorNameDraft = creatorName;
@@ -509,7 +573,30 @@ export function createOrderDesk(data: Data) {
     syncTotals();
   }
   function navigate(path: string) {
+    if (view === "entry" && orderFormDirty && !window.confirm("订单尚未保存，确定离开当前页面吗？")) return;
+    orderFormDirty = false;
     window.location.href = path;
+  }
+  function syncViewFromPath() {
+    const path = window.location.pathname;
+    const editMatch = path.match(/^\/orders\/([^/]+)\/edit$/);
+    const detailMatch = path.match(/^\/orders\/([^/]+)$/);
+    if (editMatch && workMode === "entry") {
+      const order = orders.find((item) => item.id === decodeURIComponent(editMatch[1]));
+      if (order) editOrder(order, false);
+      return;
+    }
+    if (detailMatch) {
+      const order = orders.find((item) => item.id === decodeURIComponent(detailMatch[1]));
+      if (order) openDetail(order, false);
+      return;
+    }
+    detailOrder = null;
+    editingOrderId = "";
+    orderFormDirty = false;
+    if (path === "/reimbursements") view = "finance";
+    else if (path === "/catalog") view = "catalog";
+    else view = "overview";
   }
   async function refresh() {
     const [o, c, p, k, r] = await Promise.all([
@@ -528,7 +615,12 @@ export function createOrderDesk(data: Data) {
     reimbursements = r.data;
   }
   function openStandaloneReimbursement() {
-    standaloneEmployee = creatorName || "";
+    if (workMode !== "finance" && !creatorName) {
+      notify("请先设置填写人，再提交本人报销", true);
+      openSettings();
+      return;
+    }
+    standaloneEmployee = workMode === "finance" ? "" : creatorName;
     standaloneItem = "";
     standaloneAmount = "";
     standaloneDate = new Date().toISOString().slice(0, 10);
@@ -556,7 +648,7 @@ export function createOrderDesk(data: Data) {
       }
       await refresh();
       showStandaloneReimbursement = false;
-      if (!creatorName) {
+      if (workMode === "entry" && !creatorName) {
         creatorName = standaloneEmployee.trim();
         creatorNameDraft = creatorName;
         createdBy = creatorName;
@@ -576,16 +668,27 @@ export function createOrderDesk(data: Data) {
     standaloneInvoice = file.name;
     standaloneInvoiceFile = file;
   }
-  function reimbursementRows() {
-    if (reimbursementRole === "finance" && !reimbursementPerson) return [];
+  function reimbursementStatusMatches(item: any, statusFilter: string, defaultPending = false) {
+    if (statusFilter === "未报销") return item.reimbursement_status !== "已报销";
+    if (statusFilter) return item.reimbursement_status === statusFilter;
+    return !defaultPending || item.reimbursement_status === "待审核" || item.reimbursement_status === "已打回";
+  }
+  function filteredReimbursementRows(requireFinancePerson: boolean, defaultPending: boolean) {
+    if (requireFinancePerson && reimbursementRole === "finance" && !reimbursementPerson) return [];
     return reimbursementRowsForRole.filter((item: any) =>
-      (reimbursementRole !== "finance" || item.employee === reimbursementPerson) &&
+      (reimbursementRole !== "finance" || !reimbursementPerson || item.employee === reimbursementPerson) &&
       (!reimbursementProject || item.project_id === reimbursementProject) &&
       (!reimbursementType || (reimbursementType === "order" ? !!item.order_id : !item.order_id)) &&
-      (!reimbursementStatus || item.reimbursement_status === reimbursementStatus) &&
+      reimbursementStatusMatches(item, reimbursementStatus, defaultPending && reimbursementRole === "finance") &&
       (!reimbursementFrom || item.advance_date >= reimbursementFrom) &&
       (!reimbursementTo || item.advance_date <= reimbursementTo),
     );
+  }
+  function reimbursementRows() {
+    return filteredReimbursementRows(true, true);
+  }
+  function reimbursementExportRows() {
+    return filteredReimbursementRows(false, false);
   }
   function resetReimbursementFilters() {
     reimbursementProject = "";
@@ -608,7 +711,7 @@ export function createOrderDesk(data: Data) {
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
-      throw new Error(body.detail || body.message || "批量更新失败");
+      throw new Error(body.error?.message || body.detail || body.message || "批量更新失败");
     }
     return (await response.json()).data as Array<any>;
   }
@@ -618,14 +721,14 @@ export function createOrderDesk(data: Data) {
     busy = true;
     try {
       await batchUpdateReimbursements(targets.map((item) => item.id), "待打款");
-      selectedReimbursementIds = [];
+      selectedReimbursementIds = selectedReimbursementIds.filter((id) => !targets.some((item) => item.id === id));
       await refresh();
       notify(`已确认 ${targets.length} 条报销，进入待付款队列`);
     } catch (e) { notify(e instanceof Error ? e.message : "批量审核失败", true); }
     finally { busy = false; }
   }
   async function exportReimbursements() {
-    const rows = reimbursementRows();
+    const rows = reimbursementExportRows();
     if (!rows.length) { notify("当前筛选没有可导出的报销记录", true); return; }
     const params = new URLSearchParams({ mode: "detail" });
     if (reimbursementProject) params.set("project", reimbursementProject);
@@ -638,35 +741,51 @@ export function createOrderDesk(data: Data) {
     window.location.href = `/api/reimbursements/export?${params}`;
     notify(`正在导出 ${rows.length} 条报销记录`);
   }
-  async function batchMarkReimbursed() {
+  function batchMarkReimbursed() {
     const targets = reimbursements.filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "待打款");
     if (!targets.length) { notify("请选择待打款记录", true); return; }
-    busy = true;
-    try {
-      await batchUpdateReimbursements(targets.map((item) => item.id), "已报销");
-      selectedReimbursementIds = [];
-      await refresh();
-      notify(`已标记 ${targets.length} 条报销记录为已报销`);
-    } catch (e) { notify(e instanceof Error ? e.message : "批量处理失败", true); }
-    finally { busy = false; }
+    const total = targets.reduce((sum, item: any) => sum + Number(item.advance_amount || 0), 0);
+    askConfirm("确认批量打款", `确认将 ${targets.length} 笔、合计 ${money(total)} 标记为已报销？此状态不能直接撤回。`, async () => {
+      busy = true;
+      try {
+        await batchUpdateReimbursements(targets.map((item) => item.id), "已报销");
+        selectedReimbursementIds = selectedReimbursementIds.filter((id) => !targets.some((item) => item.id === id));
+        await refresh();
+        notify(`已标记 ${targets.length} 条报销记录为已报销`);
+      } catch (e) { notify(e instanceof Error ? e.message : "批量处理失败", true); }
+      finally { busy = false; }
+    });
   }
   async function exportPaymentSummary() {
-    const rows = reimbursements.filter((item: any) => item.reimbursement_status === "待打款");
-    if (!rows.length) { notify("暂无待付款记录", true); return; }
-    window.location.href = `/api/reimbursements/export?mode=payment&actor=${encodeURIComponent(creatorName || "财务人员")}`;
-    notify("正在导出待付款汇总");
+    const rows = reimbursementSummaryRows.filter((item: any) => item.reimbursement_status === "待打款");
+    if (!rows.length) { notify("当前筛选暂无待付款记录", true); return; }
+    const params = new URLSearchParams({ mode: "payment", actor: creatorName || "财务人员" });
+    if (reimbursementProject) params.set("project", reimbursementProject);
+    if (reimbursementType) params.set("type", reimbursementType);
+    if (reimbursementFrom) params.set("from", reimbursementFrom);
+    if (reimbursementTo) params.set("to", reimbursementTo);
+    window.location.href = `/api/reimbursements/export?${params}`;
+    notify(`正在导出 ${rows.length} 条待付款记录`);
   }
-  async function markEmployeeReimbursed(employee: string) {
-    const targets = reimbursements.filter((item: any) => item.employee === employee && item.reimbursement_status === "待打款");
+  function selectEmployeePayments(employee: string) {
+    selectedReimbursementIds = reimbursementSummaryRows
+      .filter((item: any) => item.employee === employee && item.reimbursement_status === "待打款")
+      .map((item: any) => item.id);
+  }
+  function markEmployeeReimbursed(employee: string) {
+    const targets = reimbursementSummaryRows.filter((item: any) => item.employee === employee && item.reimbursement_status === "待打款");
     if (!targets.length) { notify("该员工暂无待付款报销", true); return; }
-    busy = true;
-    try {
-      await batchUpdateReimbursements(targets.map((item) => item.id), "已报销");
-      selectedReimbursementIds = selectedReimbursementIds.filter((id) => !targets.some((item) => item.id === id));
-      await refresh();
-      notify(`${employee} 已确认打款`);
-    } catch (e) { notify(e instanceof Error ? e.message : "确认打款失败", true); }
-    finally { busy = false; }
+    const total = targets.reduce((sum, item: any) => sum + Number(item.advance_amount || 0), 0);
+    askConfirm("确认已打款", `确认已向 ${employee} 支付 ${targets.length} 笔、合计 ${money(total)}？此状态不能直接撤回。`, async () => {
+      busy = true;
+      try {
+        await batchUpdateReimbursements(targets.map((item) => item.id), "已报销");
+        selectedReimbursementIds = selectedReimbursementIds.filter((id) => !targets.some((item) => item.id === id));
+        await refresh();
+        notify(`${employee} 已确认打款`);
+      } catch (e) { notify(e instanceof Error ? e.message : "确认打款失败", true); }
+      finally { busy = false; }
+    });
   }
   async function archiveReimbursementVoucher(item: any) {
     busy = true;
@@ -754,7 +873,7 @@ export function createOrderDesk(data: Data) {
       finally { busy = false; }
     });
   }
-  async function markReimbursement(item: Reimbursement, status: string) {
+  async function updateReimbursementStatus(item: Reimbursement, status: string) {
     busy = true;
     try {
       const response = await fetch(`/api/reimbursements/${encodeURIComponent(item.id)}`, {
@@ -762,14 +881,24 @@ export function createOrderDesk(data: Data) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status, actor: "财务人员" }),
       });
-      if (!response.ok) throw new Error((await response.json()).message || "状态更新失败");
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error?.message || payload.message || "状态更新失败");
+      }
       await refresh();
-      notify(status === "已报销" ? "已标记为已报销" : "已更新报销状态");
+      notify(status === "已报销" ? "已标记为已报销" : "已更新报销状态并生成单据");
     } catch (e) {
       notify(e instanceof Error ? e.message : "状态更新失败", true);
     } finally {
       busy = false;
     }
+  }
+  function markReimbursement(item: Reimbursement, status: string) {
+    if (status !== "已报销") {
+      void updateReimbursementStatus(item, status);
+      return;
+    }
+    askConfirm("确认已打款", `确认将“${(item as any).advance_item || item.service_name}”的 ${money(Number((item as any).advance_amount || 0))} 标记为已报销？`, () => updateReimbursementStatus(item, status));
   }
   function onNoteFilesChange(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
@@ -785,6 +914,7 @@ export function createOrderDesk(data: Data) {
     const kept = allowed.slice(0, room);
     const overflow = allowed.length - kept.length;
     noteFiles = [...noteFiles, ...kept];
+    if (kept.length) orderFormDirty = true;
     input.value = "";
     const messages: string[] = [];
     if (rejected.length)
@@ -796,6 +926,7 @@ export function createOrderDesk(data: Data) {
   }
   function removeNoteFile(index: number) {
     noteFiles = noteFiles.filter((_, i) => i !== index);
+    orderFormDirty = true;
   }
   function onAdvanceInvoiceChange(event: Event, index: number) {
     const input = event.currentTarget as HTMLInputElement;
@@ -815,23 +946,46 @@ export function createOrderDesk(data: Data) {
     }
     advances[index] = { ...advances[index], invoice: file.name, invoiceFile: file };
     advances = [...advances];
+    orderFormDirty = true;
     notify("发票已选择，保存订单时上传");
   }
   function removeAdvanceInvoice(index: number) {
     advances[index] = { ...advances[index], invoice: "", invoiceFile: null };
     advances = [...advances];
+    orderFormDirty = true;
   }
   async function uploadAttachments(orderId: string, savedAdvances: Array<Record<string, any>>, submittedAdvances: Array<Record<string, any>>) {
     const savedById = new Map(savedAdvances.map((advance) => [String(advance.id), advance]));
     const invoices = submittedAdvances.map((advance, index) => ({
       file: advance.invoiceFile as File | null,
+      submittedId: String(advance.id || ""),
       reimbursementId: savedById.get(String(advance.id))?.id || savedAdvances[index]?.id,
-    })).filter((item): item is { file: File; reimbursementId: string } => item.file instanceof File && Boolean(item.reimbursementId));
+    })).filter((item): item is { file: File; submittedId: string; reimbursementId: string } => item.file instanceof File && Boolean(item.reimbursementId));
     if (!noteFiles.length && !invoices.length) return;
     uploadingFiles = true;
+    const failures: string[] = [];
     try {
-      if (noteFiles.length) await postAttachments(orderId, noteFiles);
-      for (const invoice of invoices) await postReimbursementAttachment(invoice.reimbursementId, invoice.file);
+      for (const file of [...noteFiles]) {
+        try {
+          await postOrderAttachment(orderId, file);
+          noteFiles = noteFiles.filter((item) => item !== file);
+        } catch (reason) {
+          failures.push(`${file.name}：${reason instanceof Error ? reason.message : "上传失败"}`);
+        }
+      }
+      for (const invoice of invoices) {
+        try {
+          await postReimbursementAttachment(invoice.reimbursementId, invoice.file);
+          const index = advances.findIndex((advance) => String(advance.id || "") === invoice.submittedId);
+          if (index >= 0) {
+            advances[index] = { ...advances[index], invoiceFile: null };
+            advances = [...advances];
+          }
+        } catch (reason) {
+          failures.push(`${invoice.file.name}：${reason instanceof Error ? reason.message : "上传失败"}`);
+        }
+      }
+      if (failures.length) throw new Error(`订单已保存，但以下附件上传失败：${failures.join("；")}`);
     } finally {
       uploadingFiles = false;
     }
@@ -842,9 +996,9 @@ export function createOrderDesk(data: Data) {
     const response = await fetch(`/api/reimbursements/${encodeURIComponent(reimbursementId)}/attachments`, { method: "POST", body: form });
     if (!response.ok) throw new Error((await response.json()).message || "发票上传失败");
   }
-  async function postAttachments(orderId: string, files: File[]) {
+  async function postOrderAttachment(orderId: string, file: File) {
     const form = new FormData();
-    for (const file of files) form.append("files", file, file.name);
+    form.append("file", file, file.name);
     const response = await fetch(
       `/api/orders/${encodeURIComponent(orderId)}/attachments`,
       { method: "POST", body: form },
@@ -853,7 +1007,8 @@ export function createOrderDesk(data: Data) {
       const text = await response.text();
       let detail = `附件上传失败（HTTP ${response.status}）`;
       try {
-        detail = JSON.parse(text)?.detail || detail;
+        const payload = JSON.parse(text);
+        detail = payload?.error?.message || payload?.detail || payload?.message || detail;
       } catch {
         /* 非 JSON 错误响应 */
       }
@@ -893,8 +1048,13 @@ export function createOrderDesk(data: Data) {
       const result = editingOrderId
         ? await api.patch<{ data: Order }>(`/api/orders/${editingOrderId}`, payload)
         : await api.post<{ data: Order }>("/api/orders", payload);
-      await uploadAttachments(result.data.id, result.data.advances || [], validAdvances);
       await refresh();
+      try {
+        await uploadAttachments(result.data.id, result.data.advances || [], validAdvances);
+      } finally {
+        await refresh();
+      }
+      window.history.replaceState({}, "", "/orders");
       notify(
         submitMode === "reimburse" || advances.length
           ? "订单已提交报销，已进入报销核验"
@@ -924,6 +1084,7 @@ export function createOrderDesk(data: Data) {
       paymentStatus = "未结款";
       submitMode = "save";
       submitMenuOpen = false;
+      orderFormDirty = false;
     } catch (e) {
       notify(e instanceof Error ? e.message : "订单保存失败", true);
     } finally {
@@ -978,8 +1139,42 @@ export function createOrderDesk(data: Data) {
     catalogImportOwner = "";
     catalogImportPreview = null;
   }
+  function openCatalogSourceForm() {
+    catalogSourceName = "";
+    catalogSourceCopyId = "";
+    catalogSourceOpen = true;
+  }
+  async function createCatalogSourceFromForm() {
+    const owner = catalogSourceName.trim();
+    if (!owner) {
+      notify(`请填写${catalogKind === "quote" ? "客户公司" : "厂商"}名称`, true);
+      return;
+    }
+    busy = true;
+    try {
+      const result = await api.post<{ data: Record<string, any> }>("/api/catalog/sources", {
+        kind: catalogKind,
+        owner_name: owner,
+        copy_from_id: catalogSourceCopyId,
+        source_method: catalogSourceCopyId ? "copy" : "manual",
+        actor: creatorName || "财务人员",
+      });
+      await refresh();
+      catalogSourceId = String(result.data.id);
+      catalogSourceOpen = false;
+      notify(catalogSourceCopyId ? `已新增“${owner}”并沿用现有资料库` : `已新增“${owner}”，可继续上传配置文件`);
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "资料库来源创建失败", true);
+    } finally {
+      busy = false;
+    }
+  }
   async function confirmCatalogImport() {
     if (!catalogImportFile || !catalogImportPreview?.valid_rows) return;
+    if (catalogSourceId) {
+      const source = catalogSources.find((item) => item.id === catalogSourceId);
+      if (!window.confirm(`将用新文件替换“${source?.owner_name || "当前资料库"}”的全部有效条目，历史订单不受影响。确定继续吗？`)) return;
+    }
     if (!catalogSourceId && !catalogImportOwner.trim()) {
       notify(`请填写${catalogKind === "quote" ? "客户公司" : "厂商"}名称`, true);
       return;
@@ -1007,14 +1202,18 @@ export function createOrderDesk(data: Data) {
     } catch (e) { notify(e instanceof Error ? e.message : "文件导入失败", true); }
     finally { busy = false; }
   }
-  function openDetail(order: any) {
-    if (window.location.pathname !== `/orders/${order.id}`) window.history.pushState({}, '', `/orders/${order.id}`);
+  function openDetail(order: any, pushHistory = true) {
+    if (!order) return;
+    if (pushHistory && window.location.pathname !== `/orders/${order.id}`) window.history.pushState({}, '', `/orders/${order.id}`);
+    view = "overview";
+    editingOrderId = "";
+    orderFormDirty = false;
     detailOrder = order;
     detailAttachments = [];
     loadDetailAttachments(order.id);
   }
-  function editOrder(order: any) {
-    if (window.location.pathname !== `/orders/${order.id}/edit`) window.history.pushState({}, '', `/orders/${order.id}/edit`);
+  function editOrder(order: any, pushHistory = true) {
+    if (pushHistory && window.location.pathname !== `/orders/${order.id}/edit`) window.history.pushState({}, '', `/orders/${order.id}/edit`);
     editingOrderId = order.id;
     customerId = order.customer_id;
     projectId = order.project_id;
@@ -1038,14 +1237,16 @@ export function createOrderDesk(data: Data) {
     advances = order.advances || [];
     detailOrder = null;
     view = "entry";
+    orderFormDirty = false;
   }
-  function addProduct() { products = [...products, { name: "", quantity: 1, unit: "项", unit_price: 0, cost_unit: 0, subtotal: 0, specification: "" }]; }
-  function removeProduct(index: number) { products = products.filter((_, i) => i !== index); }
+  function addProduct() { products = [...products, { name: "", quantity: 1, unit: "项", unit_price: 0, cost_unit: 0, subtotal: 0, specification: "" }]; orderFormDirty = true; }
+  function removeProduct(index: number) { products = products.filter((_, i) => i !== index); orderFormDirty = true; }
   function updateProduct(index: number, key: string, value: unknown) {
     // 手动修改名称意味着不再对应库内条目，取消匹配状态与随库价格
     if (key === "name" && products[index]?.catalog_id) products[index] = { ...products[index], catalog_id: undefined };
     products[index] = { ...products[index], [key]: value };
     products = [...products];
+    orderFormDirty = true;
   }
   function findCatalogItem(name: string) {
     const keyword = name.trim().toLowerCase();
@@ -1058,34 +1259,40 @@ export function createOrderDesk(data: Data) {
     });
     return matches.sort((a, b) => (a.name.toLowerCase() === keyword ? -1 : 0) - (b.name.toLowerCase() === keyword ? -1 : 0))[0];
   }
-  function applyProductCatalog(index: number, name: string) {
-    const item = findCatalogItem(name);
-    if (!item) { updateProduct(index, "name", name); return; }
+  function applyProductCatalog(index: number, value: string) {
+    const item = catalog.find((entry) => entry.id === value) || findCatalogItem(value);
+    if (!item) { updateProduct(index, "name", value); return; }
     products[index] = { ...products[index], name: item.name, unit: item.unit, unit_price: (item.quote_unit / 100).toFixed(2), cost_unit: (item.cost_unit / 100).toFixed(2), specification: item.specification || "", catalog_id: item.id };
     products = [...products];
+    orderFormDirty = true;
   }
-  function addCost() { costs = [...costs, { name: "", vendor: "手工录入", unit: "项", quantity: 1, unit_price: 0, subtotal: 0 }]; }
-  function removeCost(index: number) { costs = costs.filter((_, i) => i !== index); }
+  function addCost() { costs = [...costs, { name: "", vendor: "手工录入", unit: "项", quantity: 1, unit_price: 0, subtotal: 0 }]; orderFormDirty = true; }
+  function removeCost(index: number) { costs = costs.filter((_, i) => i !== index); orderFormDirty = true; }
   function updateCost(index: number, key: string, value: unknown) {
     if (key === "name" && costs[index]?.catalog_id) costs[index] = { ...costs[index], catalog_id: undefined };
     costs[index] = { ...costs[index], [key]: value };
     costs = [...costs];
+    orderFormDirty = true;
   }
-  function applyCostCatalog(index: number, name: string) {
-    const keyword = name.trim().toLowerCase();
+  function applyCostCatalog(index: number, value: string) {
+    const selected = catalog.find((item) => item.id === value);
+    const keyword = (selected?.name || value).trim().toLowerCase();
     let found: { item: Catalog; vendor: string } | undefined;
-    for (const item of catalog) {
+    for (const item of selected ? [selected] : catalog) {
       const raw = (item.raw_data ? (() => { try { return JSON.parse(item.raw_data as string); } catch { return {}; } })() : {}) as Record<string, unknown>;
-      const vendor = String(raw.vendor || raw.supplier || (item as any).source_owner || item.supplier_remark || (item.source_type === "supplier_cost" ? (item as any).source_file?.match(/硕达|印客邦|[^】]+(?=202\d)/)?.[0] || "成本库" : ""));
+      const vendor = String(raw.vendor || raw.supplier || item.source_owner || item.supplier_remark || (item.source_type === "supplier_cost" ? item.source_file?.match(/硕达|印客邦|[^】]+(?=202\d)/)?.[0] || "成本库" : ""));
       const isCost = item.cost_unit > 0 && (!item.quote_unit || item.source_type === "supplier_cost");
       if (isCost && (item.name.toLowerCase() === keyword || item.name.toLowerCase().includes(keyword) || keyword.includes(item.name.toLowerCase()))) { found = { item, vendor }; break; }
     }
-    if (found) { costs[index] = { ...costs[index], name: found.item.name, vendor: found.vendor || "成本库", unit: found.item.unit, unit_price: (found.item.cost_unit / 100).toFixed(2), catalog_id: found.item.id }; costs = [...costs]; }
-    else updateCost(index, "name", name);
+    if (found) {
+      costs[index] = { ...costs[index], name: found.item.name, vendor: found.vendor || "成本库", unit: found.item.unit, unit_price: (found.item.cost_unit / 100).toFixed(2), catalog_id: found.item.id };
+      costs = [...costs];
+      orderFormDirty = true;
+    } else updateCost(index, "name", value);
   }
-  function addAdvance() { advances = [...advances, { id: crypto.randomUUID(), employee: designer || createdBy, item: "", amount: 0, date: orderDate, invoice: "", status: "待审核", invoiceFile: null as File | null }]; }
-  function removeAdvance(index: number) { advances = advances.filter((_, i) => i !== index); }
-  function updateAdvance(index: number, key: string, value: unknown) { advances[index] = { ...advances[index], [key]: value }; advances = [...advances]; }
+  function addAdvance() { advances = [...advances, { id: crypto.randomUUID(), employee: designer || createdBy, item: "", amount: 0, date: orderDate, invoice: "", status: "待审核", invoiceFile: null as File | null }]; orderFormDirty = true; }
+  function removeAdvance(index: number) { advances = advances.filter((_, i) => i !== index); orderFormDirty = true; }
+  function updateAdvance(index: number, key: string, value: unknown) { advances[index] = { ...advances[index], [key]: value }; advances = [...advances]; orderFormDirty = true; }
   function startNewOrder() {
     editingOrderId = "";
     submissionKey = crypto.randomUUID();
@@ -1117,7 +1324,12 @@ export function createOrderDesk(data: Data) {
     submitMode = "save";
     submitMenuOpen = false;
     view = "entry";
+    orderFormDirty = false;
   }
+  function canEditAdvance(advance: Record<string, unknown>) {
+    return !advance.status || advance.status === "待审核";
+  }
+  function markOrderDirty() { orderFormDirty = true; }
   function toggleOrder(id: string) {
     selectedOrderIds = selectedOrderIds.includes(id)
       ? selectedOrderIds.filter((item) => item !== id)
@@ -1137,8 +1349,13 @@ export function createOrderDesk(data: Data) {
     exportPartyA = first?.customer_name || "";
     exportPartyB = "";
     exportContract = "";
+    exportFollowA = first?.contact || "";
     exportFollowB = creatorName || "";
-    exportContactPhone = first?.contact || "";
+    exportContactPhone = "";
+    exportRemarkOrder = true;
+    exportExpand = true;
+    exportTotal = true;
+    exportSign = true;
     exportMode = "detail";
     showExport = true;
   }
@@ -1157,15 +1374,89 @@ export function createOrderDesk(data: Data) {
       contract: exportContract,
       partyA: exportPartyA,
       partyB: exportPartyB,
+      followA: exportFollowA,
       followB: exportFollowB,
       contactPhone: exportContactPhone,
       remarkOrder: String(exportRemarkOrder),
+      expand: String(exportExpand),
       total: String(exportTotal),
       sign: String(exportSign),
       actor: creatorName || "查看模式",
     });
     window.location.href = `/api/orders/export?${params}`;
     showExport = false;
+  }
+  async function copyExportTable() {
+    const selectedOrders = filteredOrders.filter((order) => selectedOrderIds.includes(order.id));
+    if (!selectedOrders.length) {
+      notify("请选择要复制的订单", true);
+      return;
+    }
+    const clean = (value: unknown) => String(value ?? "").replace(/[\t\r\n]+/g, " ");
+    const advanceAmount = (order: any) => (order.advances || []).reduce((sum: number, item: any) => sum + Number(item.amount || 0), 0);
+    const valueFor = (order: any, key: string, product?: any) => {
+      const productsForText = order.products || [];
+      const values: Record<string, unknown> = {
+        code: order.code, order_date: order.order_date, customer_name: order.customer_name,
+        project_name: order.project_name, project_owner: order.project_owner, customer_department: order.customer_department,
+        designer: order.designer, contact: order.contact, delivery_date: order.delivery_date,
+        payment_status: order.payment_status, service_name: order.service_name, quantity: order.quantity, unit: order.unit,
+        quote_amount: Number(order.quote_amount || 0) / 100, cost_amount: Number(order.cost_amount || 0) / 100,
+        advance_amount: advanceAmount(order), profit: Number(order.quote_amount || 0) / 100 - Number(order.cost_amount || 0) / 100 - advanceAmount(order),
+        created_by: order.created_by, status: order.status, note: order.note, reimbursement_status: order.reimbursement_status,
+        product_name: product?.name ?? productsForText.map((item: any) => item.name).join("、"),
+        product_specification: product?.specification ?? productsForText.map((item: any) => item.specification).filter(Boolean).join("；"),
+        product_quantity: product?.quantity ?? productsForText.map((item: any) => item.quantity).join("、"),
+        product_unit: product?.unit ?? productsForText.map((item: any) => item.unit).join("、"),
+        product_unit_price: product?.unit_price ?? productsForText.map((item: any) => item.unit_price).join("、"),
+        product_subtotal: product ? Number(product.quantity || 0) * Number(product.unit_price || 0) : Number(order.quote_amount || 0) / 100,
+      };
+      return clean(values[key]);
+    };
+    let lines: string[][];
+    if (exportMode === "settlement") {
+      lines = [["分类", "产品名称", "制作要求", "单位", "数量", "单价（元）", "金额（元）", "订单编号", "备注"]];
+      for (const order of selectedOrders) for (const product of order.products || []) lines.push([
+        product.category || "其他", product.name, product.specification || "", product.unit || "项", product.quantity,
+        product.unit_price, Number(product.quantity || 0) * Number(product.unit_price || 0), order.code,
+        exportRemarkOrder ? order.code : "",
+      ].map(clean));
+      if (exportTotal) lines.push(["合计", "", "", "", "", "", selectedOrders.reduce((sum, order) => sum + Number(order.quote_amount || 0) / 100, 0), "", ""].map(clean));
+      if (exportSign) lines.push(["甲方（盖章）", "", "", "乙方（盖章）", "", "", "", "", ""]);
+    } else {
+      const labels = new Map(exportColumns.map(([key, label]) => [key, label]));
+      lines = [selectedColumns.map((key) => labels.get(key) || key)];
+      for (const order of selectedOrders) {
+        const productsToWrite = exportExpand && order.products?.length ? order.products : [undefined];
+        for (const product of productsToWrite) lines.push(selectedColumns.map((key) => valueFor(order, key, product)));
+      }
+      if (exportTotal) {
+        const monetaryKeys = new Set(["quote_amount", "cost_amount", "advance_amount", "profit", "product_subtotal"]);
+        const labelKey = selectedColumns.find((key) => !monetaryKeys.has(key));
+        const quote = selectedOrders.reduce((sum, order) => sum + Number(order.quote_amount || 0) / 100, 0);
+        const cost = selectedOrders.reduce((sum, order) => sum + Number(order.cost_amount || 0) / 100, 0);
+        const advance = selectedOrders.reduce((sum, order) => sum + advanceAmount(order), 0);
+        const totals: Record<string, number> = { quote_amount: quote, cost_amount: cost, advance_amount: advance, profit: quote - cost - advance, product_subtotal: quote };
+        lines.push(selectedColumns.map((key) => key === labelKey ? "合计" : key in totals ? clean(totals[key]) : ""));
+      }
+    }
+    const text = lines.map((row) => row.join("\t")).join("\n");
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+      else {
+        const area = document.createElement("textarea");
+        area.value = text;
+        area.style.position = "fixed";
+        area.style.opacity = "0";
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand("copy");
+        area.remove();
+      }
+      notify(`已复制 ${lines.length - 1} 行表格，可直接粘贴到 Excel`);
+    } catch {
+      notify("复制失败，请改用下载 Excel", true);
+    }
   }
   function toggleColumn(key: string) {
     selectedColumns = selectedColumns.includes(key)
@@ -1245,19 +1536,22 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "message", { get: () => message, set: (value) => { message = value; } });
   Object.defineProperty(desk, "error", { get: () => error, set: (value) => { error = value; } });
   Object.defineProperty(desk, "reimbursementRole", { get: () => reimbursementRole, set: (value) => { setReimbursementRole(value); } });
-  Object.defineProperty(desk, "reimbursementProject", { get: () => reimbursementProject, set: (value) => { reimbursementProject = value; } });
-  Object.defineProperty(desk, "reimbursementPerson", { get: () => reimbursementPerson, set: (value) => { reimbursementPerson = value; } });
-  Object.defineProperty(desk, "reimbursementType", { get: () => reimbursementType, set: (value) => { reimbursementType = value; } });
-  Object.defineProperty(desk, "reimbursementStatus", { get: () => reimbursementStatus, set: (value) => { reimbursementStatus = value; } });
-  Object.defineProperty(desk, "reimbursementFrom", { get: () => reimbursementFrom, set: (value) => { reimbursementFrom = value; } });
-  Object.defineProperty(desk, "reimbursementTo", { get: () => reimbursementTo, set: (value) => { reimbursementTo = value; } });
+  Object.defineProperty(desk, "reimbursementProject", { get: () => reimbursementProject, set: (value) => { reimbursementProject = value; selectedReimbursementIds = []; } });
+  Object.defineProperty(desk, "reimbursementPerson", { get: () => reimbursementPerson, set: (value) => { reimbursementPerson = value; selectedReimbursementIds = []; } });
+  Object.defineProperty(desk, "reimbursementType", { get: () => reimbursementType, set: (value) => { reimbursementType = value; selectedReimbursementIds = []; } });
+  Object.defineProperty(desk, "reimbursementStatus", { get: () => reimbursementStatus, set: (value) => { reimbursementStatus = value; selectedReimbursementIds = []; } });
+  Object.defineProperty(desk, "reimbursementFrom", { get: () => reimbursementFrom, set: (value) => { reimbursementFrom = value; selectedReimbursementIds = []; } });
+  Object.defineProperty(desk, "reimbursementTo", { get: () => reimbursementTo, set: (value) => { reimbursementTo = value; selectedReimbursementIds = []; } });
   Object.defineProperty(desk, "search", { get: () => search, set: (value) => { search = value; } });
   Object.defineProperty(desk, "catalogSearch", { get: () => catalogSearch, set: (value) => { catalogSearch = value; } });
-  Object.defineProperty(desk, "catalogKind", { get: () => catalogKind, set: (value) => { catalogKind = value; catalogSourceId = ""; } });
+  Object.defineProperty(desk, "catalogKind", { get: () => catalogKind, set: (value) => { catalogKind = value; catalogSourceId = ""; catalogCategory = ""; } });
   Object.defineProperty(desk, "catalogSourceId", { get: () => catalogSourceId, set: (value) => { catalogSourceId = value; } });
   Object.defineProperty(desk, "catalogCategory", { get: () => catalogCategory, set: (value) => { catalogCategory = value; } });
   Object.defineProperty(desk, "catalogImportPreview", { get: () => catalogImportPreview });
   Object.defineProperty(desk, "catalogImportOwner", { get: () => catalogImportOwner, set: (value) => { catalogImportOwner = value; } });
+  Object.defineProperty(desk, "catalogSourceOpen", { get: () => catalogSourceOpen, set: (value) => { catalogSourceOpen = value; } });
+  Object.defineProperty(desk, "catalogSourceName", { get: () => catalogSourceName, set: (value) => { catalogSourceName = value; } });
+  Object.defineProperty(desk, "catalogSourceCopyId", { get: () => catalogSourceCopyId, set: (value) => { catalogSourceCopyId = value; } });
   Object.defineProperty(desk, "reimbursementRejectOpen", { get: () => reimbursementRejectOpen, set: (value) => { reimbursementRejectOpen = value; } });
   Object.defineProperty(desk, "reimbursementRejectReason", { get: () => reimbursementRejectReason, set: (value) => { reimbursementRejectReason = value; } });
   Object.defineProperty(desk, "reimbursementRejectCount", { get: () => reimbursementRejectIds.length });
@@ -1281,9 +1575,11 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "exportContract", { get: () => exportContract, set: (value) => { exportContract = value; } });
   Object.defineProperty(desk, "exportPartyA", { get: () => exportPartyA, set: (value) => { exportPartyA = value; } });
   Object.defineProperty(desk, "exportPartyB", { get: () => exportPartyB, set: (value) => { exportPartyB = value; } });
+  Object.defineProperty(desk, "exportFollowA", { get: () => exportFollowA, set: (value) => { exportFollowA = value; } });
   Object.defineProperty(desk, "exportFollowB", { get: () => exportFollowB, set: (value) => { exportFollowB = value; } });
   Object.defineProperty(desk, "exportContactPhone", { get: () => exportContactPhone, set: (value) => { exportContactPhone = value; } });
   Object.defineProperty(desk, "exportRemarkOrder", { get: () => exportRemarkOrder, set: (value) => { exportRemarkOrder = value; } });
+  Object.defineProperty(desk, "exportExpand", { get: () => exportExpand, set: (value) => { exportExpand = value; } });
   Object.defineProperty(desk, "exportTotal", { get: () => exportTotal, set: (value) => { exportTotal = value; } });
   Object.defineProperty(desk, "exportSign", { get: () => exportSign, set: (value) => { exportSign = value; } });
   Object.defineProperty(desk, "showOrderFilters", { get: () => showOrderFilters, set: (value) => { showOrderFilters = value; } });
@@ -1321,6 +1617,8 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "reimbursementRowsForRole", { get: () => reimbursementRowsForRole });
   Object.defineProperty(desk, "reimbursementRows", { get: () => reimbursementRows });
   Object.defineProperty(desk, "reimbursementPaymentSummary", { get: () => reimbursementPaymentSummary });
+  Object.defineProperty(desk, "selectedPendingReviewCount", { get: () => selectedPendingReviewCount });
+  Object.defineProperty(desk, "selectedPendingPaymentCount", { get: () => selectedPendingPaymentCount });
   Object.defineProperty(desk, "reimbursementVouchers", { get: () => reimbursementVouchers });
   Object.defineProperty(desk, "creators", { get: () => creators });
   desk.money = money;
@@ -1331,6 +1629,7 @@ export function createOrderDesk(data: Data) {
   desk.openStandaloneReimbursement = openStandaloneReimbursement;
   desk.exportReimbursements = exportReimbursements;
   desk.batchMarkReimbursed = batchMarkReimbursed;
+  desk.selectEmployeePayments = selectEmployeePayments;
   desk.markEmployeeReimbursed = markEmployeeReimbursed;
   desk.exportPaymentSummary = exportPaymentSummary;
   desk.batchReviewReimbursements = batchReviewReimbursements;
@@ -1348,6 +1647,8 @@ export function createOrderDesk(data: Data) {
   desk.submitOrder = submitOrder;
   desk.submitProject = submitProject;
   desk.importFile = importFile;
+  desk.openCatalogSourceForm = openCatalogSourceForm;
+  desk.createCatalogSourceFromForm = createCatalogSourceFromForm;
   desk.confirmCatalogImport = confirmCatalogImport;
   desk.cancelCatalogImport = cancelCatalogImport;
   desk.confirmRejectReimbursements = confirmRejectReimbursements;
@@ -1356,9 +1657,11 @@ export function createOrderDesk(data: Data) {
   desk.toggleFilteredOrders = toggleFilteredOrders;
   desk.openExport = openExport;
   desk.downloadExport = downloadExport;
+  desk.copyExportTable = copyExportTable;
   desk.toggleColumn = toggleColumn;
   desk.toggleOrderColumn = toggleOrderColumn;
   desk.resetOrderFilters = resetOrderFilters;
+  desk.onFilterCustomerChange = onFilterCustomerChange;
   desk.deleteOrder = deleteOrder;
   desk.openDetail = openDetail;
   desk.fetchAttachments = async (orderId: string) => {
@@ -1393,6 +1696,8 @@ export function createOrderDesk(data: Data) {
   desk.addAdvance = addAdvance;
   desk.removeAdvance = removeAdvance;
   desk.updateAdvance = updateAdvance;
+  desk.canEditAdvance = canEditAdvance;
+  desk.markOrderDirty = markOrderDirty;
   desk.closeSubmitMenu = closeSubmitMenu;
   desk.onServiceInput = onServiceInput;
   desk.onCustomerChange = onCustomerChange;

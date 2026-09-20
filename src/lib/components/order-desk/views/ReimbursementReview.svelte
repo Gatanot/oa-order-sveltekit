@@ -32,7 +32,7 @@
       <h2>{desk.reimbursementRole === "finance" ? "报销审核与付款" : "我的报销"}</h2>
       <span>{desk.reimbursementRole === "finance" ? "审核员工提交的报销，并集中处理待付款记录。" : "查看本人提交的报销记录和当前处理进度。"}</span>
     </div>
-    {#if desk.canWrite}<div class="top-actions"><button class="primary-action" type="button" onclick={desk.openStandaloneReimbursement}><Paperclip size={15} />新建报销</button></div>{/if}
+    {#if desk.canWrite || desk.canFinance}<div class="top-actions"><button class="primary-action" type="button" onclick={desk.openStandaloneReimbursement}><Paperclip size={15} />{desk.canFinance ? "代员工录入" : "新建报销"}</button></div>{/if}
   </div>
   <div class="summary-row reimbursement-summary">
     {#if desk.reimbursementRole === "finance"}
@@ -54,18 +54,18 @@
     {#if desk.reimbursementRole === "finance"}<label class="field"><span>选择员工</span><select bind:value={desk.reimbursementPerson}><option value="">请选择员工</option>{#each desk.reimbursementPeople as person}<option value={person}>{person}</option>{/each}</select></label>{/if}
     <label class="field"><span>项目</span><select bind:value={desk.reimbursementProject}><option value="">全部项目</option>{#each desk.projects as project}<option value={project.id}>{project.name}</option>{/each}</select></label>
     <label class="field"><span>类型</span><select bind:value={desk.reimbursementType}><option value="">全部类型</option><option value="order">订单报销</option><option value="internal">内务报销</option></select></label>
-    <label class="field"><span>状态</span><select bind:value={desk.reimbursementStatus}><option value="">全部状态</option><option value="待审核">待审核</option><option value="已打回">已打回</option><option value="待打款">待打款</option><option value="已报销">已报销</option></select></label>
+    <label class="field"><span>状态</span><select bind:value={desk.reimbursementStatus}><option value="">{desk.reimbursementRole === "finance" ? "待处理" : "全部状态"}</option><option value="未报销">未报销</option><option value="待审核">待审核</option><option value="已打回">已打回</option><option value="待打款">待打款</option><option value="已报销">已报销</option></select></label>
     <label class="field"><span>开始日期</span><input class="date-input" type="date" bind:value={desk.reimbursementFrom} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} /></label>
     <label class="field"><span>结束日期</span><input class="date-input" type="date" bind:value={desk.reimbursementTo} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} /></label>
   </div>
-  <div class="reimbursement-actions"><span class="role-context">当前：{desk.reimbursementRole === "finance" ? (desk.reimbursementPerson ? `${desk.reimbursementPerson} 的未完成报销` : "请选择员工后显示审核队列") : `当前账号：${desk.creatorName || "未设置填写人"}`}</span>{#if desk.reimbursementRole === "finance"}<button class="outline-action" type="button" onclick={desk.exportReimbursements}>导出明细</button>{/if}<button class="outline-action" type="button" onclick={desk.resetReimbursementFilters}>重置筛选</button>{#if desk.reimbursementRole === "finance"}<button class="outline-action" type="button" disabled={!desk.selectedReimbursementIds.length || desk.busy} onclick={desk.batchReviewReimbursements}>批量确认（{desk.selectedReimbursementIds.length}）</button><button class="delete-action" type="button" disabled={!desk.selectedReimbursementIds.length || desk.busy} onclick={desk.batchRejectReimbursements}>批量打回</button><button class="primary-action" type="button" disabled={!desk.selectedReimbursementIds.length || desk.busy} onclick={desk.batchMarkReimbursed}>批量标记已报销</button>{/if}</div>
+  <div class="reimbursement-actions"><span class="role-context">当前：{desk.reimbursementRole === "finance" ? (desk.reimbursementPerson ? `${desk.reimbursementPerson} 的报销队列` : "请选择员工后显示审核队列；导出不受此限制") : `当前账号：${desk.creatorName || "未设置填写人"}`}</span>{#if desk.reimbursementRole === "finance"}<button class="outline-action" type="button" onclick={desk.exportReimbursements}>导出当前筛选</button>{/if}<button class="outline-action" type="button" onclick={desk.resetReimbursementFilters}>重置筛选</button>{#if desk.reimbursementRole === "finance"}<button class="outline-action" type="button" disabled={!desk.selectedPendingReviewCount || desk.busy} onclick={desk.batchReviewReimbursements}>批量确认（{desk.selectedPendingReviewCount}）</button><button class="delete-action" type="button" disabled={!desk.selectedPendingReviewCount || desk.busy} onclick={desk.batchRejectReimbursements}>批量打回（{desk.selectedPendingReviewCount}）</button><button class="primary-action" type="button" disabled={!desk.selectedPendingPaymentCount || desk.busy} onclick={desk.batchMarkReimbursed}>确认已打款（{desk.selectedPendingPaymentCount}）</button>{/if}</div>
   {#if desk.reimbursementRole === "finance"}
     <section class="finance-workbench" aria-label="财务付款与单据归档">
       <div class="finance-workbench-head"><div><b>最近应付汇总单</b><span>按员工汇总已确认、尚未打款的报销，供财务核对后付款</span></div><div class="finance-head-actions"><strong>{desk.reimbursementStats.pendingPay} 笔 · {desk.money(desk.reimbursementStats.pendingPayAmount)}</strong><button class="outline-action" type="button" onclick={desk.exportPaymentSummary}>导出打款单</button></div></div>
       <div class="payment-summary-list">
         {#each desk.reimbursementPaymentSummary as group}
           <div class="payment-summary-item">
-            <button class="payment-summary-select" type="button" onclick={() => desk.selectedReimbursementIds = desk.reimbursements.filter((item: any) => item.reimbursement_status === "待打款" && item.employee === group.employee).map((item: any) => item.id)}>
+            <button class="payment-summary-select" type="button" onclick={() => desk.selectEmployeePayments(group.employee)}>
               <span><b>{group.employee}</b><small>{group.count} 笔待付款</small></span><strong>{desk.money(group.amount)}</strong>
             </button>
             <button class="link-action" type="button" disabled={desk.busy} onclick={() => desk.markEmployeeReimbursed(group.employee)}>确认已打款</button>
@@ -86,7 +86,7 @@
           ></thead
         ><tbody
           >{#each desk.reimbursementRows() as item}<tr
-              ><td><input type="checkbox" aria-label={`选择报销 ${item.advance_item || item.item}`} disabled={desk.reimbursementRole !== "finance" || item.reimbursement_status !== "待审核"} checked={desk.selectedReimbursementIds.includes(item.id)} onchange={() => desk.toggleReimbursement(item.id)} /></td><td>{#if item.order_id}<button class="link-action" type="button" onclick={() => desk.openDetail(desk.orders.find((order: any) => order.id === item.order_id))}><b>{item.code}</b></button>{:else}<b class="muted">内务报销</b>{/if}</td><td
+              ><td><input type="checkbox" aria-label={`选择报销 ${item.advance_item || item.item}`} disabled={desk.reimbursementRole !== "finance" || !["待审核", "待打款"].includes(item.reimbursement_status)} checked={desk.selectedReimbursementIds.includes(item.id)} onchange={() => desk.toggleReimbursement(item.id)} /></td><td>{#if item.order_id}<button class="link-action" type="button" onclick={() => desk.openDetail(desk.orders.find((order: any) => order.id === item.order_id))}><b>{item.code}</b></button>{:else}<b class="muted">内务报销</b>{/if}</td><td
                 ><b>{item.project_name}</b><small>{item.employee}</small></td
               ><td>{item.advance_date}</td><td>{item.advance_item || "—"}</td><td
                 class="money">{desk.money(item.advance_amount)}</td
