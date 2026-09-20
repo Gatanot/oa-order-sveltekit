@@ -2487,9 +2487,144 @@ tbody tr:hover,
   background: #fff;
 }
 
+.workflow-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 22px 0 10px;
+  padding: 12px 14px;
+  border: 1px solid #dbe3f0;
+  border-radius: 10px;
+  background: #f8faff;
+}
+
+.workflow-section-heading > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.workflow-section-heading > div > div {
+  display: grid;
+  gap: 2px;
+}
+
+.workflow-section-heading b {
+  color: var(--navy);
+  font-size: 14px;
+}
+
+.workflow-section-heading small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.workflow-section-heading > strong {
+  color: var(--blue);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.workflow-step {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--blue);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.payment-workflow-heading {
+  margin-top: 24px;
+  border-color: #cfe4dc;
+  background: #f4fbf8;
+}
+
+.payment-workflow-heading .workflow-step {
+  background: #087466;
+}
+
+.payment-workflow-heading > strong {
+  color: #087466;
+}
+
+.reimbursement-review-table {
+  margin-bottom: 0;
+}
+
 .finance-workbench {
   margin: 18px 0;
   border-radius: var(--radius-md);
+}
+
+.payment-workbench {
+  margin-top: 0;
+}
+
+.voucher-archive {
+  overflow: hidden;
+}
+
+.voucher-archive > summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.voucher-archive > summary::-webkit-details-marker {
+  display: none;
+}
+
+.voucher-archive > summary:hover {
+  background: #f2f5f9;
+}
+
+.voucher-archive > summary:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
+
+.archive-summary-meta {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+}
+
+.archive-toggle-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--blue) !important;
+  font-weight: 700;
+}
+
+.archive-toggle-label::after {
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  content: "";
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform .16s ease;
+}
+
+.voucher-archive[open] .archive-toggle-label::after {
+  transform: rotate(225deg) translate(-1px, -1px);
+}
+
+.voucher-archive[open] .archive-toggle-label {
+  font-size: 0;
+}
+
+.voucher-archive[open] .archive-toggle-label::before {
+  content: "收起存档";
+  font-size: 11px;
 }
 
 .finance-workbench-head {
@@ -2794,6 +2929,201 @@ tbody tr:hover,
 .attachment-toggle:hover {
   border-color: var(--blue);
   background: #f1f5ff;
+}
+
+button.attachment-link {
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.local-preview-action {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+/* Attachment preview */
+.attachment-preview-backdrop {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 22px;
+  background: rgba(16, 24, 40, .7);
+  backdrop-filter: blur(3px);
+}
+
+.attachment-preview-modal {
+  display: flex;
+  width: min(1120px, 96vw);
+  height: min(840px, 94vh);
+  min-height: 420px;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(16, 24, 40, .36);
+}
+
+.attachment-preview-head,
+.attachment-preview-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px 20px;
+  background: #fff;
+}
+
+.attachment-preview-head {
+  border-bottom: 1px solid var(--line);
+}
+
+.attachment-preview-head > div {
+  min-width: 0;
+}
+
+.attachment-preview-head h2 {
+  overflow: hidden;
+  margin: 2px 0 2px;
+  color: var(--navy);
+  font-size: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-preview-head span,
+.attachment-preview-footer > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.attachment-preview-body {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  padding: 18px;
+  background: #e9edf3;
+}
+
+.attachment-preview-body.preview-loading {
+  background: #f4f6f9;
+}
+
+.attachment-preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 4px;
+  background: #fff;
+  box-shadow: 0 8px 28px rgba(16, 24, 40, .16);
+}
+
+.attachment-preview-frame {
+  width: 100%;
+  height: 100%;
+  min-height: 520px;
+  border: 0;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.attachment-preview-state {
+  display: flex;
+  max-width: 440px;
+  align-items: center;
+  flex-direction: column;
+  gap: 8px;
+  padding: 34px;
+  color: #536176;
+  text-align: center;
+}
+
+.attachment-preview-state b {
+  color: var(--navy);
+  font-size: 16px;
+}
+
+.attachment-preview-state span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.attachment-preview-state.preview-error {
+  color: var(--red);
+}
+
+.preview-spinner {
+  animation: attachment-preview-spin .8s linear infinite;
+}
+
+@keyframes attachment-preview-spin {
+  to { transform: rotate(360deg); }
+}
+
+.attachment-preview-footer {
+  border-top: 1px solid var(--line);
+  background: #f8fafc;
+}
+
+.attachment-preview-footer > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.attachment-preview-footer a.primary-action {
+  text-decoration: none;
+}
+
+@media (max-width: 700px) {
+  .attachment-preview-backdrop {
+    padding: 0;
+  }
+
+  .attachment-preview-modal {
+    width: 100vw;
+    height: 100dvh;
+    min-height: 0;
+    border-radius: 0;
+  }
+
+  .attachment-preview-head,
+  .attachment-preview-footer {
+    padding: 12px;
+  }
+
+  .attachment-preview-body {
+    padding: 8px;
+  }
+
+  .attachment-preview-frame {
+    min-height: 0;
+  }
+
+  .attachment-preview-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .attachment-preview-footer > div {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .attachment-preview-footer > div > :last-child {
+    grid-column: 1 / -1;
+  }
 }
 
 /* Normalize native controls and keep icon-only actions square. */

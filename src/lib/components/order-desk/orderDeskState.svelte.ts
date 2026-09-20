@@ -105,6 +105,13 @@ export function createOrderDesk(data: Data) {
   let detailOrder = $state<any>(null);
   let detailAttachments = $state<any[]>([]);
   let detailAttachmentsLoading = $state(false);
+  let attachmentPreviewOpen = $state(false);
+  let attachmentPreviewLoading = $state(false);
+  let attachmentPreviewError = $state("");
+  let attachmentPreviewUrl = $state("");
+  let attachmentPreviewName = $state("");
+  let attachmentPreviewMime = $state("");
+  let attachmentPreviewRequest = 0;
   let uploadingFiles = $state(false);
   let creatorName = $state("");
   let creatorNameDraft = $state("");
@@ -426,6 +433,10 @@ export function createOrderDesk(data: Data) {
     let restoringHistory = false;
     const escape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      if (attachmentPreviewOpen) {
+        closeAttachmentPreview();
+        return;
+      }
       showExport = false;
       showOrderFilters = false;
       showStandaloneReimbursement = false;
@@ -459,8 +470,57 @@ export function createOrderDesk(data: Data) {
       window.removeEventListener("keydown", escape);
       window.removeEventListener("beforeunload", beforeUnload);
       window.removeEventListener("popstate", popstate);
+      releaseAttachmentPreviewUrl();
     };
   });
+  function releaseAttachmentPreviewUrl() {
+    if (attachmentPreviewUrl.startsWith("blob:")) URL.revokeObjectURL(attachmentPreviewUrl);
+    attachmentPreviewUrl = "";
+  }
+  function closeAttachmentPreview() {
+    attachmentPreviewRequest++;
+    releaseAttachmentPreviewUrl();
+    attachmentPreviewOpen = false;
+    attachmentPreviewLoading = false;
+    attachmentPreviewError = "";
+    attachmentPreviewName = "";
+    attachmentPreviewMime = "";
+  }
+  async function openAttachmentPreview(url: string, name = "附件", mime = "") {
+    const requestId = ++attachmentPreviewRequest;
+    releaseAttachmentPreviewUrl();
+    attachmentPreviewOpen = true;
+    attachmentPreviewLoading = true;
+    attachmentPreviewError = "";
+    attachmentPreviewName = name || "附件";
+    attachmentPreviewMime = mime;
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.message || `附件加载失败（HTTP ${response.status}）`);
+      }
+      const blob = await response.blob();
+      if (requestId !== attachmentPreviewRequest) return;
+      attachmentPreviewMime = response.headers.get("content-type")?.split(";")[0] || blob.type || mime || "application/octet-stream";
+      attachmentPreviewUrl = URL.createObjectURL(blob);
+    } catch (reason) {
+      if (requestId !== attachmentPreviewRequest) return;
+      attachmentPreviewError = reason instanceof Error ? reason.message : "附件加载失败";
+    } finally {
+      if (requestId === attachmentPreviewRequest) attachmentPreviewLoading = false;
+    }
+  }
+  function openLocalAttachmentPreview(file: File) {
+    attachmentPreviewRequest++;
+    releaseAttachmentPreviewUrl();
+    attachmentPreviewOpen = true;
+    attachmentPreviewLoading = false;
+    attachmentPreviewError = "";
+    attachmentPreviewName = file.name || "附件";
+    attachmentPreviewMime = file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "application/octet-stream");
+    attachmentPreviewUrl = URL.createObjectURL(file);
+  }
   function saveCreatorName() {
     creatorName = creatorNameDraft.trim();
     createdBy = creatorName;
@@ -616,7 +676,7 @@ export function createOrderDesk(data: Data) {
     );
   }
   function reimbursementRows() {
-    return filteredReimbursementRows(true, true);
+    return filteredReimbursementRows(false, true);
   }
   function reimbursementExportRows() {
     return filteredReimbursementRows(false, false);
@@ -650,7 +710,7 @@ export function createOrderDesk(data: Data) {
       await batchUpdateReimbursements(targets.map((item) => item.id), "待打款");
       selectedReimbursementIds = selectedReimbursementIds.filter((id) => !targets.some((item) => item.id === id));
       await refresh();
-      notify(`已确认 ${targets.length} 条报销，进入待付款队列`);
+      notify(`已审核通过 ${targets.length} 条报销，进入待打款队列`);
     } catch (e) { notify(e instanceof Error ? e.message : "批量审核失败", true); }
     finally { busy = false; }
   }
@@ -817,7 +877,7 @@ export function createOrderDesk(data: Data) {
         throw new Error(payload.error?.message || payload.message || "状态更新失败");
       }
       await refresh();
-      notify(status === "已报销" ? "已标记为已报销" : "已更新报销状态并生成单据");
+      notify(status === "已报销" ? "已标记为已报销" : status === "待打款" ? "报销已审核通过，进入待打款队列" : "已更新报销状态");
     } catch (e) {
       notify(e instanceof Error ? e.message : "状态更新失败", true);
     } finally {
@@ -1446,6 +1506,12 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "detailOrder", { get: () => detailOrder, set: (value) => { detailOrder = value; } });
   Object.defineProperty(desk, "detailAttachments", { get: () => detailAttachments });
   Object.defineProperty(desk, "detailAttachmentsLoading", { get: () => detailAttachmentsLoading });
+  Object.defineProperty(desk, "attachmentPreviewOpen", { get: () => attachmentPreviewOpen });
+  Object.defineProperty(desk, "attachmentPreviewLoading", { get: () => attachmentPreviewLoading });
+  Object.defineProperty(desk, "attachmentPreviewError", { get: () => attachmentPreviewError });
+  Object.defineProperty(desk, "attachmentPreviewUrl", { get: () => attachmentPreviewUrl });
+  Object.defineProperty(desk, "attachmentPreviewName", { get: () => attachmentPreviewName });
+  Object.defineProperty(desk, "attachmentPreviewMime", { get: () => attachmentPreviewMime });
   Object.defineProperty(desk, "uploadingFiles", { get: () => uploadingFiles, set: (value) => { uploadingFiles = value; } });
   Object.defineProperty(desk, "creatorName", { get: () => creatorName, set: (value) => { creatorName = value; } });
   Object.defineProperty(desk, "creatorNameDraft", { get: () => creatorNameDraft, set: (value) => { creatorNameDraft = value; } });
@@ -1587,6 +1653,9 @@ export function createOrderDesk(data: Data) {
   desk.onNoteFilesChange = onNoteFilesChange;
   desk.attachmentUrl = attachmentUrl;
   desk.reimbursementAttachmentUrl = reimbursementAttachmentUrl;
+  desk.openAttachmentPreview = openAttachmentPreview;
+  desk.openLocalAttachmentPreview = openLocalAttachmentPreview;
+  desk.closeAttachmentPreview = closeAttachmentPreview;
   desk.formatFileSize = formatFileSize;
   desk.editOrder = editOrder;
   desk.startNewOrder = startNewOrder;

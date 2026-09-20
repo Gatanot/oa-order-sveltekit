@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import Database from 'better-sqlite3';
 import * as XLSX from 'xlsx';
+import { strFromU8, unzipSync } from 'fflate';
 
 const directory = mkdtempSync(join(tmpdir(), 'oa-order-test-'));
 const databasePath = join(directory, 'oa.db');
@@ -103,14 +104,19 @@ try {
   assert.equal(exportRows[2][0], '合计');
   result = await request(`/api/orders/export?ids=${encodeURIComponent(orderId)}&mode=settlement&followA=${encodeURIComponent('甲方联系人')}&followB=${encodeURIComponent('乙方跟进人')}&contactPhone=123456&actor=财务甲`);
   assert.equal(result.response.status, 200);
-  workbook = XLSX.read(Buffer.from(result.data), { type: 'buffer', cellStyles: true, cellFormula: true });
+  const settlementBuffer = Buffer.from(result.data);
+  workbook = XLSX.read(settlementBuffer, { type: 'buffer', cellStyles: true, cellFormula: true });
   const settlementSheet = workbook.Sheets[workbook.SheetNames[0]];
+  const settlementXml = strFromU8(unzipSync(settlementBuffer)['xl/worksheets/sheet1.xml']);
   exportRows = XLSX.utils.sheet_to_json(settlementSheet, { header: 1, defval: '' });
   assert.equal(workbook.SheetNames[0], '结算', '结算单工作表名称应与模板一致');
   assert.deepEqual(exportRows[6].slice(0, 8), ['序号', '产品名称', '单位', '数量', '规格和技术要求', '含税单价(元）', '小计（元）', '备注']);
   assert.match(String(exportRows.flat().find((cell) => String(cell).includes('甲方项目跟进人')) || ''), /甲方联系人/);
   assert.ok((settlementSheet['!merges'] || []).some((merge) => merge.s.r === 0 && merge.s.c === 0 && merge.e.r === 0 && merge.e.c === 8), '结算单标题应合并 A1:I1');
   assert.ok((settlementSheet['!cols'] || []).length >= 9, '结算单应保留模板的九列布局');
+  assert.ok(settlementSheet['!cols'][4].wch / settlementSheet['!cols'][1].wch > 2.7, '结算单规格列宽应复刻模板比例');
+  assert.match(settlementXml, /<pageSetup[^>]*paperSize="9"[^>]*orientation="portrait"[^>]*fitToWidth="1"/, '结算单应使用 A4 纵向并缩放到一页宽');
+  assert.doesNotMatch(settlementXml, /<fgColor rgb="(?:E7E6E6|D9EAD3|FFF2CC)"/, '结算单不应保留旧版彩色填充');
   assert.ok(Object.values(settlementSheet).some((cell) => cell && typeof cell === 'object' && 'f' in cell && String(cell.f).includes('SUM(G')), '结算单应包含分类小计公式');
 
   result = await request('/api/reimbursements', { method: 'POST', json: { employee: '填写人甲', item: '无效零金额', amount: '0', advance_date: '2026-09-16', order_id: orderId } });

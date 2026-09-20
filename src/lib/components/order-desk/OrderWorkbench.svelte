@@ -8,6 +8,7 @@
   import ReimbursementReview from './views/ReimbursementReview.svelte';
   import CatalogLibrary from './views/CatalogLibrary.svelte';
   import OrderDeskModals from './OrderDeskModals.svelte';
+  import AttachmentPreviewModal from './AttachmentPreviewModal.svelte';
 
   let { data, initialView = 'overview', orderId = '', edit = false }: { data: Data; initialView?: 'overview' | 'entry' | 'catalog' | 'finance'; orderId?: string; edit?: boolean } = $props();
   const desk = createOrderDesk(data);
@@ -38,3 +39,4 @@
   </main>
 </div>
 <OrderDeskModals />
+<AttachmentPreviewModal />

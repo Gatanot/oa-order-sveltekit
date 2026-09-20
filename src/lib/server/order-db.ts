@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import * as XLSX from 'xlsx';
 import XLSXStyle from 'xlsx-js-style';
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 
 export const databasePath = resolve(process.env.DATABASE_PATH || './data/oa.db');
 export const attachmentDir = resolve(dirname(databasePath), 'attachments');
@@ -634,62 +635,130 @@ export function exportOrders(filters: Record<string, string>) {
     }
 
     const sheet = XLSXStyle.utils.aoa_to_sheet(detailRows) as any;
-    const thinBorder = { style: 'thin', color: { rgb: '000000' } };
-    const bordered = { top: thinBorder, bottom: thinBorder, left: thinBorder, right: thinBorder };
     const fontName = '宋体';
+    const thin = { style: 'thin', color: { rgb: '000000' } };
+    const border = { top: thin, bottom: thin, left: thin, right: thin };
     const ensureCell = (row: number, column: number) => {
       const address = XLSXStyle.utils.encode_cell({ r: row, c: column });
       if (!sheet[address]) sheet[address] = { t: 's', v: '' };
       return sheet[address];
     };
-    const applyRange = (startRow: number, endRow: number, style: Record<string, unknown>) => {
-      for (let row = startRow; row <= endRow; row++) for (let column = 0; column <= 8; column++) {
-        const cell = ensureCell(row, column);
-        cell.s = { ...(cell.s || {}), ...style };
-      }
+    const applyRowStyle = (row: number, style: Record<string, unknown>) => {
+      for (let column = 0; column <= 8; column++) ensureCell(row, column).s = style;
     };
+    const tableStyle = {
+      font: { name: fontName, sz: 10 },
+      alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+      border,
+    };
+    const rowHeights = detailRows.map(() => ({ hpt: 24 }));
 
-    applyRange(0, detailRows.length - 1, { font: { name: fontName, sz: 11 }, alignment: { vertical: 'center', wrapText: true } });
-    ensureCell(0, 0).s = { font: { name: fontName, sz: 20, bold: true }, alignment: { horizontal: 'center', vertical: 'center' } };
-    for (let row = 1; row <= 5; row++) ensureCell(row, 0).s = { font: { name: fontName, sz: 11 }, alignment: { horizontal: 'left', vertical: 'center' } };
-    applyRange(6, 6, { font: { name: fontName, sz: 11, bold: true }, alignment: { horizontal: 'center', vertical: 'center', wrapText: true }, border: bordered, fill: { fgColor: { rgb: 'E7E6E6' } } });
+    // Match excel/结算表.xls: one monochrome portrait table, including the
+    // title and party information, with no decorative fills.
+    for (let row = 0; row < detailRows.length; row++) applyRowStyle(row, tableStyle);
+    applyRowStyle(0, {
+      font: { name: fontName, sz: 20 },
+      alignment: { horizontal: 'center', vertical: 'center' },
+      border,
+    });
+    rowHeights[0] = { hpt: 34 };
+    for (let row = 1; row <= 5; row++) {
+      applyRowStyle(row, {
+        font: { name: fontName, sz: 10 },
+        alignment: { horizontal: 'left', vertical: 'center' },
+        border,
+      });
+      rowHeights[row] = { hpt: 21 };
+    }
+    applyRowStyle(6, {
+      font: { name: fontName, sz: 10, bold: true },
+      alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+      border,
+    });
+    rowHeights[6] = { hpt: 36 };
 
     let cursor = 7;
     for (const rows of categories.values()) {
-      applyRange(cursor, cursor, { font: { name: fontName, sz: 11, bold: true }, alignment: { horizontal: 'left', vertical: 'center' }, border: bordered, fill: { fgColor: { rgb: 'D9EAD3' } } });
+      applyRowStyle(cursor, {
+        font: { name: fontName, sz: 10, bold: true },
+        alignment: { horizontal: 'center', vertical: 'center' },
+        border,
+      });
+      rowHeights[cursor] = { hpt: 23 };
       cursor++;
-      for (let index = 0; index < rows.length; index++, cursor++) {
-        applyRange(cursor, cursor, { border: bordered, alignment: { vertical: 'center', wrapText: true } });
-        for (const column of [0, 2, 3, 5, 6]) ensureCell(cursor, column).s.alignment = { horizontal: 'center', vertical: 'center', wrapText: true };
-        ensureCell(cursor, 5).z = '¥#,##0.00;[Red](¥#,##0.00)';
-        ensureCell(cursor, 6).z = '¥#,##0.00;[Red](¥#,##0.00)';
+      for (const item of rows) {
+        applyRowStyle(cursor, tableStyle);
+        const nameLines = Math.ceil(String(item.name || '').length / 12);
+        const specificationLines = Math.ceil(String(item.specification || '').length / 38);
+        const remarkLines = Math.ceil(String(item.remark || '').length / 28);
+        const visualLines = Math.max(2, nameLines, specificationLines, remarkLines);
+        rowHeights[cursor] = { hpt: Math.min(116, Math.max(53, visualLines * 21 + 11)) };
+        ensureCell(cursor, 3).z = '0.##';
+        ensureCell(cursor, 5).z = '0.00;[Red](0.00)';
+        ensureCell(cursor, 6).z = '0.00;[Red](0.00)';
+        cursor++;
       }
-      applyRange(cursor, cursor, { font: { name: fontName, sz: 11, bold: true }, alignment: { horizontal: 'center', vertical: 'center' }, border: bordered, fill: { fgColor: { rgb: 'F2F2F2' } } });
-      const subtotal = subtotalRows.find((row) => row === cursor);
-      if (subtotal !== undefined) {
-        const detailStartExcel = cursor - rows.length + 1;
-        ensureCell(cursor, 6).f = `SUM(G${detailStartExcel}:G${cursor})`;
-        ensureCell(cursor, 6).z = '¥#,##0.00;[Red](¥#,##0.00)';
-      }
+      applyRowStyle(cursor, {
+        font: { name: fontName, sz: 10 },
+        alignment: { horizontal: 'center', vertical: 'center' },
+        border,
+      });
+      const detailStartExcel = cursor - rows.length + 1;
+      ensureCell(cursor, 6).f = `SUM(G${detailStartExcel}:G${cursor})`;
+      ensureCell(cursor, 6).z = '0.00;[Red](0.00)';
+      rowHeights[cursor] = { hpt: 23 };
       cursor++;
     }
     if (filters.total !== 'false') {
-      applyRange(totalRow, totalRow, { font: { name: fontName, sz: 13, bold: true }, alignment: { horizontal: 'center', vertical: 'center' }, border: bordered, fill: { fgColor: { rgb: 'FFF2CC' } } });
+      applyRowStyle(totalRow, {
+        font: { name: fontName, sz: 10 },
+        alignment: { horizontal: 'center', vertical: 'center' },
+        border,
+      });
       ensureCell(totalRow, 6).f = subtotalRows.length ? subtotalRows.map((row) => `G${row + 1}`).join('+') : '0';
-      ensureCell(totalRow, 6).z = '¥#,##0.00;[Red](¥#,##0.00)';
+      ensureCell(totalRow, 6).z = '0.00;[Red](0.00)';
+      rowHeights[totalRow] = { hpt: 24 };
     }
-    if (filters.sign === 'true') applyRange(signatureStart, detailRows.length - 1, { font: { name: fontName, sz: 11 }, alignment: { horizontal: 'left', vertical: 'top', wrapText: true } });
+    if (filters.sign === 'true') {
+      for (let row = signatureStart; row < detailRows.length; row++) {
+        applyRowStyle(row, {
+          font: { name: fontName, sz: 10 },
+          alignment: { horizontal: 'left', vertical: 'top', wrapText: true },
+          border,
+        });
+        rowHeights[row] = { hpt: 70 };
+      }
+    }
 
     sheet['!merges'] = merges;
-    sheet['!cols'] = [{ wch: 8 }, { wch: 28 }, { wch: 9 }, { wch: 10 }, { wch: 48 }, { wch: 14 }, { wch: 15 }, { wch: 16 }, { wch: 22 }];
-    sheet['!rows'] = detailRows.map((_, row) => ({ hpt: row === 0 ? 30 : row < 6 ? 21 : row === 6 ? 30 : row >= signatureStart ? 38 : 42 }));
-    sheet['!margins'] = { left: 0.43, right: 0.28, top: 0.87, bottom: 0.12, header: 0.51, footer: 0.16 };
-    sheet['!pageSetup'] = { orientation: 'landscape', fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
-    sheet['!printHeader'] = [0, 6];
+    sheet['!cols'] = [
+      { wch: 12.73 }, { wch: 28.36 }, { wch: 12.09 },
+      { wch: 12.45 }, { wch: 80.64 }, { wch: 15.18 },
+      { wch: 15.55 }, { wch: 19.18 }, { wch: 36.18 },
+    ];
+    sheet['!rows'] = rowHeights;
+    sheet['!margins'] = { left: 0.4326, right: 0.275, top: 0.866, bottom: 0.118, header: 0.51, footer: 0.157 };
+    sheet['!pageSetup'] = { orientation: 'portrait', fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
     const workbook = XLSXStyle.utils.book_new();
     XLSXStyle.utils.book_append_sheet(workbook, sheet, '结算');
     (workbook as any).Workbook = { Names: [{ Name: 'Print_Area', Ref: `结算!$A$1:$I$${detailRows.length}`, Sheet: 0 }] };
-    return { data: XLSXStyle.write(workbook, { type: 'buffer', bookType: 'xlsx', cellStyles: true }), count: orders.length };
+    const rawWorkbook = XLSXStyle.write(workbook, { type: 'buffer', bookType: 'xlsx', cellStyles: true }) as Buffer;
+    const archive = unzipSync(rawWorkbook);
+    const worksheetPath = 'xl/worksheets/sheet1.xml';
+    let worksheetXml = strFromU8(archive[worksheetPath]);
+    if (!worksheetXml.includes('<pageSetUpPr')) {
+      if (/<sheetPr[^>]*\/>/.test(worksheetXml)) worksheetXml = worksheetXml.replace(/<sheetPr([^>]*)\/>/, '<sheetPr$1><pageSetUpPr fitToPage="1"/></sheetPr>');
+      else if (worksheetXml.includes('<sheetPr')) worksheetXml = worksheetXml.replace(/<sheetPr([^>]*)>/, '<sheetPr$1><pageSetUpPr fitToPage="1"/>');
+      else worksheetXml = worksheetXml.replace(/(<worksheet[^>]*>)/, '$1<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>');
+    }
+    if (!worksheetXml.includes('<pageSetup')) {
+      const pageSetup = '<pageSetup paperSize="9" orientation="portrait" fitToWidth="1" fitToHeight="0"/>';
+      worksheetXml = worksheetXml.includes('<pageMargins')
+        ? worksheetXml.replace(/(<pageMargins[^>]*\/>)/, `$1${pageSetup}`)
+        : worksheetXml.replace('</worksheet>', `${pageSetup}</worksheet>`);
+    }
+    archive[worksheetPath] = strToU8(worksheetXml);
+    return { data: Buffer.from(zipSync(archive, { level: 6 })), count: orders.length };
   }
   const expandProducts = filters.expand !== 'false';
   const rows = orders.flatMap((order) => {
