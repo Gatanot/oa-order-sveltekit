@@ -1028,3 +1028,237 @@ export function importCatalog(rows: Array<Record<string, unknown>>, sourceId = '
     return count;
   })();
 }
+
+export type AdminDemoStats = {
+  catalogSources: number;
+  costCatalogSources: number;
+  catalogItems: number;
+  orders: number;
+  reimbursements: number;
+};
+
+export function getAdminDemoStats(): AdminDemoStats {
+  const db = getOrderDb();
+  return {
+    catalogSources: Number((db.prepare('SELECT COUNT(*) AS count FROM catalog_sources WHERE active=1').get() as { count: number }).count),
+    costCatalogSources: Number((db.prepare("SELECT COUNT(*) AS count FROM catalog_sources WHERE active=1 AND kind='cost'").get() as { count: number }).count),
+    catalogItems: Number((db.prepare('SELECT COUNT(*) AS count FROM catalog_items WHERE active=1').get() as { count: number }).count),
+    orders: Number((db.prepare('SELECT COUNT(*) AS count FROM orders_simple').get() as { count: number }).count),
+    reimbursements: Number((db.prepare('SELECT COUNT(*) AS count FROM reimbursements_simple').get() as { count: number }).count),
+  };
+}
+
+function demoBatchId() {
+  const stamp = new Date().toISOString().replace(/\D/g, '').slice(0, 14);
+  return `${stamp}-${uuid().slice(0, 4).toUpperCase()}`;
+}
+
+function dateOffset(base: Date, days: number) {
+  const value = new Date(base);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+}
+
+export function seedDemoCostCatalogs(requestedCount = 2) {
+  const count = Math.max(1, Math.min(2, Math.round(Number(requestedCount) || 2)));
+  const batch = demoBatchId();
+  const vendors = [
+    {
+      name: '华彩喷印',
+      rows: [
+        ['喷绘制作', '户外高清喷绘布，含基础制作', '平方米', 18],
+        ['车贴裱板', '黑胶车贴裱 5mm PVC 板', '平方米', 42],
+        ['KT板写真', '室内写真裱 KT 板', '平方米', 36],
+        ['门型展架画面', '80×180cm PP 合成纸画面', '套', 48],
+        ['易拉宝', '铝合金易拉宝含画面', '套', 88],
+        ['UV软膜', 'UV 软膜灯箱画面', '平方米', 58],
+        ['横幅', '70cm 宽牛津布热转印', '米', 12],
+        ['安装人工', '市区普通墙面安装', '人次', 280],
+      ],
+    },
+    {
+      name: '嘉印物料',
+      rows: [
+        ['宣传单', '157g 铜版纸双面彩印，1000 张起', '张', 0.18],
+        ['折页', '200g 铜版纸三折页，压痕折叠', '张', 0.42],
+        ['画册', 'A4 骑马钉 20P，封面 250g', '本', 6.8],
+        ['名片', '300g 铜版纸双面覆膜', '盒', 22],
+        ['手提袋', '250g 白卡纸四色印刷', '个', 3.6],
+        ['台卡', 'A5 亚克力台卡含画面', '个', 28],
+        ['不干胶标签', '覆膜模切，按常规尺寸', '张', 0.35],
+        ['加急制作', '24 小时内交付加急费', '项', 180],
+      ],
+    },
+  ];
+  const created: Array<{ id: string; owner: string; items: number }> = [];
+  for (const vendor of vendors.slice(0, count)) {
+    const owner = `${vendor.name}·模拟${batch}`;
+    const source = createCatalogSource({ kind: 'cost', owner_name: owner, source_method: 'admin_demo', source_file: `后台模拟成本库-${batch}.xlsx` }) as { id: string };
+    const rows = vendor.rows.map(([name, specification, unit, cost], index) => ({
+      category: index < 4 ? '广告制作' : '综合物料',
+      name,
+      specification,
+      unit,
+      cost_unit: cost,
+      supplier_remark: `${owner}模拟报价`,
+      source_file: `后台模拟成本库-${batch}.xlsx`,
+      source_sheet: vendor.name,
+      item_no: index + 1,
+    }));
+    const items = importCatalog(rows, source.id, { actorName: '后台模拟数据工具' });
+    created.push({ id: source.id, owner, items });
+  }
+  addAuditLog({ actorName: '后台模拟数据工具', action: 'seed_demo_catalogs', entityType: 'admin_demo', entityId: batch, detail: { count: created.length, items: created.reduce((sum, item) => sum + item.items, 0) } });
+  return { batch, catalogs: created.length, items: created.reduce((sum, item) => sum + item.items, 0), created };
+}
+
+function ensureDemoProjects() {
+  const db = getOrderDb();
+  const definitions = [
+    ['星河科技（模拟）', '年度品牌物料（模拟）', '陈晨'],
+    ['星河科技（模拟）', '春季招商活动（模拟）', '陈晨'],
+    ['海岸商业（模拟）', '商场导视更新（模拟）', '林晓'],
+    ['青禾教育（模拟）', '招生季宣传（模拟）', '周敏'],
+  ];
+  const result: Array<{ id: string; customer_id: string; customer_name: string; name: string; owner: string }> = [];
+  db.transaction(() => {
+    for (const [customerName, projectName, owner] of definitions) {
+      let customer = db.prepare('SELECT id FROM customers_simple WHERE name=?').get(customerName) as { id: string } | undefined;
+      if (!customer) {
+        customer = { id: uuid() };
+        db.prepare('INSERT INTO customers_simple(id,name,contact,created_at) VALUES(?,?,?,?)').run(customer.id, customerName, '模拟联系人', now());
+      }
+      let project = db.prepare('SELECT id FROM projects_simple WHERE customer_id=? AND name=?').get(customer.id, projectName) as { id: string } | undefined;
+      if (!project) {
+        project = { id: uuid() };
+        db.prepare('INSERT INTO projects_simple(id,customer_id,name,owner,status,created_at) VALUES(?,?,?,?,?,?)').run(project.id, customer.id, projectName, owner, '进行中', now());
+      }
+      result.push({ id: project.id, customer_id: customer.id, customer_name: customerName, name: projectName, owner });
+    }
+  })();
+  return result;
+}
+
+export function seedDemoOrdersAndReimbursements(requestedCount = 36) {
+  const orderCount = Math.max(20, Math.min(80, Math.round(Number(requestedCount) || 36)));
+  const batch = demoBatchId();
+  const projects = ensureDemoProjects();
+  const db = getOrderDb();
+  const costItems = db.prepare(`SELECT ci.id,ci.name,ci.unit,ci.cost_unit,cs.owner_name
+    FROM catalog_items ci JOIN catalog_sources cs ON cs.id=ci.source_id
+    WHERE ci.active=1 AND cs.active=1 AND cs.kind='cost' ORDER BY cs.updated_at DESC,ci.name LIMIT 30`).all() as Array<Record<string, any>>;
+  const productTemplates = [
+    ['活动主视觉喷绘', '平方米', 68, '户外高清喷绘，含画面排版'],
+    ['商场导视画面', '块', 185, 'PVC 板裱写真并覆膜'],
+    ['招商宣传折页', '张', 1.25, '200g 铜版纸三折页'],
+    ['品牌宣传画册', '本', 18.8, 'A4 骑马钉 20P'],
+    ['门型展架', '套', 168, '80×180cm 展架含画面'],
+    ['活动签到背景板', '平方米', 138, '桁架背景搭建及画面'],
+    ['桌面亚克力台卡', '个', 58, 'A5 亚克力双面台卡'],
+    ['宣传手提袋', '个', 8.6, '250g 白卡纸覆膜穿绳'],
+  ];
+  const employees = ['张琳', '王杰', '李倩', '陈晨', '林晓', '周敏'];
+  const designers = ['刘设计', '赵设计', '何设计', '孙设计'];
+  const advanceItems = ['现场打车费', '临时材料采购', '加急快递费', '活动停车费', '安装辅料费', '客户现场餐费'];
+  const today = new Date();
+  let reimbursementCount = 0;
+  const statusCounts: Record<string, number> = { pending_review: 0, rejected: 0, pending_payment: 0, paid: 0 };
+
+  for (let index = 0; index < orderCount; index++) {
+    const project = projects[index % projects.length];
+    const orderDate = dateOffset(today, -(index * 3 % 120));
+    const deliveryDate = dateOffset(new Date(`${orderDate}T00:00:00Z`), 4 + index % 12);
+    const primary = productTemplates[index % productTemplates.length];
+    const secondary = productTemplates[(index + 3) % productTemplates.length];
+    const quantity = 2 + index % 9;
+    const products = [
+      { name: primary[0], unit: primary[1], quantity, unit_price: Number(primary[2]), specification: primary[3] },
+      ...(index % 3 === 0 ? [{ name: secondary[0], unit: secondary[1], quantity: 1 + index % 4, unit_price: Number(secondary[2]), specification: secondary[3] }] : []),
+    ];
+    const matchedCost = costItems[index % Math.max(costItems.length, 1)];
+    const fallbackCost = { id: '', name: `${primary[0]}制作成本`, unit: primary[1], cost_unit: Math.round(Number(primary[2]) * 62), owner_name: '模拟供应商' };
+    const cost = matchedCost || fallbackCost;
+    const hasAdvance = index % 3 !== 0;
+    const employee = employees[index % employees.length];
+    const advances = hasAdvance ? [{
+      employee,
+      item: advanceItems[index % advanceItems.length],
+      amount: 35 + index % 8 * 18.5,
+      date: orderDate,
+      invoice: index % 4 === 0 ? '模拟电子发票.pdf' : '',
+      note: `后台模拟报销 · 批次 ${batch}`,
+    }] : [];
+    const order = createOrder({
+      project_id: project.id,
+      order_date: orderDate,
+      delivery_date: deliveryDate,
+      contact: ['黄经理', '吴老师', '梁主管'][index % 3],
+      customer_department: ['市场部', '品牌部', '综合事务部'][index % 3],
+      designer: designers[index % designers.length],
+      created_by: employee,
+      status: ['制作中', '待确认', '已完成'][index % 3],
+      payment_status: index % 4 === 0 ? '已结款' : '未结款',
+      note: `后台模拟订单 · 批次 ${batch}`,
+      products,
+      costs: [{
+        catalog_id: cost.id || '',
+        name: cost.name,
+        vendor: cost.owner_name || '模拟供应商',
+        unit: cost.unit || '项',
+        quantity,
+        unit_price: Math.max(0, Number(cost.cost_unit || 0) / 100),
+      }],
+      advances,
+      idempotency_key: `admin-demo-${batch}-${index}`,
+    });
+    const reimbursement = order.advances?.[0];
+    if (reimbursement) {
+      reimbursementCount++;
+      const mode = index % 4;
+      if (mode === 1) {
+        updateReimbursement(reimbursement.id, '已打回', '模拟财务', '模拟数据：请补充清晰发票');
+        statusCounts.rejected++;
+      } else if (mode === 2) {
+        updateReimbursement(reimbursement.id, '待打款', '模拟财务');
+        statusCounts.pending_payment++;
+      } else if (mode === 3) {
+        updateReimbursement(reimbursement.id, '待打款', '模拟财务');
+        updateReimbursement(reimbursement.id, '已报销', '模拟财务');
+        if (index % 8 === 3) archiveReimbursementVoucher(reimbursement.id, '模拟财务');
+        statusCounts.paid++;
+      } else {
+        statusCounts.pending_review++;
+      }
+    }
+  }
+
+  const standaloneCount = Math.max(6, Math.round(orderCount / 5));
+  for (let index = 0; index < standaloneCount; index++) {
+    const created = createReimbursement({
+      employee: employees[(index + 2) % employees.length],
+      item: ['办公用品采购', '团队交通费', '会议茶歇', '样品快递费'][index % 4],
+      amount: 48 + index * 23.5,
+      advance_date: dateOffset(today, -(index * 5 % 90)),
+      note: `后台模拟内务报销 · 批次 ${batch}`,
+      invoice: index % 2 === 0 ? '模拟报销凭证.pdf' : '',
+    });
+    reimbursementCount++;
+    const mode = (index + 1) % 4;
+    if (mode === 1) {
+      updateReimbursement(created.id, '已打回', '模拟财务', '模拟数据：票据信息不完整');
+      statusCounts.rejected++;
+    } else if (mode === 2) {
+      updateReimbursement(created.id, '待打款', '模拟财务');
+      statusCounts.pending_payment++;
+    } else if (mode === 3) {
+      updateReimbursement(created.id, '待打款', '模拟财务');
+      updateReimbursement(created.id, '已报销', '模拟财务');
+      statusCounts.paid++;
+    } else {
+      statusCounts.pending_review++;
+    }
+  }
+
+  addAuditLog({ actorName: '后台模拟数据工具', action: 'seed_demo_operations', entityType: 'admin_demo', entityId: batch, detail: { orders: orderCount, reimbursements: reimbursementCount, statuses: statusCounts } });
+  return { batch, orders: orderCount, reimbursements: reimbursementCount, statusCounts };
+}

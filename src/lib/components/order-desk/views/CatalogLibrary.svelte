@@ -20,8 +20,8 @@
 
 <section class="page-section">
   <div class="section-heading">
-    <div><p class="section-kicker">REFERENCE DATA</p><h2>报价库与成本库</h2><span>按客户与厂商维护订单录入所需的价格资料。</span></div>
-    {#if desk.canManageCatalog}<div class="top-actions"><button class="outline-action" type="button" onclick={desk.openCatalogSourceForm}><Plus size={16} />新增{desk.catalogKind === 'quote' ? '公司' : '厂商'}</button><label class="upload-action"><Upload size={16} />配置文件<input type="file" accept=".xlsx,.xls,.csv" onchange={desk.importFile} /></label></div>{/if}
+    <div><p class="section-kicker">REFERENCE DATA</p><h2>报价库与成本库</h2><span>{desk.canManageCatalog ? '按客户与厂商维护订单录入所需的价格资料。' : '当前为只读浏览；新增和导入资料仅限财务。'}</span></div>
+    {#if desk.canManageCatalog}<div class="top-actions"><button class="outline-action" type="button" onclick={desk.openCatalogSourceForm}><Plus size={16} />新增{desk.catalogKind === 'quote' ? '公司' : '厂商'}</button><label class="upload-action"><Upload size={16} />配置文件<input type="file" accept=".xlsx,.xls,.csv" onchange={desk.importFile} /></label></div>{:else}<span class="readonly-badge">只读</span>{/if}
   </div>
 
   <div class="catalog-tabs" role="tablist" aria-label="资料库类型">

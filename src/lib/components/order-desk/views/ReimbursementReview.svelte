@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getContext } from "svelte";
-  import { Paperclip } from "lucide-svelte";
+  import { Check, Circle, CircleDot, Paperclip, X } from "lucide-svelte";
   const desk = getContext<any>("order-desk");
 
   let attachmentsByOrder = $state<Record<string, Array<any>>>({});
@@ -61,14 +61,19 @@
   <div class="reimbursement-actions"><span class="role-context">当前：{desk.reimbursementRole === "finance" ? (desk.reimbursementPerson ? `${desk.reimbursementPerson} 的报销队列` : "请选择员工后显示审核队列；导出不受此限制") : `当前账号：${desk.creatorName || "未设置填写人"}`}</span>{#if desk.reimbursementRole === "finance"}<button class="outline-action" type="button" onclick={desk.exportReimbursements}>导出当前筛选</button>{/if}<button class="outline-action" type="button" onclick={desk.resetReimbursementFilters}>重置筛选</button>{#if desk.reimbursementRole === "finance"}<button class="outline-action" type="button" disabled={!desk.selectedPendingReviewCount || desk.busy} onclick={desk.batchReviewReimbursements}>批量确认（{desk.selectedPendingReviewCount}）</button><button class="delete-action" type="button" disabled={!desk.selectedPendingReviewCount || desk.busy} onclick={desk.batchRejectReimbursements}>批量打回（{desk.selectedPendingReviewCount}）</button><button class="primary-action" type="button" disabled={!desk.selectedPendingPaymentCount || desk.busy} onclick={desk.batchMarkReimbursed}>确认已打款（{desk.selectedPendingPaymentCount}）</button>{/if}</div>
   {#if desk.reimbursementRole === "finance"}
     <section class="finance-workbench" aria-label="财务付款与单据归档">
-      <div class="finance-workbench-head"><div><b>最近应付汇总单</b><span>按员工汇总已确认、尚未打款的报销，供财务核对后付款</span></div><div class="finance-head-actions"><strong>{desk.reimbursementStats.pendingPay} 笔 · {desk.money(desk.reimbursementStats.pendingPayAmount)}</strong><button class="outline-action" type="button" onclick={desk.exportPaymentSummary}>导出打款单</button></div></div>
+      <div class="finance-workbench-head"><div><b>最近应付汇总单</b><span>点击员工卡片选择待付款报销，再统一确认打款</span></div><div class="finance-head-actions">{#if desk.selectedPendingPaymentCount}<span class="payment-selected-total"><Check size={14} />已选择 {desk.selectedPendingPaymentCount} 笔</span>{/if}<strong>{desk.reimbursementStats.pendingPay} 笔 · {desk.money(desk.reimbursementStats.pendingPayAmount)}</strong><button class="outline-action" type="button" onclick={desk.exportPaymentSummary}>导出打款单</button></div></div>
       <div class="payment-summary-list">
         {#each desk.reimbursementPaymentSummary as group}
-          <div class="payment-summary-item">
-            <button class="payment-summary-select" type="button" onclick={() => desk.selectEmployeePayments(group.employee)}>
-              <span><b>{group.employee}</b><small>{group.count} 笔待付款</small></span><strong>{desk.money(group.amount)}</strong>
+          {@const selectedCount = group.ids.filter((id: string) => desk.selectedReimbursementIds.includes(id)).length}
+          {@const fullySelected = selectedCount === group.count}
+          {@const partiallySelected = selectedCount > 0 && !fullySelected}
+          <div class:payment-selected={fullySelected} class:payment-partial={partiallySelected} class="payment-summary-item">
+            <button class="payment-summary-select" type="button" aria-pressed={fullySelected} onclick={() => desk.selectEmployeePayments(group.employee)}>
+              <span class="payment-selection-icon" aria-hidden="true">{#if fullySelected}<Check size={16} strokeWidth={3} />{:else if partiallySelected}<CircleDot size={17} />{:else}<Circle size={17} />{/if}</span>
+              <span class="payment-summary-person"><b>{group.employee}</b><small>{fullySelected ? `已选择 ${group.count} 笔` : partiallySelected ? `已选择 ${selectedCount} / ${group.count} 笔` : `${group.count} 笔待付款`}</small></span>
+              <strong>{desk.money(group.amount)}</strong>
             </button>
-            <button class="link-action" type="button" disabled={desk.busy} onclick={() => desk.markEmployeeReimbursed(group.employee)}>确认已打款</button>
+            <button class="outline-action payment-confirm-action" type="button" disabled={desk.busy} onclick={() => desk.markEmployeeReimbursed(group.employee)}>确认已打款</button>
           </div>
         {:else}<div class="empty-workbench">暂无待付款报销。</div>
         {/each}
@@ -148,7 +153,7 @@
   {#if detailItem}
     <div class="drawer-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) detailItem = null; }}>
       <div class="export-drawer reimbursement-detail" role="dialog" aria-modal="true" aria-labelledby="reimbursement-detail-title">
-        <div class="drawer-head"><div><p class="section-kicker">REIMBURSEMENT VOUCHER</p><h2 id="reimbursement-detail-title">报销单据</h2><span>{detailItem.source_type || "订单报销"} · {detailItem.reimbursement_status}</span></div><button class="icon-control" aria-label="关闭报销单据" onclick={() => detailItem = null}>×</button></div>
+        <div class="drawer-head"><div><p class="section-kicker">REIMBURSEMENT VOUCHER</p><h2 id="reimbursement-detail-title">报销单据</h2><span>{detailItem.source_type || "订单报销"} · {detailItem.reimbursement_status}</span></div><button class="icon-control" aria-label="关闭报销单据" onclick={() => detailItem = null}><X size={18} /></button></div>
         <div class="drawer-body"><div class="voucher-grid"><div><small>报销人</small><b>{detailItem.employee}</b></div><div><small>报销物品</small><b>{detailItem.advance_item || detailItem.item}</b></div><div><small>报销金额</small><b>{desk.money(detailItem.advance_amount)}</b></div><div><small>垫付日期</small><b>{detailItem.advance_date}</b></div><div><small>关联订单</small><b>{detailItem.code || "内务报销"}</b></div><div><small>客户 / 项目</small><b>{detailItem.customer_name ? `${detailItem.customer_name} · ` : ""}{detailItem.project_name || "内务报销"}</b></div><div class="voucher-full"><small>发票附件</small>{#if detailItem.attachment_count}<button class="link-action voucher-attachment-button" type="button" onclick={() => showAttachments(detailItem)}>{detailItem.invoice || "查看附件"} · {detailItem.attachment_count} 个</button>{:else}<b>{detailItem.invoice || "未上传"}</b>{/if}{#if attachmentsByOrder[detailItem.id]?.length}<ul class="voucher-attachments">{#each attachmentsByOrder[detailItem.id] as file}<li><a class="attachment-link" href={desk.reimbursementAttachmentUrl(file.id)} target="_blank" rel="noreferrer"><Paperclip size={13}/><span>{file.file_name}</span><small>{desk.formatFileSize(file.file_size)}</small></a></li>{/each}</ul>{/if}</div>{#if detailItem.reimbursement_status === "已打回"}<div class="voucher-full rejection-detail"><small>打回原因</small><b>{detailItem.reject_reason || "请补充发票资料"}</b></div>{/if}<div class="voucher-full"><small>备注</small><b>{detailItem.note || "—"}</b></div></div></div>
         <div class="drawer-footer"><button class="outline-action" type="button" onclick={() => detailItem = null}>关闭</button></div>
       </div>

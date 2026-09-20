@@ -370,8 +370,9 @@ export function createOrderDesk(data: Data) {
         if (existing) {
           existing.count += 1;
           existing.amount += Number(item.advance_amount || 0);
+          existing.ids.push(item.id);
         } else {
-          groups.push({ employee, count: 1, amount: Number(item.advance_amount || 0) });
+          groups.push({ employee, count: 1, amount: Number(item.advance_amount || 0), ids: [item.id] });
         }
         return groups;
       }, [])
@@ -694,9 +695,13 @@ export function createOrderDesk(data: Data) {
     notify(`正在导出 ${rows.length} 条待付款记录`);
   }
   function selectEmployeePayments(employee: string) {
-    selectedReimbursementIds = reimbursementSummaryRows
+    const targets = reimbursementSummaryRows
       .filter((item: any) => item.employee === employee && item.reimbursement_status === "待打款")
       .map((item: any) => item.id);
+    const allSelected = targets.length > 0 && targets.every((id: string) => selectedReimbursementIds.includes(id));
+    selectedReimbursementIds = allSelected
+      ? selectedReimbursementIds.filter((id) => !targets.includes(id))
+      : targets;
   }
   function markEmployeeReimbursed(employee: string) {
     const targets = reimbursementSummaryRows.filter((item: any) => item.employee === employee && item.reimbursement_status === "待打款");
@@ -1031,11 +1036,16 @@ export function createOrderDesk(data: Data) {
       busy = false;
     }
   }
+  function requireCatalogManager() {
+    if (workMode === "finance") return true;
+    notify("报价成本库对所有成员开放查看，仅财务可以新增或导入资料", true);
+    return false;
+  }
   async function importFile(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     input.value = "";
-    if (!file) return;
+    if (!file || !requireCatalogManager()) return;
     busy = true;
     try {
       const form = new FormData();
@@ -1057,11 +1067,13 @@ export function createOrderDesk(data: Data) {
     catalogImportPreview = null;
   }
   function openCatalogSourceForm() {
+    if (!requireCatalogManager()) return;
     catalogSourceName = "";
     catalogSourceCopyId = "";
     catalogSourceOpen = true;
   }
   async function createCatalogSourceFromForm() {
+    if (!requireCatalogManager()) return;
     const owner = catalogSourceName.trim();
     if (!owner) {
       notify(`请填写${catalogKind === "quote" ? "客户公司" : "厂商"}名称`, true);
@@ -1087,7 +1099,7 @@ export function createOrderDesk(data: Data) {
     }
   }
   async function confirmCatalogImport() {
-    if (!catalogImportFile || !catalogImportPreview?.valid_rows) return;
+    if (!requireCatalogManager() || !catalogImportFile || !catalogImportPreview?.valid_rows) return;
     if (catalogSourceId) {
       const source = catalogSources.find((item) => item.id === catalogSourceId);
       if (!window.confirm(`将用新文件替换“${source?.owner_name || "当前资料库"}”的全部有效条目，历史订单不受影响。确定继续吗？`)) return;

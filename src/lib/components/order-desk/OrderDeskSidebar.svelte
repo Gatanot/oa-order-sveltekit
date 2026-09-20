@@ -17,7 +17,7 @@
   <nav class="side-nav" aria-label="主导航">
     <button class:active={desk.view === "overview" || desk.view === "entry"} onclick={() => desk.navigate("/orders")}><LayoutDashboard size={17} /><span>订单列表</span></button>
     <button class:active={desk.view === "finance"} onclick={() => desk.navigate("/reimbursements")}><WalletCards size={17} /><span>{desk.workMode === "finance" ? "报销审核" : "我的报销"}</span></button>
-    <button class:active={desk.view === "catalog"} disabled={desk.workMode !== "finance"} onclick={() => desk.navigate("/catalog")}><FileSpreadsheet size={17} /><span>报价库与成本库</span></button>
+    <button class:active={desk.view === "catalog"} onclick={() => desk.navigate("/catalog")}><FileSpreadsheet size={17} /><span>报价库与成本库</span></button>
   </nav>
   <div class="sidebar-note"><b>{desk.creatorName || "请设置填写人"}</b><span>{desk.workMode === "finance" ? "财务功能已开放" : desk.workMode === "entry" ? "可新建和修改订单" : "当前仅查看业务数据"}</span><button class="settings-action" onclick={desk.openSettings}><Settings size={14} />设置填写人</button></div>
   <button class="sidebar-toggle" title={desk.sidebarCollapsed ? "展开菜单" : "收起菜单"} aria-label={desk.sidebarCollapsed ? "展开菜单" : "收起菜单"} onclick={() => (desk.sidebarCollapsed = !desk.sidebarCollapsed)}>{#if desk.sidebarCollapsed}<ChevronRight size={17} />{:else}<ChevronLeft size={17} /><span>收起菜单</span>{/if}</button>
