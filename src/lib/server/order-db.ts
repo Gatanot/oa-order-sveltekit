@@ -635,7 +635,8 @@ export function exportOrders(filters: Record<string, string>) {
     }
 
     const sheet = XLSXStyle.utils.aoa_to_sheet(detailRows) as any;
-    const fontName = '宋体';
+    const titleFontName = '宋体';
+    const bodyFontName = '仿宋_GB2312';
     const thin = { style: 'thin', color: { rgb: '000000' } };
     const border = { top: thin, bottom: thin, left: thin, right: thin };
     const ensureCell = (row: number, column: number) => {
@@ -647,94 +648,94 @@ export function exportOrders(filters: Record<string, string>) {
       for (let column = 0; column <= 8; column++) ensureCell(row, column).s = style;
     };
     const tableStyle = {
-      font: { name: fontName, sz: 10 },
+      font: { name: bodyFontName, sz: 18 },
       alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
       border,
     };
-    const rowHeights = detailRows.map(() => ({ hpt: 24 }));
+    const rowHeights = detailRows.map(() => ({ hpt: 27.5 }));
 
-    // Match excel/结算表.xls: one monochrome portrait table, including the
-    // title and party information, with no decorative fills.
+    // Match excel/结算表.xls: title in 宋体 36pt, all other content in
+    // 仿宋_GB2312 18pt, with the same monochrome bordered table structure.
     for (let row = 0; row < detailRows.length; row++) applyRowStyle(row, tableStyle);
     applyRowStyle(0, {
-      font: { name: fontName, sz: 20 },
-      alignment: { horizontal: 'center', vertical: 'center' },
-      border,
-    });
-    rowHeights[0] = { hpt: 34 };
-    for (let row = 1; row <= 5; row++) {
-      applyRowStyle(row, {
-        font: { name: fontName, sz: 10 },
-        alignment: { horizontal: 'left', vertical: 'center' },
-        border,
-      });
-      rowHeights[row] = { hpt: 21 };
-    }
-    applyRowStyle(6, {
-      font: { name: fontName, sz: 10, bold: true },
+      font: { name: titleFontName, sz: 36 },
       alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
       border,
     });
-    rowHeights[6] = { hpt: 36 };
+    rowHeights[0] = { hpt: 45.5 };
+    for (let row = 1; row <= 5; row++) {
+      applyRowStyle(row, {
+        font: { name: bodyFontName, sz: 18 },
+        alignment: { horizontal: 'left', vertical: 'center', wrapText: true },
+        border,
+      });
+      rowHeights[row] = { hpt: 27.5 };
+    }
+    applyRowStyle(6, {
+      font: { name: bodyFontName, sz: 18 },
+      alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+      border,
+    });
+    rowHeights[6] = { hpt: 46 };
 
     let cursor = 7;
     for (const rows of categories.values()) {
       applyRowStyle(cursor, {
-        font: { name: fontName, sz: 10, bold: true },
-        alignment: { horizontal: 'center', vertical: 'center' },
+        font: { name: bodyFontName, sz: 18 },
+        alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
         border,
       });
-      rowHeights[cursor] = { hpt: 23 };
+      rowHeights[cursor] = { hpt: 27.5 };
       cursor++;
       for (const item of rows) {
         applyRowStyle(cursor, tableStyle);
-        const nameLines = Math.ceil(String(item.name || '').length / 12);
-        const specificationLines = Math.ceil(String(item.specification || '').length / 38);
-        const remarkLines = Math.ceil(String(item.remark || '').length / 28);
+        const nameLines = Math.ceil(String(item.name || '').length / 18);
+        const specificationLines = Math.ceil(String(item.specification || '').length / 42);
+        const remarkLines = Math.ceil(String(item.remark || '').length / 18);
         const visualLines = Math.max(2, nameLines, specificationLines, remarkLines);
-        rowHeights[cursor] = { hpt: Math.min(116, Math.max(53, visualLines * 21 + 11)) };
+        rowHeights[cursor] = { hpt: Math.min(117, Math.max(91, visualLines * 23)) };
         ensureCell(cursor, 3).z = '0.##';
         ensureCell(cursor, 5).z = '0.00;[Red](0.00)';
         ensureCell(cursor, 6).z = '0.00;[Red](0.00)';
         cursor++;
       }
       applyRowStyle(cursor, {
-        font: { name: fontName, sz: 10 },
-        alignment: { horizontal: 'center', vertical: 'center' },
+        font: { name: bodyFontName, sz: 18 },
+        alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
         border,
       });
       const detailStartExcel = cursor - rows.length + 1;
       ensureCell(cursor, 6).f = `SUM(G${detailStartExcel}:G${cursor})`;
       ensureCell(cursor, 6).z = '0.00;[Red](0.00)';
-      rowHeights[cursor] = { hpt: 23 };
+      rowHeights[cursor] = { hpt: 27.5 };
       cursor++;
     }
     if (filters.total !== 'false') {
       applyRowStyle(totalRow, {
-        font: { name: fontName, sz: 10 },
-        alignment: { horizontal: 'center', vertical: 'center' },
+        font: { name: bodyFontName, sz: 18 },
+        alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
         border,
       });
       ensureCell(totalRow, 6).f = subtotalRows.length ? subtotalRows.map((row) => `G${row + 1}`).join('+') : '0';
       ensureCell(totalRow, 6).z = '0.00;[Red](0.00)';
-      rowHeights[totalRow] = { hpt: 24 };
+      rowHeights[totalRow] = { hpt: 27.5 };
     }
     if (filters.sign === 'true') {
       for (let row = signatureStart; row < detailRows.length; row++) {
         applyRowStyle(row, {
-          font: { name: fontName, sz: 10 },
-          alignment: { horizontal: 'left', vertical: 'top', wrapText: true },
+          font: { name: bodyFontName, sz: 18 },
+          alignment: { horizontal: 'left', vertical: 'center', wrapText: true },
           border,
         });
-        rowHeights[row] = { hpt: 70 };
+        rowHeights[row] = { hpt: 27.5 };
       }
     }
 
     sheet['!merges'] = merges;
     sheet['!cols'] = [
-      { wch: 12.73 }, { wch: 28.36 }, { wch: 12.09 },
-      { wch: 12.45 }, { wch: 80.64 }, { wch: 15.18 },
-      { wch: 15.55 }, { wch: 19.18 }, { wch: 36.18 },
+      { wch: 13.18 }, { wch: 28.80 }, { wch: 12.50 },
+      { wch: 12.93 }, { wch: 81.07 }, { wch: 15.59 },
+      { wch: 16.02 }, { wch: 19.66 }, { wch: 36.66 },
     ];
     sheet['!rows'] = rowHeights;
     sheet['!margins'] = { left: 0.4326, right: 0.275, top: 0.866, bottom: 0.118, header: 0.51, footer: 0.157 };
