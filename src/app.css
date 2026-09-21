@@ -2832,7 +2832,14 @@ tbody tr:hover,
 }
 
 .catalog-filters .search-field {
-  max-width: 520px;
+  flex: 1 1 320px;
+  max-width: none;
+}
+
+.catalog-filters select {
+  flex: 0 0 220px;
+  width: 220px;
+  margin-top: 0;
 }
 
 .readonly-badge {
@@ -3418,6 +3425,11 @@ textarea[readonly] {
 
   .catalog-filters .search-field {
     max-width: none;
+  }
+
+  .catalog-filters select {
+    flex-basis: auto;
+    width: 100%;
   }
 
   .project-modal-head,
