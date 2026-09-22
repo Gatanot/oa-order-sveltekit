@@ -68,6 +68,11 @@ const apiFetch = (input: RequestInfo | URL, init?: RequestInit) =>
     attachment_count: number;
   };
 
+const ARTIFACT_GATEWAY_HOSTS = new Set(["artifact.catsco.cc", "artifact.catsco.cn"]);
+function isArtifactGatewayHost(): boolean {
+  return typeof window !== "undefined" && ARTIFACT_GATEWAY_HOSTS.has(window.location.hostname);
+}
+
 export type Data = {
     customers: Customer[];
     projects: Project[];
@@ -84,6 +89,7 @@ export function createOrderDesk(data: Data) {
   let workMode = $state<"view" | "entry" | "finance">("view");
   let sidebarCollapsed = $state(false);
   let isEmbedded = $state(false);
+  let onArtifactGateway = $state(false);
   let customers = $state(data.customers);
   let projects = $state(data.projects);
   let catalog = $state(data.catalog);
@@ -428,7 +434,8 @@ export function createOrderDesk(data: Data) {
   }
   onMount(() => {
     isEmbedded = window.top !== window.self;
-    if (data.visitor.status === "guest" && !isEmbedded) {
+    onArtifactGateway = isArtifactGatewayHost();
+    if (data.visitor.status === "guest" && !isEmbedded && onArtifactGateway) {
       const handshakeKey = "oa-artifact-auth-handshake";
       if (!sessionStorage.getItem(handshakeKey)) {
         sessionStorage.setItem(handshakeKey, "started");
@@ -1503,6 +1510,7 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "sidebarCollapsed", { get: () => sidebarCollapsed, set: (value) => { sidebarCollapsed = value; } });
   Object.defineProperty(desk, "visitor", { get: () => data.visitor });
   Object.defineProperty(desk, "isEmbedded", { get: () => isEmbedded });
+  Object.defineProperty(desk, "onArtifactGateway", { get: () => onArtifactGateway });
   Object.defineProperty(desk, "customers", { get: () => customers, set: (value) => { customers = value; } });
   Object.defineProperty(desk, "projects", { get: () => projects, set: (value) => { projects = value; } });
   Object.defineProperty(desk, "catalog", { get: () => catalog, set: (value) => { catalog = value; } });

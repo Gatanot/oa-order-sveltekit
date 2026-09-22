@@ -24,7 +24,9 @@
       <b>{desk.visitor.username}</b><span>平台访问者 · UID {desk.visitor.uid}</span>
     {:else if desk.visitor.status === "guest"}
       <b>未识别访问者</b><span>{desk.isEmbedded ? "请在新页面完成登录" : "当前以游客身份访问"}</span>
-      <a class="settings-action" href="/_auth/start" target="_blank" rel="noreferrer"><LogIn size={14} />新页面登录</a>
+      {#if desk.onArtifactGateway}
+        <a class="settings-action" href="/_auth/start" target="_blank" rel="noreferrer"><LogIn size={14} />新页面登录</a>
+      {/if}
     {:else}
       <b>{desk.creatorName || "身份服务暂不可用"}</b><span>暂时无法核验平台访问者</span>
     {/if}
