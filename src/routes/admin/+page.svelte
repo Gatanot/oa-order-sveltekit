@@ -15,7 +15,7 @@
         <h1>模拟数据管理</h1>
         <span>该页面不显示在系统导航中，仅通过 <code>/admin</code> 访问。</span>
       </div>
-      <a class="outline-action" href="/orders"><ArrowLeft size={16} />返回订单</a>
+      <a class="outline-action" href="../orders"><ArrowLeft size={16} />返回订单</a>
     </header>
 
     <div class="admin-notice">
@@ -84,7 +84,7 @@
     </div>
 
     <footer class="admin-footer">
-      <a href="/catalog">查看报价成本库</a><a href="/orders">查看订单</a><a href="/reimbursements">查看报销</a>
+      <a href="../catalog">查看报价成本库</a><a href="../orders">查看订单</a><a href="../reimbursements">查看报销</a>
     </footer>
   </div>
 </main>

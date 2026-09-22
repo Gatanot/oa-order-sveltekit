@@ -7,7 +7,7 @@
   <strong>{page.status}</strong>
   <h1>页面暂时无法显示</h1>
   <p>{page.error?.message ?? "请稍后再试"}</p>
-  <a href="/">返回工作台</a>
+  <a href="./orders">返回工作台</a>
 </main>
 
 <style>

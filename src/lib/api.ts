@@ -1,7 +1,24 @@
 import type { JsonRecord } from './types';
 
+const APP_ROUTE_SEGMENTS = new Set(['orders', 'reimbursements', 'catalog', 'admin', 'api']);
+
+export function appPath(path: string): string {
+  if (!path.startsWith('/') || typeof window === 'undefined') return path;
+  const segments = window.location.pathname.split('/').filter(Boolean);
+  const routeIndex = segments.findIndex((segment) => APP_ROUTE_SEGMENTS.has(segment));
+  const routeDepth = routeIndex < 0 ? 0 : Math.max(segments.length - routeIndex - 1, 0);
+  return `${'../'.repeat(routeDepth)}${path.slice(1)}`;
+}
+
+export function currentAppPath(): string {
+  if (typeof window === 'undefined') return '/';
+  const segments = window.location.pathname.split('/').filter(Boolean);
+  const routeIndex = segments.findIndex((segment) => APP_ROUTE_SEGMENTS.has(segment));
+  return routeIndex < 0 ? '/' : `/${segments.slice(routeIndex).join('/')}`;
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, {
+  const response = await fetch(appPath(path), {
     ...options,
     headers: {
       Accept: 'application/json',

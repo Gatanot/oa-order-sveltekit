@@ -2,7 +2,7 @@
 
 ## 初始化
 
-项目不需要登录或账号配置。复制 `.env.example` 为 `.env`，按部署环境设置监听地址、`ORIGIN`、SQLite 路径和请求体大小。`ORIGIN` 必须与浏览器实际访问地址一致，否则 adapter-node 会拒绝 Excel 和附件表单上传：
+项目通过 Artifact 网关识别访问者。复制 `.env.example` 为 `.env`，按部署环境设置监听地址、`ORIGIN`、SQLite 路径、请求体大小和 `ARTIFACT_APP_ID`。`ARTIFACT_APP_ID` 必须与发布登记的应用 id 一致；本地未配置时身份状态为 `unavailable`，不会伪装成游客。`ORIGIN` 必须与浏览器实际访问地址一致，否则 adapter-node 会拒绝 Excel 和附件表单上传：
 
 ```bash
 npm ci
@@ -39,4 +39,4 @@ SQLite 使用 WAL 时不要只复制主数据库文件。停机复制，或使�
 npm test
 ```
 
-Smoke 测试自动使用临时数据库，不会改动生产数据。迁移后还可执行 `PRAGMA foreign_key_check` 检查数据完整性，并手工验证填写人保存、三种模式切换、订单录入、报销打回重传和财务付款。
+Smoke 测试自动使用临时数据库，不会改动生产数据。迁移后还可执行 `PRAGMA foreign_key_check` 检查数据完整性，并手工验证 `GET /api/whoami`、Artifact 已登录/游客状态、填写人保存、三种模式切换、订单录入、报销打回重传和财务付款。身份判定必须留在服务端；前端显示的工作模式不是权限边界。

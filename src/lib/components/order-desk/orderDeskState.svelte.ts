@@ -1,7 +1,11 @@
 import { onMount } from "svelte";
 import { pushState, replaceState } from "$app/navigation";
 import type * as XLSXType from "xlsx";
-import { api } from "$lib/api";
+import type { PublicArtifactVisitor } from "$lib/artifact-visitor";
+import { api, appPath, currentAppPath } from "$lib/api";
+
+const apiFetch = (input: RequestInfo | URL, init?: RequestInit) =>
+  fetch(typeof input === "string" ? appPath(input) : input, init);
 
   type Customer = { id: string; name: string; contact: string };
   type Project = {
@@ -71,6 +75,7 @@ export type Data = {
     catalogSources: Array<Record<string, any>>;
     orders: Order[];
     reimbursements: Reimbursement[];
+    visitor: PublicArtifactVisitor;
   };
 
 
@@ -78,6 +83,7 @@ export function createOrderDesk(data: Data) {
   let view = $state<"overview" | "entry" | "catalog" | "finance">("overview");
   let workMode = $state<"view" | "entry" | "finance">("view");
   let sidebarCollapsed = $state(false);
+  let isEmbedded = $state(false);
   let customers = $state(data.customers);
   let projects = $state(data.projects);
   let catalog = $state(data.catalog);
@@ -421,11 +427,24 @@ export function createOrderDesk(data: Data) {
     if (action) await action();
   }
   onMount(() => {
+    isEmbedded = window.top !== window.self;
+    if (data.visitor.status === "guest" && !isEmbedded) {
+      const handshakeKey = "oa-artifact-auth-handshake";
+      if (!sessionStorage.getItem(handshakeKey)) {
+        sessionStorage.setItem(handshakeKey, "started");
+        window.location.assign("/_auth/start");
+        return;
+      }
+    }
+
     const savedName = localStorage.getItem("oa-creator-name") || "";
+    const visitorName = data.visitor.status === "authenticated" ? data.visitor.username : "";
+    const initialName = visitorName || savedName;
     const savedMode = localStorage.getItem("oa-work-mode");
-    creatorName = savedName;
-    creatorNameDraft = savedName;
-    createdBy = savedName;
+    creatorName = initialName;
+    creatorNameDraft = initialName;
+    createdBy = initialName;
+    if (visitorName) localStorage.setItem("oa-creator-name", visitorName);
     if (savedMode === "entry" || savedMode === "finance" || savedMode === "view") {
       workMode = savedMode;
       reimbursementRole = savedMode === "finance" ? "finance" : "employee";
@@ -495,7 +514,7 @@ export function createOrderDesk(data: Data) {
     attachmentPreviewName = name || "附件";
     attachmentPreviewMime = mime;
     try {
-      const response = await fetch(url);
+      const response = await apiFetch(url);
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
         throw new Error(payload.message || `附件加载失败（HTTP ${response.status}）`);
@@ -560,11 +579,11 @@ export function createOrderDesk(data: Data) {
   function navigate(path: string) {
     if (view === "entry" && orderFormDirty && !window.confirm("订单尚未保存，确定离开当前页面吗？")) return;
     orderFormDirty = false;
-    if (window.location.pathname !== path) pushState(path, {});
+    if (currentAppPath() !== path) pushState(appPath(path), {});
     syncViewFromPath();
   }
   function syncViewFromPath() {
-    const path = window.location.pathname;
+    const path = currentAppPath();
     const editMatch = path.match(/^\/orders\/([^/]+)\/edit$/);
     const detailMatch = path.match(/^\/orders\/([^/]+)$/);
     if (path === "/orders/new") {
@@ -634,7 +653,7 @@ export function createOrderDesk(data: Data) {
       if (standaloneInvoiceFile) {
         const form = new FormData();
         form.append("file", standaloneInvoiceFile);
-        const response = await fetch(`/api/reimbursements/${encodeURIComponent(result.data.id)}/attachments`, { method: "POST", body: form });
+        const response = await apiFetch(`/api/reimbursements/${encodeURIComponent(result.data.id)}/attachments`, { method: "POST", body: form });
         if (!response.ok) throw new Error((await response.json()).message || "发票上传失败");
       }
       await refresh();
@@ -691,7 +710,7 @@ export function createOrderDesk(data: Data) {
     selectedReimbursementIds = [];
   }
   async function batchUpdateReimbursements(ids: string[], status: string, rejectReason = "") {
-    const response = await fetch("/api/reimbursements/batch", {
+    const response = await apiFetch("/api/reimbursements/batch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ids, status, reject_reason: rejectReason, actor: creatorName || "财务人员" }),
@@ -725,7 +744,7 @@ export function createOrderDesk(data: Data) {
     if (reimbursementFrom) params.set("from", reimbursementFrom);
     if (reimbursementTo) params.set("to", reimbursementTo);
     params.set("actor", creatorName || "财务人员");
-    window.location.href = `/api/reimbursements/export?${params}`;
+    window.location.href = appPath(`/api/reimbursements/export?${params}`);
     notify(`正在导出 ${rows.length} 条报销记录`);
   }
   function batchMarkReimbursed() {
@@ -751,7 +770,7 @@ export function createOrderDesk(data: Data) {
     if (reimbursementType) params.set("type", reimbursementType);
     if (reimbursementFrom) params.set("from", reimbursementFrom);
     if (reimbursementTo) params.set("to", reimbursementTo);
-    window.location.href = `/api/reimbursements/export?${params}`;
+    window.location.href = appPath(`/api/reimbursements/export?${params}`);
     notify(`正在导出 ${rows.length} 条待付款记录`);
   }
   function selectEmployeePayments(employee: string) {
@@ -781,7 +800,7 @@ export function createOrderDesk(data: Data) {
   async function archiveReimbursementVoucher(item: any) {
     busy = true;
     try {
-      const response = await fetch(`/api/reimbursements/${encodeURIComponent(item.id)}/archive`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ actor: creatorName || "财务人员" }) });
+      const response = await apiFetch(`/api/reimbursements/${encodeURIComponent(item.id)}/archive`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ actor: creatorName || "财务人员" }) });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error?.message || payload.message || "归档失败");
       await refresh();
@@ -792,7 +811,7 @@ export function createOrderDesk(data: Data) {
   async function generateReimbursementVoucher(item: any) {
     busy = true;
     try {
-      const response = await fetch(`/api/reimbursements/${encodeURIComponent(item.id)}/voucher`, { method: "POST" });
+      const response = await apiFetch(`/api/reimbursements/${encodeURIComponent(item.id)}/voucher`, { method: "POST" });
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
         throw new Error(body.detail || body.message || "生成单据失败");
@@ -840,7 +859,7 @@ export function createOrderDesk(data: Data) {
       busy = true;
       try {
         const form = new FormData(); form.append("file", file, file.name);
-        const response = await fetch(`/api/reimbursements/${encodeURIComponent(item.id)}/attachments`, { method: "POST", body: form });
+        const response = await apiFetch(`/api/reimbursements/${encodeURIComponent(item.id)}/attachments`, { method: "POST", body: form });
         if (!response.ok) throw new Error((await response.json()).message || "发票上传失败");
         await refresh();
         notify("发票已重新上传，等待财务核验");
@@ -867,7 +886,7 @@ export function createOrderDesk(data: Data) {
   async function updateReimbursementStatus(item: Reimbursement, status: string) {
     busy = true;
     try {
-      const response = await fetch(`/api/reimbursements/${encodeURIComponent(item.id)}`, {
+      const response = await apiFetch(`/api/reimbursements/${encodeURIComponent(item.id)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status, actor: "财务人员" }),
@@ -984,13 +1003,13 @@ export function createOrderDesk(data: Data) {
   async function postReimbursementAttachment(reimbursementId: string, file: File) {
     const form = new FormData();
     form.append("file", file, file.name);
-    const response = await fetch(`/api/reimbursements/${encodeURIComponent(reimbursementId)}/attachments`, { method: "POST", body: form });
+    const response = await apiFetch(`/api/reimbursements/${encodeURIComponent(reimbursementId)}/attachments`, { method: "POST", body: form });
     if (!response.ok) throw new Error((await response.json()).message || "发票上传失败");
   }
   async function postOrderAttachment(orderId: string, file: File) {
     const form = new FormData();
     form.append("file", file, file.name);
-    const response = await fetch(
+    const response = await apiFetch(
       `/api/orders/${encodeURIComponent(orderId)}/attachments`,
       { method: "POST", body: form },
     );
@@ -1045,7 +1064,7 @@ export function createOrderDesk(data: Data) {
       } finally {
         await refresh();
       }
-      replaceState("/orders", {});
+      replaceState(appPath("/orders"), {});
       notify(
         advances.length
           ? "订单已提交报销，已进入报销核验"
@@ -1111,7 +1130,7 @@ export function createOrderDesk(data: Data) {
       const form = new FormData();
       form.append("file", file, file.name);
       form.append("mode", "preview");
-      const response = await fetch("/api/catalog/import", { method: "POST", body: form });
+      const response = await apiFetch("/api/catalog/import", { method: "POST", body: form });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error?.message || result.message || "文件解析失败");
       catalogImportFile = file;
@@ -1182,7 +1201,7 @@ export function createOrderDesk(data: Data) {
       form.append("mode", "import");
       form.append("replace", "true");
       form.append("actor", creatorName || "财务人员");
-      const response = await fetch("/api/catalog/import", { method: "POST", body: form });
+      const response = await apiFetch("/api/catalog/import", { method: "POST", body: form });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error?.message || result.message || "文件导入失败");
       cancelCatalogImport();
@@ -1193,7 +1212,7 @@ export function createOrderDesk(data: Data) {
   }
   function openDetail(order: any, pushHistory = true) {
     if (!order) return;
-    if (pushHistory && window.location.pathname !== `/orders/${order.id}`) pushState(`/orders/${order.id}`, {});
+    if (pushHistory && currentAppPath() !== `/orders/${order.id}`) pushState(appPath(`/orders/${order.id}`), {});
     view = "overview";
     editingOrderId = "";
     orderFormDirty = false;
@@ -1202,7 +1221,7 @@ export function createOrderDesk(data: Data) {
     loadDetailAttachments(order.id);
   }
   function editOrder(order: any, pushHistory = true) {
-    if (pushHistory && window.location.pathname !== `/orders/${order.id}/edit`) pushState(`/orders/${order.id}/edit`, {});
+    if (pushHistory && currentAppPath() !== `/orders/${order.id}/edit`) pushState(appPath(`/orders/${order.id}/edit`), {});
     editingOrderId = order.id;
     customerId = order.customer_id;
     projectId = order.project_id;
@@ -1375,7 +1394,7 @@ export function createOrderDesk(data: Data) {
       sign: String(exportSign),
       actor: creatorName || "查看模式",
     });
-    window.location.href = `/api/orders/export?${params}`;
+    window.location.href = appPath(`/api/orders/export?${params}`);
     showExport = false;
   }
   async function copyExportTable() {
@@ -1482,6 +1501,8 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "canFinance", { get: () => workMode === "finance" });
   Object.defineProperty(desk, "canManageCatalog", { get: () => workMode === "finance" });
   Object.defineProperty(desk, "sidebarCollapsed", { get: () => sidebarCollapsed, set: (value) => { sidebarCollapsed = value; } });
+  Object.defineProperty(desk, "visitor", { get: () => data.visitor });
+  Object.defineProperty(desk, "isEmbedded", { get: () => isEmbedded });
   Object.defineProperty(desk, "customers", { get: () => customers, set: (value) => { customers = value; } });
   Object.defineProperty(desk, "projects", { get: () => projects, set: (value) => { projects = value; } });
   Object.defineProperty(desk, "catalog", { get: () => catalog, set: (value) => { catalog = value; } });

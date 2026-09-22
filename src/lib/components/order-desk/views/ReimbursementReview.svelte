@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getContext } from "svelte";
+  import { appPath } from "$lib/api";
   import { Check, Circle, CircleDot, Paperclip, X } from "lucide-svelte";
   const desk = getContext<any>("order-desk");
 
@@ -14,7 +15,7 @@
       return;
     }
     try {
-      const response = await fetch(`/api/reimbursements/${encodeURIComponent(reimbursementId)}/attachments`);
+      const response = await fetch(appPath(`/api/reimbursements/${encodeURIComponent(reimbursementId)}/attachments`));
       if (!response.ok) throw new Error("附件加载失败");
       const files = (await response.json()).data;
       attachmentsByOrder = { ...attachmentsByOrder, [reimbursementId]: files };
@@ -146,7 +147,7 @@
     </section>
     <details class="finance-workbench voucher-archive">
       <summary class="finance-workbench-head"><div><b>单据存档</b><span>已确认和已完成报销的可追溯记录</span></div><div class="archive-summary-meta"><strong>{desk.reimbursementStats.paid} 笔已报销</strong><span class="archive-toggle-label">展开存档</span></div></summary>
-      <div class="table-panel archive-table"><div class="table-scroll"><table><thead><tr><th>单据编号</th><th>报销人</th><th>报销物品</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>{#each desk.reimbursementVouchers as voucher}<tr><td><b>{voucher.voucherNo}</b><small>{voucher.advance_date}</small></td><td>{voucher.employee}</td><td>{voucher.advance_item || voucher.item}</td><td class="money">{desk.money(voucher.advance_amount)}</td><td><span class="status-dot">{voucher.reimbursement_status}</span></td><td><button class="link-action" type="button" onclick={() => detailItem = voucher}>查看单据</button><a class="link-action" href={`/api/reimbursements/export?mode=voucher&ids=${encodeURIComponent(voucher.id)}&actor=${encodeURIComponent(desk.creatorName || '财务人员')}`}>下载</a>{#if voucher.voucher_archived_at}<small class="muted">已归档</small>{:else}<button class="outline-action" type="button" disabled={desk.busy} onclick={() => desk.archiveReimbursementVoucher(voucher)}>归档</button>{/if}</td></tr>{:else}<tr><td colspan="6"><div class="empty-table">尚无已确认的报销单据。</div></td></tr>{/each}</tbody></table></div></div>
+      <div class="table-panel archive-table"><div class="table-scroll"><table><thead><tr><th>单据编号</th><th>报销人</th><th>报销物品</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>{#each desk.reimbursementVouchers as voucher}<tr><td><b>{voucher.voucherNo}</b><small>{voucher.advance_date}</small></td><td>{voucher.employee}</td><td>{voucher.advance_item || voucher.item}</td><td class="money">{desk.money(voucher.advance_amount)}</td><td><span class="status-dot">{voucher.reimbursement_status}</span></td><td><button class="link-action" type="button" onclick={() => detailItem = voucher}>查看单据</button><a class="link-action" href={appPath(`/api/reimbursements/export?mode=voucher&ids=${encodeURIComponent(voucher.id)}&actor=${encodeURIComponent(desk.creatorName || '财务人员')}`)}>下载</a>{#if voucher.voucher_archived_at}<small class="muted">已归档</small>{:else}<button class="outline-action" type="button" disabled={desk.busy} onclick={() => desk.archiveReimbursementVoucher(voucher)}>归档</button>{/if}</td></tr>{:else}<tr><td colspan="6"><div class="empty-table">尚无已确认的报销单据。</div></td></tr>{/each}</tbody></table></div></div>
     </details>
   {/if}
   {#if detailItem}
