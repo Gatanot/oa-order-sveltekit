@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getContext } from "svelte";
-  import { Download, ListFilter, Paperclip, Plus, RefreshCw, Search, Trash2 } from "lucide-svelte";
+  import { ChevronLeft, ChevronRight, Download, ListFilter, Paperclip, Plus, RefreshCw, Search, Trash2 } from "lucide-svelte";
   const desk = getContext<any>("order-desk");
   function openRow(event: KeyboardEvent, order: any) {
     if ((event.target as HTMLElement).closest("button, input, select, a")) return;
@@ -15,7 +15,7 @@
   {#if desk.detailOrder}
     <div class="detail-card">
       <div class="section-heading"><div><p class="section-kicker">ORDER DETAIL</p><h2>{desk.detailOrder.code}</h2><span>{desk.detailOrder.customer_name} · {desk.detailOrder.project_name}</span></div><div class="top-actions"><button class="outline-action" onclick={() => desk.navigate('/orders')}>返回列表</button>{#if desk.canWrite}<button class="primary-action" onclick={() => desk.editOrder(desk.detailOrder)}>编辑订单</button>{/if}</div></div>
-      <div class="info-grid"><div><small>客户部门</small><b>{desk.detailOrder.customer_department || "—"}</b></div><div><small>联系人 / 下单人</small><b>{desk.detailOrder.contact || "—"}</b></div><div><small>录入人 / 开单员</small><b>{desk.detailOrder.created_by || "—"}</b></div><div><small>指定设计师</small><b>{desk.detailOrder.designer || "—"}</b></div><div><small>项目负责人</small><b>{desk.detailOrder.project_owner || "—"}</b></div><div><small>下单日期</small><b>{desk.detailOrder.order_date}</b></div><div><small>交货日期</small><b>{desk.detailOrder.delivery_date || "—"}</b></div><div><small>状态</small><b>{desk.detailOrder.status}</b></div><div><small>结款状态</small><b>{desk.detailOrder.payment_status || "未结款"}</b></div><div><small>销售总额</small><b>{desk.money(desk.detailOrder.quote_amount)}</b></div><div><small>制作成本</small><b>{desk.money(desk.detailOrder.cost_amount)}</b></div><div><small>员工垫付</small><b>{desk.money((desk.detailOrder.advances || []).reduce((sum: number, item: any) => sum + Math.round(Number(item.amount || 0) * 100), 0))}</b></div><div><small>预计毛利</small><b>{desk.money(desk.detailOrder.quote_amount - desk.detailOrder.cost_amount - (desk.detailOrder.advances || []).reduce((sum: number, item: any) => sum + Math.round(Number(item.amount || 0) * 100), 0))}</b></div></div>
+      <div class="info-grid"><div><small>客户部门</small><b>{desk.detailOrder.customer_department || "—"}</b></div><div><small>联系人 / 下单人</small><b>{desk.detailOrder.contact || "—"}</b></div><div><small>录入人 / 开单员</small><b>{desk.detailOrder.created_by || "—"}</b></div><div><small>指定设计师</small><b>{desk.detailOrder.designer || "—"}</b></div><div><small>策划人</small><b>{desk.detailOrder.planner || "—"}</b></div><div><small>项目负责人</small><b>{desk.detailOrder.project_owner || "—"}</b></div><div><small>下单日期</small><b>{desk.detailOrder.order_date}</b></div><div><small>交货日期</small><b>{desk.detailOrder.delivery_date || "—"}</b></div><div><small>状态</small><b>{desk.detailOrder.status}</b></div><div><small>结款状态</small><b>{desk.detailOrder.payment_status || "未结款"}</b></div><div><small>销售总额</small><b>{desk.money(desk.detailOrder.quote_amount)}</b></div><div><small>制作成本</small><b>{desk.money(desk.detailOrder.cost_amount)}</b></div><div><small>员工垫付</small><b>{desk.money((desk.detailOrder.advances || []).reduce((sum: number, item: any) => sum + Math.round(Number(item.amount || 0) * 100), 0))}</b></div><div><small>预计毛利</small><b>{desk.money(desk.detailOrder.quote_amount - desk.detailOrder.cost_amount - (desk.detailOrder.advances || []).reduce((sum: number, item: any) => sum + Math.round(Number(item.amount || 0) * 100), 0))}</b></div></div>
       <h3>产品明细</h3><div class="table-panel"><div class="table-scroll"><table><thead><tr><th>名称</th><th>单位</th><th>数量</th><th>单价</th><th>小计</th><th>制作要求</th></tr></thead><tbody>{#each desk.detailOrder.products as p}<tr><td>{p.name}</td><td>{p.unit}</td><td>{p.quantity}</td><td>{Number(p.unit_price || 0).toFixed(2)}</td><td>{Number(p.subtotal || Number(p.quantity || 0) * Number(p.unit_price || 0)).toFixed(2)}</td><td>{p.specification || "—"}</td></tr>{/each}</tbody></table></div></div>
       {#if desk.detailOrder.costs?.length}<h3>固定成本</h3><div class="table-panel"><div class="table-scroll"><table><thead><tr><th>项目</th><th>供应商</th><th>单位</th><th>数量</th><th>单价</th><th>小计</th></tr></thead><tbody>{#each desk.detailOrder.costs as c}<tr><td>{c.name}</td><td>{c.vendor}</td><td>{c.unit || "项"}</td><td>{c.quantity}</td><td>{Number(c.unit_price || 0).toFixed(2)}</td><td>{Number(c.subtotal || Number(c.quantity || 0) * Number(c.unit_price || 0)).toFixed(2)}</td></tr>{/each}</tbody></table></div></div>{/if}
       {#if desk.detailOrder.advances?.length}<h3>员工垫付</h3><div class="table-panel"><div class="table-scroll"><table><thead><tr><th>员工</th><th>物品</th><th>日期</th><th>金额</th><th>发票</th><th>状态</th></tr></thead><tbody>{#each desk.detailOrder.advances as advance}<tr><td>{advance.employee || desk.detailOrder.designer || "—"}</td><td>{advance.item || "—"}</td><td>{advance.date || desk.detailOrder.order_date}</td><td>{Number(advance.amount || 0).toFixed(2)}</td><td>{#if advance.attachment_id}<button class="attachment-link" type="button" onclick={() => desk.openAttachmentPreview(desk.reimbursementAttachmentUrl(advance.attachment_id), advance.invoice || '发票附件')}>{advance.invoice || "查看发票"}</button>{:else}{advance.invoice || "未上传"}{/if}</td><td><span class="status-dot">{advance.status || "待审核"}</span></td></tr>{/each}</tbody></table></div></div>{/if}
@@ -83,16 +83,16 @@
     <label class="field"><span>排序</span><select bind:value={desk.orderSort}><option value="date_desc">日期：新到旧</option><option value="date_asc">日期：旧到新</option><option value="delivery_asc">交货日期：近到远</option><option value="quote_desc">报价：高到低</option><option value="quote_asc">报价：低到高</option></select></label>
     <label class="field filter-search"><span>关键词</span><div class="search-field"><Search size={16} /><input bind:value={desk.search} placeholder="订单 / 产品 / 联系人" /></div></label>
   </div>
-  <div class="table-tools"><span class="filter-result" aria-live="polite">已显示 {desk.filteredOrders.length} 笔订单</span><div class="table-actions"><button class="outline-action" type="button" onclick={() => desk.showOrderFilters = true}>更多筛选</button><button class="outline-action" type="button" onclick={desk.resetOrderFilters}>重置</button>{#if desk.canFinance}<button class="filter-icon" title="导出当前筛选结果" aria-label="导出当前筛选结果" onclick={desk.openExport}><ListFilter size={17} /></button>{/if}<details class="column-settings"><summary>显示字段</summary><div class="column-menu">{#each desk.orderColumnOptions as option}<label><input type="checkbox" checked={desk.visibleOrderColumns.includes(option[0])} onchange={() => desk.toggleOrderColumn(option[0])} />{option[1]}</label>{/each}</div></details></div></div>
-  <div class="table-panel">
+  <div class="table-tools"><span class="filter-result" aria-live="polite">共 {desk.filteredOrders.length} 笔订单，第 {desk.orderPage} / {desk.orderPageCount} 页</span><div class="table-actions"><button class="outline-action" type="button" onclick={() => desk.showOrderFilters = true}>更多筛选</button><button class="outline-action" type="button" onclick={desk.resetOrderFilters}>重置</button>{#if desk.canFinance}<button class="filter-icon" title="导出当前筛选结果" aria-label="导出当前筛选结果" onclick={desk.openExport}><ListFilter size={17} /></button>{/if}<details class="column-settings"><summary>显示字段</summary><div class="column-menu">{#each desk.orderColumnOptions as option}<label><input type="checkbox" checked={desk.visibleOrderColumns.includes(option[0])} onchange={() => desk.toggleOrderColumn(option[0])} />{option[1]}</label>{/each}</div></details></div></div>
+  <div class="table-panel desktop-order-table">
     <div class="table-scroll">
-      <table>
+      <table class="order-list-table">
         <thead
           ><tr
             >{#if desk.canFinance}<th>导出</th>{/if}<th>订单信息</th><th>客户 / 项目</th>{#if desk.visibleOrderColumns.includes("department")}<th>客户部门</th>{/if}{#if desk.visibleOrderColumns.includes("contact")}<th>联系人</th>{/if}{#if desk.visibleOrderColumns.includes("designer")}<th>设计师</th>{/if}{#if desk.visibleOrderColumns.includes("owner")}<th>负责人</th>{/if}{#if desk.visibleOrderColumns.includes("quote")}<th>报价</th>{/if}{#if desk.visibleOrderColumns.includes("cost")}<th>成本</th>{/if}{#if desk.visibleOrderColumns.includes("creator")}<th>录入人</th>{/if}{#if desk.visibleOrderColumns.includes("date")}<th>日期</th>{/if}{#if desk.visibleOrderColumns.includes("delivery")}<th>交货日期</th>{/if}{#if desk.visibleOrderColumns.includes("payment")}<th>结款状态</th>{/if}{#if desk.visibleOrderColumns.includes("status")}<th>状态</th>{/if}<th>操作</th></tr
           ></thead
         ><tbody
-          >{#each desk.filteredOrders as order}<tr class="order-click-row" tabindex="0" role="button" aria-label={`查看订单 ${order.service_name}`} onclick={() => desk.openDetail(order)} onkeydown={(event) => openRow(event, order)}>{#if desk.canFinance}<td
+          >{#each desk.pagedOrders as order}<tr class="order-click-row" tabindex="0" role="button" aria-label={`查看订单 ${order.service_name}`} onclick={() => desk.openDetail(order)} onkeydown={(event) => openRow(event, order)}>{#if desk.canFinance}<td
                 ><input
                   type="checkbox"
                   aria-label={`选择导出 ${order.service_name}`}
@@ -100,13 +100,13 @@
                   onchange={() => desk.toggleOrder(order.id)}
                   onclick={(event) => event.stopPropagation()}
                 /></td>{/if}<td
-                ><b>{order.service_name}</b><small
+                title={`${order.service_name} · ${order.code}`}><b>{order.service_name}</b><small
                   >{order.code} · {order.quantity}{order.unit}</small
                 ></td
-              ><td
+              ><td title={`${order.customer_name} · ${order.project_name}`}
                 ><b>{order.customer_name}</b><small>{order.project_name}</small
                 ></td
-              >{#if desk.visibleOrderColumns.includes("department")}<td>{order.customer_department || "—"}</td>{/if}{#if desk.visibleOrderColumns.includes("contact")}<td>{order.contact || "—"}</td>{/if}{#if desk.visibleOrderColumns.includes("designer")}<td>{order.designer || "—"}</td>{/if}{#if desk.visibleOrderColumns.includes("owner")}<td>{order.project_owner || "未分配"}</td>{/if}{#if desk.visibleOrderColumns.includes("quote")}<td class="money">{desk.money(order.quote_amount)}</td>{/if}{#if desk.visibleOrderColumns.includes("cost")}<td class="money cost">{desk.money(order.cost_amount)}</td>{/if}{#if desk.visibleOrderColumns.includes("creator")}<td>{order.created_by}</td>{/if}{#if desk.visibleOrderColumns.includes("date")}<td>{order.order_date}</td>{/if}{#if desk.visibleOrderColumns.includes("delivery")}<td>{order.delivery_date || "—"}</td>{/if}{#if desk.visibleOrderColumns.includes("payment")}<td>{order.payment_status || "未结款"}</td>{/if}{#if desk.visibleOrderColumns.includes("status")}<td
+              >{#if desk.visibleOrderColumns.includes("department")}<td title={order.customer_department || "—"}>{order.customer_department || "—"}</td>{/if}{#if desk.visibleOrderColumns.includes("contact")}<td title={order.contact || "—"}>{order.contact || "—"}</td>{/if}{#if desk.visibleOrderColumns.includes("designer")}<td title={order.designer || "—"}>{order.designer || "—"}</td>{/if}{#if desk.visibleOrderColumns.includes("owner")}<td title={order.project_owner || "未分配"}>{order.project_owner || "未分配"}</td>{/if}{#if desk.visibleOrderColumns.includes("quote")}<td class="money">{desk.money(order.quote_amount)}</td>{/if}{#if desk.visibleOrderColumns.includes("cost")}<td class="money cost">{desk.money(order.cost_amount)}</td>{/if}{#if desk.visibleOrderColumns.includes("creator")}<td>{order.created_by}</td>{/if}{#if desk.visibleOrderColumns.includes("date")}<td>{order.order_date}</td>{/if}{#if desk.visibleOrderColumns.includes("delivery")}<td>{order.delivery_date || "—"}</td>{/if}{#if desk.visibleOrderColumns.includes("payment")}<td>{order.payment_status || "未结款"}</td>{/if}{#if desk.visibleOrderColumns.includes("status")}<td
                 ><span class="status-dot">{order.status}</span
                 >{#if order.reimbursement_status === "待审核" || order.reimbursement_status === "待打款"}<small
                     class="status-dot">需报销</small
@@ -128,5 +128,42 @@
       </table>
     </div>
   </div>
+  <div class="mobile-order-list" aria-label="订单列表">
+    {#each desk.pagedOrders as order}
+      <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
+      <article class="mobile-order-card" tabindex="0" role="button" aria-label={`查看订单 ${order.service_name}`} onclick={() => desk.openDetail(order)} onkeydown={(event) => openRow(event, order)}>
+        <div class="mobile-order-card-head">
+          <div class="mobile-order-card-title"><b>{order.service_name}</b><small>{order.code} · {order.quantity}{order.unit}</small></div>
+          {#if desk.canFinance}<input type="checkbox" aria-label={`选择导出 ${order.service_name}`} checked={desk.selectedOrderIds.includes(order.id)} onchange={() => desk.toggleOrder(order.id)} onclick={(event) => event.stopPropagation()} />{/if}
+        </div>
+        <div class="mobile-order-card-project"><b>{order.customer_name}</b><span>{order.project_name}</span></div>
+        <div class="mobile-order-card-meta">
+          <span><small>报价</small><b class="money">{desk.money(order.quote_amount)}</b></span>
+          <span><small>成本</small><b class="money cost">{desk.money(order.cost_amount)}</b></span>
+          <span><small>日期</small><b>{order.order_date}</b></span>
+          <span><small>状态</small><b><span class="status-dot">{order.status}</span></b></span>
+        </div>
+        <div class="mobile-order-card-foot"><span>{order.payment_status || "未结款"}{order.reimbursement_status === "待审核" || order.reimbursement_status === "待打款" ? " · 需报销" : ""}</span>{#if desk.canFinance}<button class="delete-action" title="删除订单" aria-label={`删除订单 ${order.service_name}`} disabled={desk.busy} onclick={(event) => { event.stopPropagation(); desk.deleteOrder(order); }}><Trash2 size={15} /></button>{/if}</div>
+      </article>
+    {:else}
+      <div class="empty-table">没有匹配的订单，先录入一笔订单吧。</div>
+    {/each}
+  </div>
+  {#if desk.orderPageCount > 1}
+    <nav class="order-pagination" aria-label="订单分页">
+      <button class="icon-control" title="上一页" aria-label="上一页" disabled={desk.orderPage === 1} onclick={() => desk.setOrderPage(desk.orderPage - 1)}><ChevronLeft size={17} /></button>
+      <div class="order-page-numbers">
+        {#each Array(desk.orderPageCount) as _, i}
+          {@const page = i + 1}
+          {#if page === 1 || page === desk.orderPageCount || Math.abs(page - desk.orderPage) <= 1}
+            <button class:active={page === desk.orderPage} class="order-page-number" aria-label={`第 ${page} 页`} aria-current={page === desk.orderPage ? "page" : undefined} onclick={() => desk.setOrderPage(page)}>{page}</button>
+          {:else if page === 2 || page === desk.orderPageCount - 1}
+            <span class="order-page-ellipsis">…</span>
+          {/if}
+        {/each}
+      </div>
+      <button class="icon-control" title="下一页" aria-label="下一页" disabled={desk.orderPage === desk.orderPageCount} onclick={() => desk.setOrderPage(desk.orderPage + 1)}><ChevronRight size={17} /></button>
+    </nav>
+  {/if}
   {/if}
 </section>

@@ -55,6 +55,7 @@ const apiFetch = (input: RequestInfo | URL, init?: RequestInit) =>
     reimbursement_status?: string;
     customer_department?: string;
     designer?: string;
+    planner?: string;
     delivery_date?: string;
     contact?: string;
     payment_status?: string;
@@ -106,6 +107,7 @@ export function createOrderDesk(data: Data) {
   let contact = $state("");
   let customerDepartment = $state("");
   let designer = $state("");
+  let planner = $state("");
   let paymentStatus = $state("未结款");
   let status = $state("制作中");
   let products = $state<Array<Record<string, any>>>([]);
@@ -145,6 +147,8 @@ export function createOrderDesk(data: Data) {
   let search = $state("");
   let catalogSearch = $state("");
   let catalogKind = $state<"quote" | "cost">("quote");
+  let catalogPage = $state(1);
+  const catalogPageSize = 20;
   let catalogSourceId = $state("");
   let catalogCategory = $state("");
   let catalogImportPreview = $state<any>(null);
@@ -169,6 +173,8 @@ export function createOrderDesk(data: Data) {
   let filterFrom = $state("");
   let filterTo = $state("");
   let orderSort = $state("date_desc");
+  let orderPage = $state(1);
+  const orderPageSize = 20;
   let showExport = $state(false);
   let exportMode = $state<"detail" | "settlement">("detail");
   let exportTitle = $state("");
@@ -274,6 +280,21 @@ export function createOrderDesk(data: Data) {
         .filter(Boolean),
     ),
   ]);
+  const catalogPageCount = $derived(Math.max(1, Math.ceil(visibleCatalog.length / catalogPageSize)));
+  const pagedCatalog = $derived(
+    visibleCatalog.slice((catalogPage - 1) * catalogPageSize, catalogPage * catalogPageSize),
+  );
+  $effect(() => {
+    visibleCatalog.length;
+    catalogSearch;
+    catalogKind;
+    catalogSourceId;
+    catalogCategory;
+    catalogPage = 1;
+  });
+  function setCatalogPage(page: number) {
+    catalogPage = Math.min(Math.max(page, 1), catalogPageCount);
+  }
   const selectedCustomer = $derived(
     customers.find((item) => item.id === customerId)?.name || "",
   );
@@ -317,6 +338,27 @@ export function createOrderDesk(data: Data) {
           (!filterCustomer || project.customer_id === filterCustomer),
       )
     ) filterProject = "";
+  }
+  const orderPageCount = $derived(Math.max(1, Math.ceil(filteredOrders.length / orderPageSize)));
+  const pagedOrders = $derived(
+    filteredOrders.slice((orderPage - 1) * orderPageSize, orderPage * orderPageSize),
+  );
+  $effect(() => {
+    filteredOrders.length;
+    search;
+    filterCustomer;
+    filterProject;
+    filterOwner;
+    filterDesigner;
+    filterCreator;
+    filterPayment;
+    filterFrom;
+    filterTo;
+    orderSort;
+    orderPage = 1;
+  });
+  function setOrderPage(page: number) {
+    orderPage = Math.min(Math.max(page, 1), orderPageCount);
   }
   const projectStats = $derived(
     projects
@@ -1061,7 +1103,7 @@ export function createOrderDesk(data: Data) {
     }
     busy = true;
     try {
-      const payload = { project_id: projectId, order_date: orderDate, delivery_date: deliveryDate, contact, customer_department: customerDepartment, designer, payment_status: paymentStatus, status, created_by: createdBy.trim() || creatorName || "未填写", note, products: validProducts, costs: validCosts, advances: validAdvances, idempotency_key: editingOrderId ? "" : (submissionKey ||= crypto.randomUUID()) };
+      const payload = { project_id: projectId, order_date: orderDate, delivery_date: deliveryDate, contact, customer_department: customerDepartment, designer, planner, payment_status: paymentStatus, status, created_by: createdBy.trim() || creatorName || "未填写", note, products: validProducts, costs: validCosts, advances: validAdvances, idempotency_key: editingOrderId ? "" : (submissionKey ||= crypto.randomUUID()) };
       const result = editingOrderId
         ? await api.patch<{ data: Order }>(`/api/orders/${editingOrderId}`, payload)
         : await api.post<{ data: Order }>("/api/orders", payload);
@@ -1091,6 +1133,7 @@ export function createOrderDesk(data: Data) {
       contact = "";
       customerDepartment = "";
       designer = "";
+      planner = "";
       paymentStatus = "未结款";
       orderFormDirty = false;
     } catch (e) {
@@ -1237,6 +1280,7 @@ export function createOrderDesk(data: Data) {
     contact = order.contact || "";
     customerDepartment = order.customer_department || "";
     designer = order.designer || "";
+    planner = order.planner || "";
     paymentStatus = order.payment_status || "未结款";
     status = order.status || "制作中";
     createdBy = order.created_by || creatorName;
@@ -1333,6 +1377,7 @@ export function createOrderDesk(data: Data) {
     contact = "";
     customerDepartment = "";
     designer = "";
+    planner = "";
     status = "制作中";
     paymentStatus = "未结款";
     createdBy = creatorName;
@@ -1526,6 +1571,7 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "contact", { get: () => contact, set: (value) => { contact = value; } });
   Object.defineProperty(desk, "customerDepartment", { get: () => customerDepartment, set: (value) => { customerDepartment = value; } });
   Object.defineProperty(desk, "designer", { get: () => designer, set: (value) => { designer = value; } });
+  Object.defineProperty(desk, "planner", { get: () => planner, set: (value) => { planner = value; } });
   Object.defineProperty(desk, "paymentStatus", { get: () => paymentStatus, set: (value) => { paymentStatus = value; } });
   Object.defineProperty(desk, "status", { get: () => status, set: (value) => { status = value; } });
   Object.defineProperty(desk, "editingOrderId", { get: () => editingOrderId });
@@ -1562,6 +1608,10 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "search", { get: () => search, set: (value) => { search = value; } });
   Object.defineProperty(desk, "catalogSearch", { get: () => catalogSearch, set: (value) => { catalogSearch = value; } });
   Object.defineProperty(desk, "catalogKind", { get: () => catalogKind, set: (value) => { catalogKind = value; catalogSourceId = ""; catalogCategory = ""; } });
+  Object.defineProperty(desk, "catalogPage", { get: () => catalogPage });
+  Object.defineProperty(desk, "catalogPageCount", { get: () => catalogPageCount });
+  Object.defineProperty(desk, "catalogPageSize", { get: () => catalogPageSize });
+  Object.defineProperty(desk, "pagedCatalog", { get: () => pagedCatalog });
   Object.defineProperty(desk, "catalogSourceId", { get: () => catalogSourceId, set: (value) => { catalogSourceId = value; } });
   Object.defineProperty(desk, "catalogCategory", { get: () => catalogCategory, set: (value) => { catalogCategory = value; } });
   Object.defineProperty(desk, "catalogImportPreview", { get: () => catalogImportPreview });
@@ -1584,6 +1634,10 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "filterFrom", { get: () => filterFrom, set: (value) => { filterFrom = value; } });
   Object.defineProperty(desk, "filterTo", { get: () => filterTo, set: (value) => { filterTo = value; } });
   Object.defineProperty(desk, "orderSort", { get: () => orderSort, set: (value) => { orderSort = value; } });
+  Object.defineProperty(desk, "orderPage", { get: () => orderPage });
+  Object.defineProperty(desk, "orderPageCount", { get: () => orderPageCount });
+  Object.defineProperty(desk, "orderPageSize", { get: () => orderPageSize });
+  Object.defineProperty(desk, "pagedOrders", { get: () => pagedOrders });
   Object.defineProperty(desk, "showExport", { get: () => showExport, set: (value) => { showExport = value; } });
   Object.defineProperty(desk, "exportMode", { get: () => exportMode, set: (value) => { exportMode = value; } });
   Object.defineProperty(desk, "exportTitle", { get: () => exportTitle, set: (value) => { exportTitle = value; } });
@@ -1636,6 +1690,8 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "creators", { get: () => creators });
   desk.money = money;
   desk.navigate = navigate;
+  desk.setOrderPage = setOrderPage;
+  desk.setCatalogPage = setCatalogPage;
   desk.setWorkMode = setWorkMode;
   desk.refresh = refresh;
   desk.markReimbursement = markReimbursement;

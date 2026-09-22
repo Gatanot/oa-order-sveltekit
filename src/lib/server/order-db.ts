@@ -65,18 +65,22 @@ export function moneyToCents(value: unknown): number {
 function migrate(db: Database.Database) {
   db.exec('CREATE TABLE IF NOT EXISTS schema_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)');
   const version = db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").get() as { value: string } | undefined;
-  if (version?.value === '20') return;
+  if (version?.value === '21') return;
+  if (version?.value === '20') {
+    db.exec(`ALTER TABLE orders_simple ADD COLUMN planner TEXT NOT NULL DEFAULT ''; UPDATE schema_meta SET value='21' WHERE key='order_app_version';`);
+    return;
+  }
   if (version?.value === '19') {
     db.exec(`
       CREATE TABLE catalog_sources_v20(id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('quote','cost')), owner_name TEXT NOT NULL, source_file TEXT NOT NULL DEFAULT '', source_method TEXT NOT NULL DEFAULT 'manual', active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, import_summary_json TEXT NOT NULL DEFAULT '{}', UNIQUE(kind,owner_name));
-      CREATE TABLE orders_simple_v20(id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, customer_id TEXT NOT NULL, project_id TEXT NOT NULL, catalog_id TEXT, service_name TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 1, unit TEXT NOT NULL DEFAULT '项', quote_amount INTEGER NOT NULL DEFAULT 0, cost_amount INTEGER NOT NULL DEFAULT 0, order_date TEXT NOT NULL, delivery_date TEXT NOT NULL DEFAULT '', contact TEXT NOT NULL DEFAULT '', customer_department TEXT NOT NULL DEFAULT '', designer TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL, status TEXT NOT NULL DEFAULT '制作中', payment_status TEXT NOT NULL DEFAULT '未结款', note TEXT NOT NULL DEFAULT '', specification TEXT NOT NULL DEFAULT '', products_json TEXT NOT NULL DEFAULT '[]', costs_json TEXT NOT NULL DEFAULT '[]', is_extra INTEGER NOT NULL DEFAULT 0, idempotency_key TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, FOREIGN KEY(customer_id) REFERENCES customers_simple(id), FOREIGN KEY(project_id) REFERENCES projects_simple(id), FOREIGN KEY(catalog_id) REFERENCES catalog_items(id));
+      CREATE TABLE orders_simple_v20(id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, customer_id TEXT NOT NULL, project_id TEXT NOT NULL, catalog_id TEXT, service_name TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 1, unit TEXT NOT NULL DEFAULT '项', quote_amount INTEGER NOT NULL DEFAULT 0, cost_amount INTEGER NOT NULL DEFAULT 0, order_date TEXT NOT NULL, delivery_date TEXT NOT NULL DEFAULT '', contact TEXT NOT NULL DEFAULT '', customer_department TEXT NOT NULL DEFAULT '', designer TEXT NOT NULL DEFAULT '', planner TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL, status TEXT NOT NULL DEFAULT '制作中', payment_status TEXT NOT NULL DEFAULT '未结款', note TEXT NOT NULL DEFAULT '', specification TEXT NOT NULL DEFAULT '', products_json TEXT NOT NULL DEFAULT '[]', costs_json TEXT NOT NULL DEFAULT '[]', is_extra INTEGER NOT NULL DEFAULT 0, idempotency_key TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, FOREIGN KEY(customer_id) REFERENCES customers_simple(id), FOREIGN KEY(project_id) REFERENCES projects_simple(id), FOREIGN KEY(catalog_id) REFERENCES catalog_items(id));
       CREATE TABLE order_attachments_v20(id TEXT PRIMARY KEY, order_id TEXT NOT NULL, file_name TEXT NOT NULL, mime_type TEXT NOT NULL DEFAULT '', file_size INTEGER NOT NULL DEFAULT 0, storage_path TEXT NOT NULL DEFAULT '', attachment_kind TEXT NOT NULL DEFAULT 'note', visibility TEXT NOT NULL DEFAULT 'order', created_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE);
       CREATE TABLE reimbursements_simple_v20(id TEXT PRIMARY KEY, employee TEXT NOT NULL, item TEXT NOT NULL, amount INTEGER NOT NULL DEFAULT 0, advance_date TEXT NOT NULL, order_id TEXT, invoice TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending_review' CHECK(status IN ('pending_review','rejected','pending_payment','paid')), reject_reason TEXT NOT NULL DEFAULT '', reviewed_by TEXT NOT NULL DEFAULT '', reviewed_at TEXT, reimbursed_by TEXT NOT NULL DEFAULT '', reimbursed_at TEXT, voucher_no TEXT NOT NULL DEFAULT '', voucher_created_at TEXT, voucher_archived_at TEXT, created_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE);
       CREATE TABLE reimbursement_attachments_v20(id TEXT PRIMARY KEY, reimbursement_id TEXT NOT NULL, file_name TEXT NOT NULL, mime_type TEXT NOT NULL DEFAULT '', file_size INTEGER NOT NULL DEFAULT 0, storage_path TEXT NOT NULL DEFAULT '', attachment_kind TEXT NOT NULL DEFAULT 'invoice', visibility TEXT NOT NULL DEFAULT 'participants', created_at TEXT NOT NULL, FOREIGN KEY(reimbursement_id) REFERENCES reimbursements_simple(id) ON DELETE CASCADE);
       CREATE TABLE audit_logs_v20(id TEXT PRIMARY KEY, actor_name TEXT NOT NULL DEFAULT '', action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL DEFAULT '', from_value TEXT NOT NULL DEFAULT '', to_value TEXT NOT NULL DEFAULT '', detail_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL);
 
       INSERT INTO catalog_sources_v20(id,kind,owner_name,source_file,source_method,active,created_at,updated_at,import_summary_json) SELECT id,kind,owner_name,source_file,source_method,active,created_at,updated_at,import_summary_json FROM catalog_sources;
-      INSERT INTO orders_simple_v20(id,code,customer_id,project_id,catalog_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,delivery_date,contact,customer_department,designer,created_by,status,payment_status,note,specification,products_json,costs_json,is_extra,idempotency_key,created_at) SELECT id,code,customer_id,project_id,catalog_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,delivery_date,contact,customer_department,designer,created_by,status,payment_status,note,specification,products_json,costs_json,is_extra,idempotency_key,created_at FROM orders_simple;
+      INSERT INTO orders_simple_v20(id,code,customer_id,project_id,catalog_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,delivery_date,contact,customer_department,designer,planner,created_by,status,payment_status,note,specification,products_json,costs_json,is_extra,idempotency_key,created_at) SELECT id,code,customer_id,project_id,catalog_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,delivery_date,contact,customer_department,designer,'',created_by,status,payment_status,note,specification,products_json,costs_json,is_extra,idempotency_key,created_at FROM orders_simple;
       INSERT INTO order_attachments_v20(id,order_id,file_name,mime_type,file_size,storage_path,attachment_kind,visibility,created_at) SELECT id,order_id,file_name,mime_type,file_size,storage_path,attachment_kind,visibility,created_at FROM order_attachments;
       INSERT INTO reimbursements_simple_v20(id,employee,item,amount,advance_date,order_id,invoice,note,status,reject_reason,reviewed_by,reviewed_at,reimbursed_by,reimbursed_at,voucher_no,voucher_created_at,voucher_archived_at,created_at) SELECT id,employee,item,amount,advance_date,order_id,invoice,note,status,reject_reason,reviewed_by,reviewed_at,reimbursed_by,reimbursed_at,voucher_no,voucher_created_at,voucher_archived_at,created_at FROM reimbursements_simple;
       INSERT INTO reimbursement_attachments_v20(id,reimbursement_id,file_name,mime_type,file_size,storage_path,attachment_kind,visibility,created_at) SELECT id,reimbursement_id,file_name,mime_type,file_size,storage_path,attachment_kind,visibility,created_at FROM reimbursement_attachments;
@@ -103,7 +107,7 @@ function migrate(db: Database.Database) {
       CREATE INDEX idx_simple_reimbursements_order ON reimbursements_simple(order_id);
       CREATE UNIQUE INDEX idx_reimbursements_voucher_no ON reimbursements_simple(voucher_no) WHERE voucher_no <> '';
       CREATE INDEX idx_audit_entity ON audit_logs(entity_type,entity_id,created_at DESC);
-      UPDATE schema_meta SET value='20' WHERE key='order_app_version';
+      UPDATE schema_meta SET value='21' WHERE key='order_app_version';
     `);
     return;
   }
@@ -248,7 +252,7 @@ function migrate(db: Database.Database) {
     CREATE TABLE projects_simple(id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, name TEXT NOT NULL, owner TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '进行中', created_at TEXT NOT NULL, UNIQUE(customer_id,name), FOREIGN KEY(customer_id) REFERENCES customers_simple(id) ON DELETE CASCADE);
     CREATE TABLE catalog_sources(id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('quote','cost')), owner_name TEXT NOT NULL, source_file TEXT NOT NULL DEFAULT '', source_method TEXT NOT NULL DEFAULT 'manual', active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, import_summary_json TEXT NOT NULL DEFAULT '{}', UNIQUE(kind,owner_name));
     CREATE TABLE catalog_items(id TEXT PRIMARY KEY, category TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, unit TEXT NOT NULL DEFAULT '项', quote_unit INTEGER NOT NULL DEFAULT 0, cost_unit INTEGER NOT NULL DEFAULT 0, customer_name TEXT NOT NULL DEFAULT '', project_name TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, source_file TEXT NOT NULL DEFAULT '', source_sheet TEXT NOT NULL DEFAULT '', source_type TEXT NOT NULL DEFAULT 'manual', item_no TEXT NOT NULL DEFAULT '', specification TEXT NOT NULL DEFAULT '', estimated_quantity TEXT NOT NULL DEFAULT '', max_quote_unit INTEGER NOT NULL DEFAULT 0, supplier_remark TEXT NOT NULL DEFAULT '', raw_data TEXT NOT NULL DEFAULT '{}', source_id TEXT REFERENCES catalog_sources(id) ON DELETE SET NULL, UNIQUE(category,name,customer_name,project_name,specification,estimated_quantity));
-    CREATE TABLE orders_simple(id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, customer_id TEXT NOT NULL, project_id TEXT NOT NULL, catalog_id TEXT, service_name TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 1, unit TEXT NOT NULL DEFAULT '项', quote_amount INTEGER NOT NULL DEFAULT 0, cost_amount INTEGER NOT NULL DEFAULT 0, order_date TEXT NOT NULL, delivery_date TEXT NOT NULL DEFAULT '', contact TEXT NOT NULL DEFAULT '', customer_department TEXT NOT NULL DEFAULT '', designer TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL, status TEXT NOT NULL DEFAULT '制作中', payment_status TEXT NOT NULL DEFAULT '未结款', note TEXT NOT NULL DEFAULT '', specification TEXT NOT NULL DEFAULT '', products_json TEXT NOT NULL DEFAULT '[]', costs_json TEXT NOT NULL DEFAULT '[]', is_extra INTEGER NOT NULL DEFAULT 0, idempotency_key TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, FOREIGN KEY(customer_id) REFERENCES customers_simple(id), FOREIGN KEY(project_id) REFERENCES projects_simple(id), FOREIGN KEY(catalog_id) REFERENCES catalog_items(id));
+    CREATE TABLE orders_simple(id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, customer_id TEXT NOT NULL, project_id TEXT NOT NULL, catalog_id TEXT, service_name TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 1, unit TEXT NOT NULL DEFAULT '项', quote_amount INTEGER NOT NULL DEFAULT 0, cost_amount INTEGER NOT NULL DEFAULT 0, order_date TEXT NOT NULL, delivery_date TEXT NOT NULL DEFAULT '', contact TEXT NOT NULL DEFAULT '', customer_department TEXT NOT NULL DEFAULT '', designer TEXT NOT NULL DEFAULT '', planner TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL, status TEXT NOT NULL DEFAULT '制作中', payment_status TEXT NOT NULL DEFAULT '未结款', note TEXT NOT NULL DEFAULT '', specification TEXT NOT NULL DEFAULT '', products_json TEXT NOT NULL DEFAULT '[]', costs_json TEXT NOT NULL DEFAULT '[]', is_extra INTEGER NOT NULL DEFAULT 0, idempotency_key TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, FOREIGN KEY(customer_id) REFERENCES customers_simple(id), FOREIGN KEY(project_id) REFERENCES projects_simple(id), FOREIGN KEY(catalog_id) REFERENCES catalog_items(id));
     CREATE TABLE order_products(id TEXT PRIMARY KEY, order_id TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, catalog_item_id TEXT, name TEXT NOT NULL, specification TEXT NOT NULL DEFAULT '', unit TEXT NOT NULL DEFAULT '项', quantity REAL NOT NULL DEFAULT 1, unit_price INTEGER NOT NULL DEFAULT 0, subtotal INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE, FOREIGN KEY(catalog_item_id) REFERENCES catalog_items(id) ON DELETE SET NULL);
     CREATE TABLE order_costs(id TEXT PRIMARY KEY, order_id TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, catalog_item_id TEXT, name TEXT NOT NULL, vendor TEXT NOT NULL DEFAULT '', unit TEXT NOT NULL DEFAULT '项', quantity REAL NOT NULL DEFAULT 1, unit_price INTEGER NOT NULL DEFAULT 0, subtotal INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE, FOREIGN KEY(catalog_item_id) REFERENCES catalog_items(id) ON DELETE SET NULL);
     CREATE TABLE order_attachments(id TEXT PRIMARY KEY, order_id TEXT NOT NULL, file_name TEXT NOT NULL, mime_type TEXT NOT NULL DEFAULT '', file_size INTEGER NOT NULL DEFAULT 0, storage_path TEXT NOT NULL DEFAULT '', attachment_kind TEXT NOT NULL DEFAULT 'note', visibility TEXT NOT NULL DEFAULT 'order', created_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE);
@@ -265,7 +269,7 @@ function migrate(db: Database.Database) {
     CREATE INDEX idx_order_products_order ON order_products(order_id,position);
     CREATE INDEX idx_order_costs_order ON order_costs(order_id,position);
     CREATE INDEX idx_audit_entity ON audit_logs(entity_type,entity_id,created_at DESC);
-    INSERT INTO schema_meta(key,value) VALUES('order_app_version','20');
+    INSERT INTO schema_meta(key,value) VALUES('order_app_version','21');
   `);
 }
 
@@ -537,7 +541,7 @@ export function listOrders(): Array<Record<string, any>> {
 
 const exportColumnLabels: Record<string, string> = {
   code: '订单编号', order_date: '订单日期', customer_name: '客户', project_name: '项目',
-  project_owner: '项目负责人', customer_department: '客户部门', designer: '设计师', contact: '联系人',
+  project_owner: '项目负责人', customer_department: '客户部门', designer: '设计师', planner: '策划人', contact: '联系人',
   delivery_date: '交货日期', payment_status: '结款状态', service_name: '订单内容', quantity: '数量', unit: '单位',
   quote_amount: '总报价', cost_amount: '制作成本', advance_amount: '员工垫付', profit: '预计毛利', created_by: '录入人',
   status: '制作状态', reimbursement_status: '报销状态', product_name: '产品名称', product_specification: '制作要求',
@@ -769,7 +773,7 @@ export function exportOrders(filters: Record<string, string>) {
     return productsToWrite.map((product: any) => {
       const values: Record<string, unknown> = {
         code: order.code, order_date: order.order_date, customer_name: order.customer_name, project_name: order.project_name,
-        project_owner: order.project_owner || '', customer_department: order.customer_department || '', designer: order.designer || '',
+        project_owner: order.project_owner || '', customer_department: order.customer_department || '', designer: order.designer || '', planner: order.planner || '',
         contact: order.contact || '', delivery_date: order.delivery_date || '', payment_status: order.payment_status || '未结款',
         service_name: order.service_name, quantity: order.quantity, unit: order.unit, quote_amount: order.quote_amount / 100,
         cost_amount: order.cost_amount / 100, advance_amount: advances / 100, profit: (order.quote_amount - order.cost_amount - advances) / 100,
@@ -849,8 +853,7 @@ export function createOrder(data: Record<string, unknown>) {
   const contact = text(data.contact);
   const deliveryDate = text(data.delivery_date);
   const designer = text(data.designer);
-  if (!deliveryDate) throw new Error('请填写交货日期');
-  if (!designer) throw new Error('请填写指定设计师');
+  const planner = text(data.planner);
   const products = sanitizeLines(Array.isArray(data.products) ? data.products as Array<Record<string, unknown>> : [], 'name');
   const costs = sanitizeLines(Array.isArray(data.costs) ? data.costs as Array<Record<string, unknown>> : [], 'name');
   const advances = sanitizeAdvances(Array.isArray(data.advances) ? data.advances as Array<Record<string, unknown>> : []);
@@ -877,7 +880,7 @@ export function createOrder(data: Record<string, unknown>) {
   const quoteCents = products.length ? products.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0) : optionalMoneyToCents(data.quote_amount);
   const costCents = costs.length ? costs.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0) : optionalMoneyToCents(data.cost_amount);
   db.transaction(() => {
-    db.prepare('INSERT INTO orders_simple(id,code,customer_id,project_id,catalog_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,created_by,status,note,created_at,specification,is_extra,delivery_date,contact,customer_department,designer,payment_status,products_json,costs_json,idempotency_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id, code, project.customer_id, projectId, catalogId, serviceName, quantity, String(data.unit || products[0]?.unit || '项'), quoteCents, costCents, date, String(data.created_by || '填写人'), String(data.status || '制作中'), String(data.note || '').trim(), created, text(data.specification || products[0]?.specification), data.is_extra ? 1 : 0, deliveryDate, contact, department, designer, text(data.payment_status) || '未结款', JSON.stringify(products), JSON.stringify(costs), idempotencyKey);
+    db.prepare('INSERT INTO orders_simple(id,code,customer_id,project_id,catalog_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,created_by,status,note,created_at,specification,is_extra,delivery_date,contact,customer_department,designer,planner,payment_status,products_json,costs_json,idempotency_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id, code, project.customer_id, projectId, catalogId, serviceName, quantity, String(data.unit || products[0]?.unit || '项'), quoteCents, costCents, date, String(data.created_by || '填写人'), String(data.status || '制作中'), String(data.note || '').trim(), created, text(data.specification || products[0]?.specification), data.is_extra ? 1 : 0, deliveryDate, contact, department, designer, planner, text(data.payment_status) || '未结款', JSON.stringify(products), JSON.stringify(costs), idempotencyKey);
     syncNormalizedOrderLines(db, id, products, costs);
     insertReimbursements(db, id, advances, text(data.created_by));
   })();
@@ -899,8 +902,7 @@ export function updateOrder(id: string, data: Record<string, unknown>) {
   }
   const deliveryDate = text(data.delivery_date);
   const designer = text(data.designer);
-  if (!deliveryDate) throw new Error('请填写交货日期');
-  if (!designer) throw new Error('请填写指定设计师');
+  const planner = text(data.planner);
   for (const item of [...products, ...costs]) {
     if (!Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0) throw new Error('产品和成本数量必须大于 0');
     if (!Number.isFinite(Number(item.unit_price)) || Number(item.unit_price) < 0) throw new Error('产品和成本单价不能为负数');
@@ -912,7 +914,7 @@ export function updateOrder(id: string, data: Record<string, unknown>) {
   const department = text(data.customer_department);
   const contact = text(data.contact);
   const staleFiles = db.transaction(() => {
-    db.prepare(`UPDATE orders_simple SET project_id=?,customer_id=(SELECT customer_id FROM projects_simple WHERE id=?),service_name=?,quantity=?,unit=?,quote_amount=?,cost_amount=?,order_date=?,delivery_date=?,contact=?,customer_department=?,designer=?,created_by=?,status=?,payment_status=?,note=?,specification=?,products_json=?,costs_json=? WHERE id=?`).run(targetProject, targetProject, service, Number(products[0]?.quantity || existing.quantity), text(products[0]?.unit || existing.unit), quote, cost, text(data.order_date || existing.order_date), deliveryDate, contact, department, designer, text(data.created_by || existing.created_by), text(data.status || existing.status), text(data.payment_status || existing.payment_status), text(data.note), text(products[0]?.specification || existing.specification), JSON.stringify(products), JSON.stringify(costs), id);
+    db.prepare(`UPDATE orders_simple SET project_id=?,customer_id=(SELECT customer_id FROM projects_simple WHERE id=?),service_name=?,quantity=?,unit=?,quote_amount=?,cost_amount=?,order_date=?,delivery_date=?,contact=?,customer_department=?,designer=?,planner=?,created_by=?,status=?,payment_status=?,note=?,specification=?,products_json=?,costs_json=? WHERE id=?`).run(targetProject, targetProject, service, Number(products[0]?.quantity || existing.quantity), text(products[0]?.unit || existing.unit), quote, cost, text(data.order_date || existing.order_date), deliveryDate, contact, department, designer, planner, text(data.created_by || existing.created_by), text(data.status || existing.status), text(data.payment_status || existing.payment_status), text(data.note), text(products[0]?.specification || existing.specification), JSON.stringify(products), JSON.stringify(costs), id);
     syncNormalizedOrderLines(db, id, products, costs);
     return syncOrderReimbursements(db, id, advances, text(data.created_by));
   })();

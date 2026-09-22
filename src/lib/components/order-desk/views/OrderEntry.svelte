@@ -39,8 +39,9 @@
       <label>客户部门<input bind:value={desk.customerDepartment} placeholder="例如：市场部（可不填）" /></label>
       <label>联系人 / 下单人<input bind:value={desk.contact} placeholder="例如：张三（可不填）" /></label>
       <label class="compact-field">订单日期 <em>*</em><input class="date-input" type="date" bind:value={desk.orderDate} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} required /></label>
-      <label class="compact-field">交货日期 <em>*</em><input class="date-input" type="date" bind:value={desk.deliveryDate} min={desk.orderDate} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} required /></label>
-      <label>指定设计师 <em>*</em><input bind:value={desk.designer} placeholder="本订单设计师" required /></label>
+      <label class="compact-field">交货日期<input class="date-input" type="date" bind:value={desk.deliveryDate} min={desk.orderDate} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} /></label>
+      <label>指定设计师<input bind:value={desk.designer} placeholder="本订单设计师（可不填）" /></label>
+      <label>策划人<input bind:value={desk.planner} placeholder="本订单策划人（可不填）" /></label>
       <label class="compact-field">订单状态<select bind:value={desk.status}><option>制作中</option><option>待确认</option><option>已完成</option></select></label>
       <label class="compact-field">录入人<input bind:value={desk.createdBy} placeholder="请设置填写人" /></label>
       <label class="compact-field">结款状态<select bind:value={desk.paymentStatus}><option>未结款</option><option>已结款</option></select></label>

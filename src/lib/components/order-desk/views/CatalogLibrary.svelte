@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getContext } from 'svelte';
-  import { Building2, Factory, FileSpreadsheet, Plus, Search, Upload, X } from 'lucide-svelte';
+  import { Building2, ChevronLeft, ChevronRight, Factory, FileSpreadsheet, Plus, Search, Upload, X } from 'lucide-svelte';
   const desk = getContext<any>('order-desk');
   let detailSource = $state<any>(null);
   let detailSearch = $state('');
@@ -43,10 +43,17 @@
     <select bind:value={desk.catalogCategory}><option value="">全部分类</option>{#each desk.catalogCategories as category}<option value={category}>{category}</option>{/each}</select>
     <span>共 {desk.visibleCatalog.length} 条</span>
   </div>
-  <div class="table-panel"><div class="table-scroll"><table>
+  <div class="table-panel catalog-table-panel"><div class="table-scroll"><table>
     <thead><tr><th>分类</th><th>项目名称</th><th>{desk.catalogKind === 'quote' ? '客户' : '厂商'}</th><th>制作要求 / 备注</th><th>单位</th><th>{desk.catalogKind === 'quote' ? '报价单价' : '成本单价'}</th></tr></thead>
-    <tbody>{#each desk.visibleCatalog as item}<tr><td><span class="category-label">{item.category || '未分类'}</span></td><td><b>{item.name}</b></td><td>{item.source_owner || item.customer_name || '通用'}</td><td>{item.specification || item.supplier_remark || '—'}</td><td>{item.unit}</td><td class="money">{desk.money(desk.catalogKind === 'quote' ? item.quote_unit : item.cost_unit)}</td></tr>{:else}<tr><td colspan="6"><div class="empty-table">当前资料库没有符合条件的条目。</div></td></tr>{/each}</tbody>
+    <tbody>{#each desk.pagedCatalog as item}<tr><td><span class="category-label" title={item.category || '未分类'}>{item.category || '未分类'}</span></td><td title={item.name}><b>{item.name}</b></td><td title={item.source_owner || item.customer_name || '通用'}>{item.source_owner || item.customer_name || '通用'}</td><td title={item.specification || item.supplier_remark || '—'}>{item.specification || item.supplier_remark || '—'}</td><td title={item.unit}>{item.unit}</td><td class="money" title={desk.money(desk.catalogKind === 'quote' ? item.quote_unit : item.cost_unit)}>{desk.money(desk.catalogKind === 'quote' ? item.quote_unit : item.cost_unit)}</td></tr>{:else}<tr><td colspan="6"><div class="empty-table">当前资料库没有符合条件的条目。</div></td></tr>{/each}</tbody>
   </table></div></div>
+  {#if desk.catalogPageCount > 1}
+    <nav class="order-pagination catalog-pagination" aria-label="资料库分页">
+      <button class="icon-control" title="上一页" aria-label="上一页" disabled={desk.catalogPage === 1} onclick={() => desk.setCatalogPage(desk.catalogPage - 1)}><ChevronLeft size={17} /></button>
+      <span class="catalog-page-status">第 {desk.catalogPage} / {desk.catalogPageCount} 页</span>
+      <button class="icon-control" title="下一页" aria-label="下一页" disabled={desk.catalogPage === desk.catalogPageCount} onclick={() => desk.setCatalogPage(desk.catalogPage + 1)}><ChevronRight size={17} /></button>
+    </nav>
+  {/if}
 </section>
 
 {#if desk.catalogSourceOpen}

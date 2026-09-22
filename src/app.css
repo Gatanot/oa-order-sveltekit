@@ -3702,3 +3702,219 @@ textarea[readonly] {
     flex-direction: column;
   }
 }
+
+/* Order list: keep the wide data table for desktop and use a compact reading layout on phones. */
+.mobile-order-list {
+  display: none;
+}
+
+.order-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.order-page-numbers {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.order-page-number {
+  width: 36px;
+  height: 36px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.order-page-number:hover,
+.order-page-number.active {
+  border-color: var(--line);
+  background: #fff;
+  color: var(--blue);
+}
+
+.order-page-ellipsis {
+  width: 20px;
+  text-align: center;
+  color: var(--muted);
+}
+
+@media (min-width: 701px) {
+  .desktop-order-table .order-list-table,
+  .catalog-table-panel table {
+    width: 100%;
+    min-width: 0;
+    table-layout: fixed;
+  }
+
+  .desktop-order-table th,
+  .desktop-order-table td,
+  .catalog-table-panel th,
+  .catalog-table-panel td {
+    max-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .desktop-order-table th:nth-child(1),
+  .desktop-order-table td:nth-child(1) {
+    width: 58px;
+  }
+
+  .desktop-order-table th:nth-child(2),
+  .desktop-order-table td:nth-child(2) {
+    width: 18%;
+  }
+
+  .desktop-order-table th:nth-child(3),
+  .desktop-order-table td:nth-child(3) {
+    width: 17%;
+  }
+
+  .desktop-order-table th:last-child,
+  .desktop-order-table td:last-child {
+    width: 58px;
+  }
+
+  .catalog-table-panel th:nth-child(1),
+  .catalog-table-panel td:nth-child(1) {
+    width: 13%;
+  }
+
+  .catalog-table-panel th:nth-child(2),
+  .catalog-table-panel td:nth-child(2) {
+    width: 23%;
+  }
+
+  .catalog-table-panel th:nth-child(3),
+  .catalog-table-panel td:nth-child(3) {
+    width: 17%;
+  }
+
+  .catalog-table-panel th:nth-child(4),
+  .catalog-table-panel td:nth-child(4) {
+    width: 29%;
+  }
+
+  .catalog-table-panel th:nth-child(5),
+  .catalog-table-panel td:nth-child(5) {
+    width: 9%;
+  }
+
+  .catalog-table-panel th:nth-child(6),
+  .catalog-table-panel td:nth-child(6) {
+    width: 9%;
+  }
+}
+
+@media (max-width: 700px) {
+  .desktop-order-table {
+    display: none;
+  }
+
+  .mobile-order-list {
+    display: grid;
+    gap: 10px;
+  }
+
+  .mobile-order-card {
+    display: grid;
+    gap: 12px;
+    min-width: 0;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+    cursor: pointer;
+  }
+
+  .mobile-order-card:focus-visible {
+    outline: 3px solid var(--teal-soft);
+    outline-offset: 2px;
+  }
+
+  .mobile-order-card-head,
+  .mobile-order-card-project,
+  .mobile-order-card-foot {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .mobile-order-card-title,
+  .mobile-order-card-project {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .mobile-order-card-title b,
+  .mobile-order-card-project b {
+    overflow-wrap: anywhere;
+    color: var(--navy);
+  }
+
+  .mobile-order-card-title small,
+  .mobile-order-card-project span,
+  .mobile-order-card-foot {
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .mobile-order-card-meta {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    padding: 10px 0;
+    border-top: 1px solid var(--line-soft);
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  .mobile-order-card-meta span {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .mobile-order-card-meta small {
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  .mobile-order-card-meta b {
+    overflow-wrap: anywhere;
+    color: var(--ink);
+    font-size: 13px;
+  }
+
+  .mobile-order-card-meta .status-dot {
+    width: fit-content;
+  }
+
+  .mobile-order-card-foot {
+    align-items: center;
+  }
+
+  .mobile-order-card-foot .delete-action {
+    margin-left: auto;
+  }
+
+  .order-pagination {
+    gap: 6px;
+  }
+
+  .order-page-number {
+    width: 32px;
+    height: 34px;
+  }
+}
+
