@@ -108,6 +108,7 @@ export function createOrderDesk(data: Data) {
   let customerDepartment = $state("");
   let designer = $state("");
   let planner = $state("");
+  let executionCompany = $state("");
   let paymentStatus = $state("未结款");
   let status = $state("制作中");
   let products = $state<Array<Record<string, any>>>([]);
@@ -200,7 +201,7 @@ export function createOrderDesk(data: Data) {
   let standaloneInvoiceFile = $state<File | null>(null);
   let standaloneNote = $state("");
   let selectedOrderIds = $state<string[]>([]);
-  let visibleOrderColumns = $state(["department", "contact", "designer", "owner", "quote", "cost", "creator", "date", "delivery", "payment", "status"]);
+  let visibleOrderColumns = $state(["owner", "quote", "cost", "date", "payment", "status"]);
   const orderColumnOptions = [
     ["department", "客户部门"], ["contact", "联系人"], ["designer", "设计师"],
     ["owner", "项目负责人"], ["quote", "报价"], ["cost", "成本"], ["creator", "录入人"],
@@ -361,18 +362,16 @@ export function createOrderDesk(data: Data) {
     orderPage = Math.min(Math.max(page, 1), orderPageCount);
   }
   const projectStats = $derived(
-    projects
-      .map((project) => {
-        const items = orders.filter((order) => order.project_id === project.id);
-        return {
-          ...project,
-          orderCount: items.length,
-          quote: items.reduce((sum, item) => sum + item.quote_amount, 0),
-          cost: items.reduce((sum, item) => sum + item.cost_amount, 0),
-          advance: items.reduce((sum, item) => sum + (item.advances || []).reduce((subtotal, advance) => subtotal + Math.round(Number(advance.amount || 0) * 100), 0), 0),
-        };
-      })
-      .filter((project) => project.orderCount > 0),
+    customers.map((customer) => {
+      const items = filteredOrders.filter((order) => order.customer_id === customer.id);
+      return {
+        ...customer,
+        orderCount: items.length,
+        quote: items.reduce((sum, item) => sum + item.quote_amount, 0),
+        cost: items.reduce((sum, item) => sum + item.cost_amount, 0),
+        advance: items.reduce((sum, item) => sum + (item.advances || []).reduce((subtotal, advance) => subtotal + Math.round(Number(advance.amount || 0) * 100), 0), 0),
+      };
+    }).filter((customer) => customer.orderCount > 0),
   );
   const allFilteredSelected = $derived(
     filteredOrders.length > 0 &&
@@ -1103,7 +1102,7 @@ export function createOrderDesk(data: Data) {
     }
     busy = true;
     try {
-      const payload = { project_id: projectId, order_date: orderDate, delivery_date: deliveryDate, contact, customer_department: customerDepartment, designer, planner, payment_status: paymentStatus, status, created_by: createdBy.trim() || creatorName || "未填写", note, products: validProducts, costs: validCosts, advances: validAdvances, idempotency_key: editingOrderId ? "" : (submissionKey ||= crypto.randomUUID()) };
+      const payload = { project_id: projectId, order_date: orderDate, delivery_date: deliveryDate, contact, customer_department: customerDepartment, designer, planner, execution_company: executionCompany, payment_status: paymentStatus, status, created_by: createdBy.trim() || creatorName || "未填写", note, products: validProducts, costs: validCosts, advances: validAdvances, idempotency_key: editingOrderId ? "" : (submissionKey ||= crypto.randomUUID()) };
       const result = editingOrderId
         ? await api.patch<{ data: Order }>(`/api/orders/${editingOrderId}`, payload)
         : await api.post<{ data: Order }>("/api/orders", payload);
@@ -1134,6 +1133,7 @@ export function createOrderDesk(data: Data) {
       customerDepartment = "";
       designer = "";
       planner = "";
+      executionCompany = "";
       paymentStatus = "未结款";
       orderFormDirty = false;
     } catch (e) {
@@ -1281,6 +1281,7 @@ export function createOrderDesk(data: Data) {
     customerDepartment = order.customer_department || "";
     designer = order.designer || "";
     planner = order.planner || "";
+    executionCompany = order.execution_company || "";
     paymentStatus = order.payment_status || "未结款";
     status = order.status || "制作中";
     createdBy = order.created_by || creatorName;
@@ -1385,7 +1386,7 @@ export function createOrderDesk(data: Data) {
     noteFiles = [];
     products = [{ name: "", quantity: 1, unit: "项", unit_price: 0, cost_unit: 0, subtotal: 0, specification: "" }];
     costs = [];
-    advances = [];
+    advances = [{ id: crypto.randomUUID(), employee: createdBy, item: "", amount: 0, date: orderDate, invoice: "", status: "待审核", invoiceFile: null as File | null }];
     view = "entry";
     orderFormDirty = false;
   }
@@ -1572,6 +1573,7 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "customerDepartment", { get: () => customerDepartment, set: (value) => { customerDepartment = value; } });
   Object.defineProperty(desk, "designer", { get: () => designer, set: (value) => { designer = value; } });
   Object.defineProperty(desk, "planner", { get: () => planner, set: (value) => { planner = value; } });
+  Object.defineProperty(desk, "executionCompany", { get: () => executionCompany, set: (value) => { executionCompany = value; } });
   Object.defineProperty(desk, "paymentStatus", { get: () => paymentStatus, set: (value) => { paymentStatus = value; } });
   Object.defineProperty(desk, "status", { get: () => status, set: (value) => { status = value; } });
   Object.defineProperty(desk, "editingOrderId", { get: () => editingOrderId });
