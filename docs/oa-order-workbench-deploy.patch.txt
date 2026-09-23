@@ -1,0 +1,86 @@
+diff --git a/src/hooks.server.ts b/src/hooks.server.ts
+index 4c89071..bc2168c 100644
+--- a/src/hooks.server.ts
++++ b/src/hooks.server.ts
+@@ -13,7 +13,10 @@ export const handle: Handle = async ({ event, resolve }) => {
+ 
+   const response = await resolve(event);
+   response.headers.set('X-Content-Type-Options', 'nosniff');
+-  response.headers.set('X-Frame-Options', 'SAMEORIGIN');
++  // 部署差异：上游此处为 X-Frame-Options: SAMEORIGIN，会导致 CatsCo 发布入口（artifact 页面）无法内嵌本工作台。
++  // 这里不发送 X-Frame-Options，也不发送 frame-ancestors：沙箱 iframe 的父级是不透明来源，
++  // 任何 frame-ancestors 取值（含 *）都会匹配失败，导致工作台整帧被拦。
++  // 本工作台无登录态、无 Cookie 会话，放开嵌入限制只影响展示层的套框能力。
+   response.headers.set('Referrer-Policy', 'same-origin');
+   return response;
+ };
+diff --git a/src/lib/components/order-desk/OrderDeskSidebar.svelte b/src/lib/components/order-desk/OrderDeskSidebar.svelte
+index add99be..a00af27 100644
+--- a/src/lib/components/order-desk/OrderDeskSidebar.svelte
++++ b/src/lib/components/order-desk/OrderDeskSidebar.svelte
+@@ -24,7 +24,9 @@
+       <b>{desk.visitor.username}</b><span>平台访问者 · UID {desk.visitor.uid}</span>
+     {:else if desk.visitor.status === "guest"}
+       <b>未识别访问者</b><span>{desk.isEmbedded ? "请在新页面完成登录" : "当前以游客身份访问"}</span>
+-      <a class="settings-action" href="/_auth/start" target="_blank" rel="noreferrer"><LogIn size={14} />新页面登录</a>
++      {#if desk.onArtifactGateway}
++        <a class="settings-action" href="/_auth/start" target="_blank" rel="noreferrer"><LogIn size={14} />新页面登录</a>
++      {/if}
+     {:else}
+       <b>{desk.creatorName || "身份服务暂不可用"}</b><span>暂时无法核验平台访问者</span>
+     {/if}
+diff --git a/src/lib/components/order-desk/orderDeskState.svelte.ts b/src/lib/components/order-desk/orderDeskState.svelte.ts
+index 7525ccc..112e918 100644
+--- a/src/lib/components/order-desk/orderDeskState.svelte.ts
++++ b/src/lib/components/order-desk/orderDeskState.svelte.ts
+@@ -79,11 +79,19 @@ export type Data = {
+   };
+ 
+ 
++// 部署差异：登录握手（/_auth/start）只存在于 Artifact 网关（artifact.catsco.cc / .cn）。
++// 直连通道 agent-535.artifacts.catsco.fun 没有该端点，触发握手会落到 404 错误页。
++const ARTIFACT_GATEWAY_HOSTS = ["artifact.catsco.cc", "artifact.catsco.cn"];
++function isArtifactGatewayHost(): boolean {
++  return typeof window !== "undefined" && ARTIFACT_GATEWAY_HOSTS.includes(window.location.hostname);
++}
++
+ export function createOrderDesk(data: Data) {
+   let view = $state<"overview" | "entry" | "catalog" | "finance">("overview");
+   let workMode = $state<"view" | "entry" | "finance">("view");
+   let sidebarCollapsed = $state(false);
+   let isEmbedded = $state(false);
++  let onArtifactGateway = $state(false);
+   let customers = $state(data.customers);
+   let projects = $state(data.projects);
+   let catalog = $state(data.catalog);
+@@ -428,7 +436,8 @@ export function createOrderDesk(data: Data) {
+   }
+   onMount(() => {
+     isEmbedded = window.top !== window.self;
+-    if (data.visitor.status === "guest" && !isEmbedded) {
++    onArtifactGateway = isArtifactGatewayHost();
++    if (data.visitor.status === "guest" && !isEmbedded && onArtifactGateway) {
+       const handshakeKey = "oa-artifact-auth-handshake";
+       if (!sessionStorage.getItem(handshakeKey)) {
+         sessionStorage.setItem(handshakeKey, "started");
+@@ -1503,6 +1512,7 @@ export function createOrderDesk(data: Data) {
+   Object.defineProperty(desk, "sidebarCollapsed", { get: () => sidebarCollapsed, set: (value) => { sidebarCollapsed = value; } });
+   Object.defineProperty(desk, "visitor", { get: () => data.visitor });
+   Object.defineProperty(desk, "isEmbedded", { get: () => isEmbedded });
++  Object.defineProperty(desk, "onArtifactGateway", { get: () => onArtifactGateway });
+   Object.defineProperty(desk, "customers", { get: () => customers, set: (value) => { customers = value; } });
+   Object.defineProperty(desk, "projects", { get: () => projects, set: (value) => { projects = value; } });
+   Object.defineProperty(desk, "catalog", { get: () => catalog, set: (value) => { catalog = value; } });
+diff --git a/src/routes/+page.server.ts b/src/routes/+page.server.ts
+index f35b4dd..1984fc2 100644
+--- a/src/routes/+page.server.ts
++++ b/src/routes/+page.server.ts
+@@ -1,3 +1,7 @@
+ import { redirect } from '@sveltejs/kit';
+ import type { PageServerLoad } from './$types';
+-export const load: PageServerLoad = () => redirect(303, '/orders');
++
++// 部署差异：上游为 redirect(303, '/orders')，绝对路径会让请求跳出应用前缀。
++// 应用在 Artifact 网关上被服务在 /<应用id>/ 下（网关会剥掉前缀再转发），
++// 服务端因此看不到前缀；这里改用相对 Location，让浏览器按当前前缀解析。
++export const load: PageServerLoad = () => redirect(303, './orders');
