@@ -3584,6 +3584,52 @@ textarea[readonly] {
   font-size: 22px;
 }
 
+.employee-admin {
+  margin: 20px 0;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.employee-admin h2 {
+  margin: 0 0 6px;
+  color: var(--navy);
+}
+
+.employee-admin > p {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.employee-table-wrap {
+  overflow-x: auto;
+}
+
+.employee-admin table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+}
+
+.employee-admin th,
+.employee-admin td {
+  padding: 9px;
+  border-bottom: 1px solid var(--line-soft);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.employee-admin th {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.employee-admin td input:not([type="checkbox"]),
+.employee-admin td select {
+  min-width: 110px;
+}
+
 .admin-actions-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

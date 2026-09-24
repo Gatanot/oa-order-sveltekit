@@ -294,6 +294,25 @@ export function getOrderDb() {
 
 
 
+    instance.exec(`
+      CREATE TABLE IF NOT EXISTS employees (
+        catsco_uid INTEGER PRIMARY KEY,
+        username TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        department TEXT NOT NULL DEFAULT '',
+        role TEXT NOT NULL DEFAULT 'pending' CHECK(role IN ('pending','executor','designer','planner','manager','finance','owner')),
+        active INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+    const orderColumns = new Set((instance.pragma('table_info(orders_simple)') as Array<{ name: string }>).map((column) => column.name));
+    for (const column of ['created_by_uid', 'designer_uid', 'planner_uid']) {
+      if (!orderColumns.has(column)) instance.exec(`ALTER TABLE orders_simple ADD COLUMN ${column} INTEGER`);
+    }
+    const reimbursementColumns = new Set((instance.pragma('table_info(reimbursements_simple)') as Array<{ name: string }>).map((column) => column.name));
+    if (!reimbursementColumns.has('employee_uid')) instance.exec('ALTER TABLE reimbursements_simple ADD COLUMN employee_uid INTEGER');
+    instance.prepare("UPDATE schema_meta SET value='23' WHERE key='order_app_version'").run();
     importBundledExcel(instance);
   }
   return instance;
@@ -535,7 +554,26 @@ function hydrateOrder(row: Record<string, unknown>): Record<string, any> {
 }
 
 export function getOrderAccessInfo(id: string) {
-  return getOrderDb().prepare('SELECT id,created_by,status,payment_status FROM orders_simple WHERE id=?').get(id) as { id: string; created_by: string; status: string; payment_status: string } | undefined;
+  return getOrderDb().prepare('SELECT id,created_by,designer,planner,created_by_uid,designer_uid,planner_uid,status,payment_status FROM orders_simple WHERE id=?').get(id) as { id: string; created_by: string; designer: string; planner: string; created_by_uid: number | null; designer_uid: number | null; planner_uid: number | null; status: string; payment_status: string } | undefined;
+}
+
+export function setOrderEmployees(id: string, creatorUid: number, designer: string, planner: string) {
+  const db = getOrderDb();
+  const findUid = db.prepare(`SELECT catsco_uid FROM employees WHERE active=1 AND (display_name=? OR username=?)`);
+  const findUniqueUid = (name: string): number | null => {
+    if (!name.trim()) return null;
+    const matches = findUid.all(name.trim(), name.trim()) as Array<{ catsco_uid: number }>;
+    return matches.length === 1 ? matches[0].catsco_uid : null;
+  };
+  db.prepare('UPDATE orders_simple SET created_by_uid=?,designer_uid=?,planner_uid=? WHERE id=?')
+    .run(creatorUid, findUniqueUid(designer), findUniqueUid(planner), id);
+  const updateAdvance = db.prepare('UPDATE reimbursements_simple SET employee_uid=? WHERE id=?');
+  const advances = db.prepare('SELECT id,employee FROM reimbursements_simple WHERE order_id=?').all(id) as Array<{ id: string; employee: string }>;
+  for (const advance of advances) updateAdvance.run(findUniqueUid(advance.employee), advance.id);
+}
+
+export function canEmployeeAccessOrder(id: string, uid: number): boolean {
+  return Boolean(getOrderDb().prepare('SELECT 1 FROM orders_simple WHERE id=? AND (created_by_uid=? OR designer_uid=? OR planner_uid=?)').get(id, uid, uid, uid));
 }
 
 export function listOrders(): Array<Record<string, any>> {
@@ -962,6 +1000,7 @@ export function listReimbursementOrders(filters: Record<string, string> = {}) {
     advance_date: item.advance_date,
     advance_amount: item.amount,
     employee: item.employee,
+    employee_uid: item.employee_uid,
     status: item.status,
     invoice: item.invoice,
     note: item.note || '',
@@ -1128,7 +1167,15 @@ export function addStandaloneReimbursementAttachment(reimbursementId: string, fi
 }
 
 export function getReimbursementAccessInfo(reimbursementId: string) {
-  return getOrderDb().prepare('SELECT id,employee,status FROM reimbursements_simple WHERE id=?').get(reimbursementId) as { id: string; employee: string; status: string } | undefined;
+  return getOrderDb().prepare('SELECT id,employee,employee_uid,status FROM reimbursements_simple WHERE id=?').get(reimbursementId) as { id: string; employee: string; employee_uid: number | null; status: string } | undefined;
+}
+
+export function setReimbursementEmployee(id: string, uid: number) {
+  getOrderDb().prepare('UPDATE reimbursements_simple SET employee_uid=? WHERE id=?').run(uid, id);
+}
+
+export function canEmployeeAccessReimbursement(id: string, uid: number): boolean {
+  return Boolean(getOrderDb().prepare('SELECT 1 FROM reimbursements_simple WHERE id=? AND employee_uid=?').get(id, uid));
 }
 
 export function listReimbursementAttachments(reimbursementId: string) {

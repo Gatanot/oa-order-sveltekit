@@ -1,11 +1,16 @@
-import { fail } from '@sveltejs/kit';
+import { error, fail } from '@sveltejs/kit';
 import { getAdminDemoStats, seedDemoCostCatalogs, seedDemoOrdersAndReimbursements } from '$lib/server/order-db';
 import type { Actions, PageServerLoad } from './$types';
 
-export const load: PageServerLoad = () => ({ stats: getAdminDemoStats() });
+export const load: PageServerLoad = async ({ locals }) => {
+  const identity = await locals.getCurrentIdentity();
+  if (!identity || !['admin', 'manager', 'owner'].includes(identity.role)) error(403, '没有员工管理权限');
+  return { stats: identity.role === 'admin' ? getAdminDemoStats() : null, role: identity.role };
+};
 
 export const actions: Actions = {
-  catalogs: async ({ request }) => {
+  catalogs: async ({ request, locals }) => {
+    if ((await locals.getCurrentIdentity())?.role !== 'admin') return fail(403, { success: false, message: '仅 Catsco 管理员可执行此操作' });
     try {
       const form = await request.formData();
       const count = Number(form.get('count') || 2);
@@ -19,7 +24,8 @@ export const actions: Actions = {
       });
     }
   },
-  operations: async ({ request }) => {
+  operations: async ({ request, locals }) => {
+    if ((await locals.getCurrentIdentity())?.role !== 'admin') return fail(403, { success: false, message: '仅 Catsco 管理员可执行此操作' });
     try {
       const form = await request.formData();
       const count = Number(form.get('count') || 36);

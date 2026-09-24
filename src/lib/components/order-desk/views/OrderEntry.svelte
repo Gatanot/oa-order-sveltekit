@@ -46,8 +46,8 @@
       <label>联系人 / 下单人<input bind:value={desk.contact} placeholder="例如：张三（可不填）" /></label>
       <label class="compact-field">订单日期 <em>*</em><input class="date-input" type="date" bind:value={desk.orderDate} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} required /></label>
       <label class="compact-field">交货日期<input class="date-input" type="date" bind:value={desk.deliveryDate} min={desk.orderDate} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} /></label>
-      <label>指定设计师<input bind:value={desk.designer} placeholder="本订单设计师（可不填）" /></label>
-      <label>策划人<input bind:value={desk.planner} placeholder="本订单策划人（可不填）" /></label>
+      <label>指定设计师<select bind:value={desk.designer}><option value="">暂不指定</option>{#each desk.employees.filter((employee: any) => employee.role === 'designer' || employee.role === 'manager' || employee.role === 'owner') as employee}<option value={employee.display_name}>{employee.display_name} · {employee.department}</option>{/each}</select></label>
+      <label>策划人<select bind:value={desk.planner}><option value="">暂不指定</option>{#each desk.employees.filter((employee: any) => employee.role === 'planner' || employee.role === 'manager' || employee.role === 'owner') as employee}<option value={employee.display_name}>{employee.display_name} · {employee.department}</option>{/each}</select></label>
       <label class="compact-field">订单状态<select bind:value={desk.status}><option>制作中</option><option>待确认</option><option>已完成</option></select></label>
       <label class="compact-field">录入人<input bind:value={desk.createdBy} placeholder="请设置填写人" /></label>
       <label class="compact-field">结款状态<select bind:value={desk.paymentStatus}><option>未结款</option><option>已结款</option></select></label>

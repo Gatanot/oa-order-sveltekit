@@ -11,7 +11,7 @@ const directory = mkdtempSync(join(tmpdir(), 'oa-order-test-'));
 const databasePath = join(directory, 'oa.db');
 const port = 4300 + Math.floor(Math.random() * 500);
 const origin = `http://127.0.0.1:${port}`;
-const server = spawn(process.execPath, ['build'], { env: { ...process.env, DATABASE_PATH: databasePath, NODE_ENV: 'development', PORT: String(port), ORIGIN: origin }, stdio: ['ignore', 'pipe', 'pipe'] });
+const server = spawn(process.execPath, ['build'], { env: { ...process.env, DATABASE_PATH: databasePath, NODE_ENV: 'test', OA_TEST_AUTH_BYPASS: '1', PORT: String(port), ORIGIN: origin }, stdio: ['ignore', 'pipe', 'pipe'] });
 let logs = '';
 server.stdout.on('data', (chunk) => { logs += chunk; });
 server.stderr.on('data', (chunk) => { logs += chunk; });
@@ -35,7 +35,7 @@ async function request(path, { json, ...options } = {}) {
   return { response, data };
 }
 
-/** 复制当前 v22 数据库为旧版本 fixture，启动一次服务触发迁移，再用只读连接断言结果。 */
+/** 复制当前 v23 数据库为旧版本 fixture，启动一次服务触发迁移，再用只读连接断言结果。 */
 async function withMigratedFixture(name, legacyVersion, prepare, assertions) {
   const path = join(directory, name);
   const source = new Database(databasePath, { readonly: true });
@@ -48,7 +48,7 @@ async function withMigratedFixture(name, legacyVersion, prepare, assertions) {
   const fixturePort = port + 501 + fixturePortOffset++;
   const fixtureOrigin = `http://127.0.0.1:${fixturePort}`;
   let fixtureLogs = '';
-  const fixtureServer = spawn(process.execPath, ['build'], { env: { ...process.env, DATABASE_PATH: path, NODE_ENV: 'development', PORT: String(fixturePort), ORIGIN: fixtureOrigin }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const fixtureServer = spawn(process.execPath, ['build'], { env: { ...process.env, DATABASE_PATH: path, NODE_ENV: 'test', OA_TEST_AUTH_BYPASS: '1', PORT: String(fixturePort), ORIGIN: fixtureOrigin }, stdio: ['ignore', 'pipe', 'pipe'] });
   fixtureServer.stdout.on('data', (chunk) => { fixtureLogs += chunk; });
   fixtureServer.stderr.on('data', (chunk) => { fixtureLogs += chunk; });
   try {
@@ -66,7 +66,11 @@ async function withMigratedFixture(name, legacyVersion, prepare, assertions) {
 
 try {
   await waitForServer();
-  let result = await request('/api/orders');
+  let result = await request('/api/employees');
+  assert.equal(result.response.status, 200, '固定 Catsco 管理员可管理员工');
+  result = await request('/api/employees', { method: 'PATCH', json: { uid: 826, display_name: '伪造管理员', department: '', role: 'owner', active: true } });
+  assert.equal(result.response.status, 400, '固定管理员身份不能被员工档案修改或授予');
+  result = await request('/api/orders');
   assert.equal(result.response.status, 200, '工作台 API 不应要求登录');
 
   result = await request('/api/projects', { method: 'POST', json: { customer: '测试客户', name: '测试项目', owner: '项目负责人' } });
@@ -104,7 +108,7 @@ try {
   const createPayload = { project_id: projectId, order_date: '2026-09-16', delivery_date: '2026-09-20', designer: '设计师甲', created_by: '填写人甲', idempotency_key: 'smoke-order-1', products: [{ name: '测试产品', unit: '项', quantity: 2, unit_price: '12.34', specification: '测试要求' }], costs: [{ name: '制作成本', vendor: '测试厂商', unit: '项', quantity: 2, unit_price: '3.21' }], advances: [{ employee: '填写人甲', item: '', amount: 0, date: '2026-09-16' }, { employee: '垫付人乙', item: '打样费', amount: '8.50', date: '2026-09-16' }] };
   result = await request('/api/orders', { method: 'POST', json: createPayload });
   assert.equal(result.response.status, 201, JSON.stringify(result.data));
-  assert.equal(result.data.data.created_by, '填写人甲');
+  assert.equal(result.data.data.created_by, 'catsco', '录入人必须取自可信的登录身份，而非客户端提交值');
   assert.equal(result.data.data.quote_amount, 2468);
   assert.equal(result.data.data.cost_amount, 642);
   assert.equal(result.data.data.advances.length, 1, '空白垫付行不应创建报销记录');
@@ -124,7 +128,7 @@ try {
 
   result = await request(`/api/orders/${orderId}`, { method: 'PATCH', json: { project_id: projectId, order_date: '2026-09-16', delivery_date: '2026-09-21', designer: '设计师乙', created_by: '填写人乙', payment_status: '已结款', status: '已完成', products: [{ name: '测试产品', unit: '项', quantity: 1, unit_price: '20.00' }], costs: [], advances: [] } });
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
-  assert.equal(result.data.data.created_by, '填写人乙');
+  assert.equal(result.data.data.created_by, 'catsco');
 
   result = await request(`/api/orders/export?ids=${encodeURIComponent(orderId)}&mode=detail&columns=code,product_name,quote_amount&expand=false&total=true&actor=财务甲`);
   assert.equal(result.response.status, 200);
@@ -163,7 +167,7 @@ try {
   invoice.append('file', new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], { type: 'image/png' }), 'invoice.png');
   result = await request(`/api/reimbursements/${reimbursementId}/attachments`, { method: 'POST', body: invoice });
   assert.equal(result.response.status, 201, JSON.stringify(result.data));
-  result = await request('/api/reimbursements?person=填写人甲');
+  result = await request('/api/reimbursements?person=catsco');
   assert.equal(result.data.data.find((item) => item.id === reimbursementId).reimbursement_status, '待审核', '补传发票后应回到待审核');
   result = await request('/api/reimbursements/batch', { method: 'POST', json: { ids: [reimbursementId], status: '待打款', actor: '财务甲' } });
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
@@ -189,8 +193,10 @@ try {
   assert.match(result.response.headers.get('content-type') || '', /spreadsheet/);
 
   const db = new Database(databasePath, { readonly: true });
-  assert.equal(db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '22');
+  assert.equal(db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '23');
   assert.equal(db.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, '幂等键不能产生重复订单');
+  assert.equal(db.prepare('SELECT created_by_uid FROM orders_simple LIMIT 1').pluck().get(), 826, '订单录入人应关联可信的 Catsco UID');
+  assert.ok(db.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name IN ('created_by_uid','designer_uid','planner_uid')").pluck().get() === 3, '订单应保存员工 UID 关联');
   assert.equal(db.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('users','sessions')").pluck().get(), 0, '全新数据库不应创建登录或角色表');
   assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
   assert.ok(db.prepare('SELECT COUNT(*) FROM audit_logs').pluck().get() >= 5);
@@ -211,7 +217,7 @@ try {
       ALTER TABLE audit_logs ADD COLUMN actor_user_id TEXT;
     `);
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '22');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '23');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='idempotency_key'").pluck().get(), 'v18 数据库应补齐幂等字段');
     assert.equal(migrated.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('users','sessions')").pluck().get(), 0, '迁移后不应保留登录表');
     for (const [table, column] of [['orders_simple', 'created_by_user_id'], ['reimbursements_simple', 'employee_user_id'], ['reimbursements_simple', 'voucher_archived_by_user_id'], ['order_attachments', 'uploaded_by_user_id'], ['reimbursement_attachments', 'uploaded_by_user_id'], ['catalog_sources', 'maintained_by_user_id'], ['audit_logs', 'actor_user_id']]) {
@@ -224,7 +230,7 @@ try {
   await withMigratedFixture('oa-v20.db', '20', (legacy) => {
     legacy.exec('ALTER TABLE orders_simple DROP COLUMN planner; ALTER TABLE orders_simple DROP COLUMN execution_company;');
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '22');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '23');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='planner'").pluck().get(), 'v20 数据库应补齐策划人字段');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='execution_company'").pluck().get(), 'v20 数据库应补齐执行公司字段');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v20 迁移不应丢失订单');
@@ -234,7 +240,7 @@ try {
   await withMigratedFixture('oa-v21.db', '21', (legacy) => {
     legacy.exec('ALTER TABLE orders_simple DROP COLUMN execution_company;');
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '22');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '23');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='execution_company'").pluck().get(), 'v21 数据库应补齐执行公司字段');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v21 迁移不应丢失订单');
     assert.deepEqual(migrated.prepare('PRAGMA foreign_key_check').all(), []);

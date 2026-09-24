@@ -46,6 +46,7 @@ export const POST: RequestHandler = async (event) => {
   const type = event.request.headers.get('content-type') || '';
   if (!type.includes('multipart/form-data')) return json({ error: { code: 'INVALID_CONTENT_TYPE', message: '请使用 multipart/form-data 上传资料库文件' } }, { status: 400 });
   const form = await event.request.formData();
+  const identity = await event.locals.getCurrentIdentity();
   const file = form.get('file');
   const sourceId = String(form.get('source_id') || '');
   const mode = String(form.get('mode') || 'preview');
@@ -54,9 +55,10 @@ export const POST: RequestHandler = async (event) => {
   if (file.size > maxAttachmentSize) return json({ error: { code: 'FILE_TOO_LARGE', message: '资料库文件不能超过 10MB' } }, { status: 413 });
   const parsed = readRows(file.name, Buffer.from(await file.arrayBuffer()));
   if (mode !== 'import') return json({ data: { file_name: file.name, sheet: parsed.rows[0]?.source_sheet || '', total_rows: parsed.rows.length + parsed.errors.length, valid_rows: parsed.rows.length, ignored_rows: parsed.errors.length, errors: parsed.errors.slice(0, 100), rows: parsed.rows.slice(0, 20) } });
+  if (!identity || !['admin', 'manager', 'owner'].includes(identity.role)) return json({ error: { code: 'FORBIDDEN', message: '没有导入资料库权限' } }, { status: 403 });
   if (!sourceId) return json({ error: { code: 'SOURCE_REQUIRED', message: '请选择资料库来源' } }, { status: 400 });
   try {
-    const count = importCatalog(parsed.rows, sourceId, { replace, actorName: String(form.get('actor') || '财务模式') });
+    const count = importCatalog(parsed.rows, sourceId, { replace, actorName: identity.displayName });
     return json({ data: { imported: count, ignored: parsed.errors.length, errors: parsed.errors.slice(0, 100) } }, { status: 201 });
   } catch (reason) {
     return json({ error: { code: 'CATALOG_IMPORT_FAILED', message: reason instanceof Error ? reason.message : '资料库导入失败' } }, { status: 400 });
