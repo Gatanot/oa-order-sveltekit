@@ -79,6 +79,7 @@ export type Data = {
     projects: Project[];
     catalog: Catalog[];
     catalogSources: Array<Record<string, any>>;
+    employees: Array<{ catsco_uid: number; display_name: string; department: string; role: string }>;
     orders: Order[];
     reimbursements: Reimbursement[];
     visitor: PublicArtifactVisitor;
@@ -94,6 +95,7 @@ export function createOrderDesk(data: Data) {
   let customers = $state(data.customers);
   let projects = $state(data.projects);
   let catalog = $state(data.catalog);
+  let employees = $state(data.employees);
   let catalogSources = $state(data.catalogSources);
   let orders = $state(data.orders);
   let reimbursements = $state(data.reimbursements);
@@ -1561,6 +1563,7 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "customers", { get: () => customers, set: (value) => { customers = value; } });
   Object.defineProperty(desk, "projects", { get: () => projects, set: (value) => { projects = value; } });
   Object.defineProperty(desk, "catalog", { get: () => catalog, set: (value) => { catalog = value; } });
+  Object.defineProperty(desk, "employees", { get: () => employees });
   Object.defineProperty(desk, "catalogSources", { get: () => catalogSources, set: (value) => { catalogSources = value; } });
   Object.defineProperty(desk, "orders", { get: () => orders, set: (value) => { orders = value; } });
   Object.defineProperty(desk, "customerId", { get: () => customerId, set: (value) => { customerId = value; } });

@@ -4,6 +4,8 @@ import type { RequestHandler } from './$types';
 
 export const POST: RequestHandler = async (event) => {
   const data = await body(event);
+  const identity = await event.locals.getCurrentIdentity();
+  if (!identity) return new Response(JSON.stringify({ error: { code: 'UNAUTHORIZED' } }), { status: 401 });
   const ids = Array.isArray(data.ids) ? data.ids.map(String) : [];
-  return action(() => ({ data: updateReimbursementsBatch(ids, String(data.status || ''), String(data.actor || '财务人员'), String(data.reject_reason || '')) }));
+  return action(() => ({ data: updateReimbursementsBatch(ids, String(data.status || ''), identity.displayName, String(data.reject_reason || '')) }));
 };

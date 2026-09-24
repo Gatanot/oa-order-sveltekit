@@ -2,12 +2,19 @@ import { json } from '@sveltejs/kit';
 import { addStandaloneReimbursementAttachment, getReimbursementAccessInfo, listReimbursementAttachments, maxAttachmentSize } from '$lib/server/order-db';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = (event) => {
-  if (!getReimbursementAccessInfo(event.params.id)) return json({ message: '报销记录不存在' }, { status: 404 });
+export const GET: RequestHandler = async (event) => {
+  const identity = await event.locals.getCurrentIdentity();
+  const reimbursement = getReimbursementAccessInfo(event.params.id);
+  if (!reimbursement) return json({ message: '报销记录不存在' }, { status: 404 });
+  const canView = identity && (['admin', 'manager', 'owner', 'finance'].includes(identity.role) || reimbursement.employee_uid === identity.uid);
+  if (!canView) return json({ error: { code: 'FORBIDDEN' } }, { status: 403 });
   return json({ data: listReimbursementAttachments(event.params.id) });
 };
 export const POST: RequestHandler = async (event) => {
-  if (!getReimbursementAccessInfo(event.params.id)) return json({ message: '报销记录不存在' }, { status: 404 });
+  const identity = await event.locals.getCurrentIdentity();
+  const reimbursement = getReimbursementAccessInfo(event.params.id);
+  if (!reimbursement) return json({ message: '报销记录不存在' }, { status: 404 });
+  if (!identity || (reimbursement.employee_uid !== identity.uid && !['admin', 'finance', 'owner'].includes(identity.role))) return json({ error: { code: 'FORBIDDEN' } }, { status: 403 });
   const contentType = event.request.headers.get('content-type') || '';
   if (!contentType.includes('multipart/form-data')) return json({ message: '请使用 multipart/form-data 上传附件' }, { status: 400 });
   const length = Number(event.request.headers.get('content-length') || 0);
