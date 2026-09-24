@@ -270,7 +270,7 @@ button {
     grid-template-columns: repeat(5, 1fr)
 }
 
-.project-stats {
+.customer-stats {
     margin-bottom: 19px;
 }
 
@@ -291,41 +291,41 @@ button {
     gap: 10px;
 }
 
-.project-stat {
+.customer-stat {
     border: 1px solid var(--line);
     padding: 12px;
 }
 
-.project-stat>b,
-.project-stat>small {
+.customer-stat>b,
+.customer-stat>small {
     display: block
 }
 
-.project-stat>small {
+.customer-stat>small {
     color: var(--muted);
     font-size: 10px;
     margin: 5px 0 12px
 }
 
-.project-stat>div {
+.customer-stat>div {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 8px
 }
 
-.project-stat span {
+.customer-stat span {
     color: var(--muted);
     font-size: 10px
 }
 
-.project-stat strong {
+.customer-stat strong {
     display: block;
     color: var(--ink);
     font-size: 14px;
     margin-top: 4px
 }
 
-.project-stat em {
+.customer-stat em {
     display: block;
     color: var(--teal);
     font-style: normal;
@@ -2126,7 +2126,7 @@ input[type="radio"] {
   color: var(--red) !important;
 }
 
-.project-stats {
+.customer-stats {
   padding: 16px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
@@ -2146,7 +2146,7 @@ input[type="radio"] {
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
 }
 
-.project-stat {
+.customer-stat {
   border-radius: 8px;
   background: #fff;
 }

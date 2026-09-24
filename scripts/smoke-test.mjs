@@ -13,9 +13,9 @@ const port = 4300 + Math.floor(Math.random() * 500);
 const origin = `http://127.0.0.1:${port}`;
 const server = spawn(process.execPath, ['build'], { env: { ...process.env, DATABASE_PATH: databasePath, NODE_ENV: 'development', PORT: String(port), ORIGIN: origin }, stdio: ['ignore', 'pipe', 'pipe'] });
 let logs = '';
-let migrationServer;
 server.stdout.on('data', (chunk) => { logs += chunk; });
 server.stderr.on('data', (chunk) => { logs += chunk; });
+let fixturePortOffset = 0;
 
 async function waitForServer(targetOrigin = origin, readLogs = () => logs) {
   for (let index = 0; index < 80; index++) {
@@ -33,6 +33,35 @@ async function request(path, { json, ...options } = {}) {
   const contentType = response.headers.get('content-type') || '';
   const data = contentType.includes('json') ? await response.json() : await response.arrayBuffer();
   return { response, data };
+}
+
+/** 复制当前 v22 数据库为旧版本 fixture，启动一次服务触发迁移，再用只读连接断言结果。 */
+async function withMigratedFixture(name, legacyVersion, prepare, assertions) {
+  const path = join(directory, name);
+  const source = new Database(databasePath, { readonly: true });
+  await source.backup(path);
+  source.close();
+  const legacy = new Database(path);
+  prepare(legacy);
+  legacy.prepare("UPDATE schema_meta SET value = ? WHERE key = 'order_app_version'").run(legacyVersion);
+  legacy.close();
+  const fixturePort = port + 501 + fixturePortOffset++;
+  const fixtureOrigin = `http://127.0.0.1:${fixturePort}`;
+  let fixtureLogs = '';
+  const fixtureServer = spawn(process.execPath, ['build'], { env: { ...process.env, DATABASE_PATH: path, NODE_ENV: 'development', PORT: String(fixturePort), ORIGIN: fixtureOrigin }, stdio: ['ignore', 'pipe', 'pipe'] });
+  fixtureServer.stdout.on('data', (chunk) => { fixtureLogs += chunk; });
+  fixtureServer.stderr.on('data', (chunk) => { fixtureLogs += chunk; });
+  try {
+    await waitForServer(fixtureOrigin, () => fixtureLogs);
+    const migrated = new Database(path, { readonly: true });
+    try {
+      assertions(migrated);
+    } finally {
+      migrated.close();
+    }
+  } finally {
+    fixtureServer.kill('SIGTERM');
+  }
 }
 
 try {
@@ -72,12 +101,13 @@ try {
   result = await request('/api/catalog');
   assert.equal(result.data.data.filter((item) => item.source_id === copiedSourceId).length, 1, '沿用后的资料库应可直接用于录单');
 
-  const createPayload = { project_id: projectId, order_date: '2026-09-16', delivery_date: '2026-09-20', designer: '设计师甲', created_by: '填写人甲', idempotency_key: 'smoke-order-1', products: [{ name: '测试产品', unit: '项', quantity: 2, unit_price: '12.34', specification: '测试要求' }], costs: [{ name: '制作成本', vendor: '测试厂商', unit: '项', quantity: 2, unit_price: '3.21' }], advances: [{ employee: '垫付人乙', item: '打样费', amount: '8.50', date: '2026-09-16' }] };
+  const createPayload = { project_id: projectId, order_date: '2026-09-16', delivery_date: '2026-09-20', designer: '设计师甲', created_by: '填写人甲', idempotency_key: 'smoke-order-1', products: [{ name: '测试产品', unit: '项', quantity: 2, unit_price: '12.34', specification: '测试要求' }], costs: [{ name: '制作成本', vendor: '测试厂商', unit: '项', quantity: 2, unit_price: '3.21' }], advances: [{ employee: '填写人甲', item: '', amount: 0, date: '2026-09-16' }, { employee: '垫付人乙', item: '打样费', amount: '8.50', date: '2026-09-16' }] };
   result = await request('/api/orders', { method: 'POST', json: createPayload });
   assert.equal(result.response.status, 201, JSON.stringify(result.data));
   assert.equal(result.data.data.created_by, '填写人甲');
   assert.equal(result.data.data.quote_amount, 2468);
   assert.equal(result.data.data.cost_amount, 642);
+  assert.equal(result.data.data.advances.length, 1, '空白垫付行不应创建报销记录');
   assert.equal(result.data.data.advances[0].employee, '垫付人乙', '每条垫付应保存独立员工姓名');
   const orderId = result.data.data.id;
   result = await request('/api/orders', { method: 'POST', json: createPayload });
@@ -159,55 +189,59 @@ try {
   assert.match(result.response.headers.get('content-type') || '', /spreadsheet/);
 
   const db = new Database(databasePath, { readonly: true });
-  assert.equal(db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '20');
+  assert.equal(db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '22');
   assert.equal(db.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, '幂等键不能产生重复订单');
   assert.equal(db.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('users','sessions')").pluck().get(), 0, '全新数据库不应创建登录或角色表');
   assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
   assert.ok(db.prepare('SELECT COUNT(*) FROM audit_logs').pluck().get() >= 5);
   db.close();
 
-  const migrationPath = join(directory, 'oa-v18.db');
-  const source = new Database(databasePath, { readonly: true });
-  await source.backup(migrationPath);
-  source.close();
-  const legacy = new Database(migrationPath);
-  legacy.exec(`
-    DROP INDEX IF EXISTS idx_orders_idempotency;
-    ALTER TABLE orders_simple DROP COLUMN idempotency_key;
-    CREATE TABLE users(id TEXT PRIMARY KEY, username TEXT);
-    CREATE TABLE sessions(id TEXT PRIMARY KEY, user_id TEXT);
-    ALTER TABLE orders_simple ADD COLUMN created_by_user_id TEXT;
-    ALTER TABLE reimbursements_simple ADD COLUMN employee_user_id TEXT;
-    ALTER TABLE reimbursements_simple ADD COLUMN voucher_archived_by_user_id TEXT;
-    ALTER TABLE order_attachments ADD COLUMN uploaded_by_user_id TEXT;
-    ALTER TABLE reimbursement_attachments ADD COLUMN uploaded_by_user_id TEXT;
-    ALTER TABLE catalog_sources ADD COLUMN maintained_by_user_id TEXT;
-    ALTER TABLE audit_logs ADD COLUMN actor_user_id TEXT;
-  `);
-  legacy.prepare("UPDATE schema_meta SET value = '18' WHERE key = 'order_app_version'").run();
-  legacy.close();
-  const migrationPort = port + 501;
-  const migrationOrigin = `http://127.0.0.1:${migrationPort}`;
-  let migrationLogs = '';
-  migrationServer = spawn(process.execPath, ['build'], { env: { ...process.env, DATABASE_PATH: migrationPath, NODE_ENV: 'development', PORT: String(migrationPort), ORIGIN: migrationOrigin }, stdio: ['ignore', 'pipe', 'pipe'] });
-  migrationServer.stdout.on('data', (chunk) => { migrationLogs += chunk; });
-  migrationServer.stderr.on('data', (chunk) => { migrationLogs += chunk; });
-  await waitForServer(migrationOrigin, () => migrationLogs);
-  const migrated = new Database(migrationPath, { readonly: true });
-  assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '20');
-  assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='idempotency_key'").pluck().get(), 'v18 数据库应补齐幂等字段');
-  assert.equal(migrated.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('users','sessions')").pluck().get(), 0, '迁移后不应保留登录表');
-  for (const [table, column] of [['orders_simple', 'created_by_user_id'], ['reimbursements_simple', 'employee_user_id'], ['reimbursements_simple', 'voucher_archived_by_user_id'], ['order_attachments', 'uploaded_by_user_id'], ['reimbursement_attachments', 'uploaded_by_user_id'], ['catalog_sources', 'maintained_by_user_id'], ['audit_logs', 'actor_user_id']]) {
-    assert.equal(migrated.prepare(`SELECT COUNT(*) FROM pragma_table_info('${table}') WHERE name=?`).pluck().get(column), 0, `迁移后不应保留 ${table}.${column}`);
-  }
-  assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, '迁移不应丢失订单');
-  assert.deepEqual(migrated.prepare('PRAGMA foreign_key_check').all(), []);
-  migrated.close();
-  migrationServer.kill('SIGTERM');
-  migrationServer = undefined;
-  console.log('Smoke test passed: public workbench, catalog import/copy, creator snapshots, order totals, independent attachments, immutable processed advances, reimbursement filters/state machine, voucher idempotency, aligned exports, audit and v18 migration.');
+  await withMigratedFixture('oa-v18.db', '18', (legacy) => {
+    legacy.exec(`
+      DROP INDEX IF EXISTS idx_orders_idempotency;
+      ALTER TABLE orders_simple DROP COLUMN idempotency_key;
+      CREATE TABLE users(id TEXT PRIMARY KEY, username TEXT);
+      CREATE TABLE sessions(id TEXT PRIMARY KEY, user_id TEXT);
+      ALTER TABLE orders_simple ADD COLUMN created_by_user_id TEXT;
+      ALTER TABLE reimbursements_simple ADD COLUMN employee_user_id TEXT;
+      ALTER TABLE reimbursements_simple ADD COLUMN voucher_archived_by_user_id TEXT;
+      ALTER TABLE order_attachments ADD COLUMN uploaded_by_user_id TEXT;
+      ALTER TABLE reimbursement_attachments ADD COLUMN uploaded_by_user_id TEXT;
+      ALTER TABLE catalog_sources ADD COLUMN maintained_by_user_id TEXT;
+      ALTER TABLE audit_logs ADD COLUMN actor_user_id TEXT;
+    `);
+  }, (migrated) => {
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '22');
+    assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='idempotency_key'").pluck().get(), 'v18 数据库应补齐幂等字段');
+    assert.equal(migrated.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('users','sessions')").pluck().get(), 0, '迁移后不应保留登录表');
+    for (const [table, column] of [['orders_simple', 'created_by_user_id'], ['reimbursements_simple', 'employee_user_id'], ['reimbursements_simple', 'voucher_archived_by_user_id'], ['order_attachments', 'uploaded_by_user_id'], ['reimbursement_attachments', 'uploaded_by_user_id'], ['catalog_sources', 'maintained_by_user_id'], ['audit_logs', 'actor_user_id']]) {
+      assert.equal(migrated.prepare(`SELECT COUNT(*) FROM pragma_table_info('${table}') WHERE name=?`).pluck().get(column), 0, `迁移后不应保留 ${table}.${column}`);
+    }
+    assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, '迁移不应丢失订单');
+    assert.deepEqual(migrated.prepare('PRAGMA foreign_key_check').all(), []);
+  });
+
+  await withMigratedFixture('oa-v20.db', '20', (legacy) => {
+    legacy.exec('ALTER TABLE orders_simple DROP COLUMN planner; ALTER TABLE orders_simple DROP COLUMN execution_company;');
+  }, (migrated) => {
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '22');
+    assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='planner'").pluck().get(), 'v20 数据库应补齐策划人字段');
+    assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='execution_company'").pluck().get(), 'v20 数据库应补齐执行公司字段');
+    assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v20 迁移不应丢失订单');
+    assert.deepEqual(migrated.prepare('PRAGMA foreign_key_check').all(), []);
+  });
+
+  await withMigratedFixture('oa-v21.db', '21', (legacy) => {
+    legacy.exec('ALTER TABLE orders_simple DROP COLUMN execution_company;');
+  }, (migrated) => {
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '22');
+    assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='execution_company'").pluck().get(), 'v21 数据库应补齐执行公司字段');
+    assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v21 迁移不应丢失订单');
+    assert.deepEqual(migrated.prepare('PRAGMA foreign_key_check').all(), []);
+  });
+
+  console.log('Smoke test passed: public workbench, catalog import/copy, creator snapshots, order totals, independent attachments, immutable processed advances, reimbursement filters/state machine, voucher idempotency, aligned exports, audit and v18/v20/v21 migrations.');
 } finally {
-  migrationServer?.kill('SIGTERM');
   server.kill('SIGTERM');
   await new Promise((resolve) => { server.once('exit', resolve); setTimeout(resolve, 1000); });
   rmSync(directory, { recursive: true, force: true });
