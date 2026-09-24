@@ -50,27 +50,27 @@
     <div><span>销售总额</span><b>{desk.money(desk.totalQuote)}</b></div>
     <div><span>制作成本</span><b>{desk.money(desk.totalCost)}</b></div>
     <div><span>员工垫付</span><b>{desk.money(desk.totalAdvance)}</b></div>
-    <div><span>预计毛利</span><b class="positive">{desk.money(desk.totalQuote - desk.totalCost - desk.totalAdvance)}</b><small>{desk.totalQuote ? ((desk.totalQuote - desk.totalCost - desk.totalAdvance) / desk.totalQuote * 100).toFixed(1) : "0.0"}% 毛利率</small></div>
+    <div><span>预计毛利</span><b class="positive">{desk.money(desk.totalQuote - desk.totalCost - desk.totalAdvance)}</b><small>按销售额计算 · {desk.totalQuote ? ((desk.totalQuote - desk.totalCost - desk.totalAdvance) / desk.totalQuote * 100).toFixed(1) : "0.0"}% 毛利率</small></div>
     <div><span>未结款金额</span><b>{desk.money(desk.totalUnpaid)}</b></div>
   </div>
-  <div class="project-stats">
+  <div class="customer-stats">
     <div class="stats-title">
       <b>客户报价 / 成本汇总</b><span
-        >不受列表筛选影响，按客户汇总全部订单</span
+        >随当前订单筛选条件变化，按客户汇总</span>
       >
     </div>
     <div class="stats-grid">
-      {#each desk.projectStats as project}<div class="project-stat">
-          <b>{project.customer_name}</b><small
-            >{project.orderCount} 笔订单</small
+      {#each desk.customerStats as customer}<div class="customer-stat">
+          <b>{customer.name}</b><small
+            >{customer.orderCount} 笔订单</small
           >
           <div>
-            <span>全部报价 <strong>{desk.money(project.quote)}</strong></span>
-            <span>全部成本 <strong class="cost">{desk.money(project.cost)}</strong></span>
-            <span>员工垫付 <strong class="cost">{desk.money(project.advance)}</strong></span>
+            <span>全部报价 <strong>{desk.money(customer.quote)}</strong></span>
+            <span>全部成本 <strong class="cost">{desk.money(customer.cost)}</strong></span>
+            <span>员工垫付 <strong class="cost">{desk.money(customer.advance)}</strong></span>
           </div>
-          <em>预计毛利 {desk.money(project.quote - project.cost - project.advance)} · 毛利率 {project.quote ? ((project.quote - project.cost - project.advance) / project.quote * 100).toFixed(1) : "0.0"}%</em>
-        </div>{:else}<span class="muted">暂无可统计项目</span>{/each}
+          <em>预计毛利 {desk.money(customer.quote - customer.cost - customer.advance)} · 毛利率 {customer.quote ? ((customer.quote - customer.cost - customer.advance) / customer.quote * 100).toFixed(1) : "0.0"}%</em>
+        </div>{:else}<span class="muted">当前筛选条件下暂无客户订单</span>{/each}
     </div>
   </div>
   <div class="filters order-filters" aria-label="订单筛选">

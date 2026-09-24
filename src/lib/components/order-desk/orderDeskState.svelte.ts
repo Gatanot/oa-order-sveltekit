@@ -361,7 +361,7 @@ export function createOrderDesk(data: Data) {
   function setOrderPage(page: number) {
     orderPage = Math.min(Math.max(page, 1), orderPageCount);
   }
-  const projectStats = $derived(
+  const customerStats = $derived(
     customers.map((customer) => {
       const items = filteredOrders.filter((order) => order.customer_id === customer.id);
       return {
@@ -1114,7 +1114,7 @@ export function createOrderDesk(data: Data) {
       }
       replaceState(appPath("/orders"), {});
       notify(
-        advances.length
+        validAdvances.length
           ? "订单已提交报销，已进入报销核验"
           : editingOrderId ? "订单已更新" : "订单已保存",
       );
@@ -1379,6 +1379,7 @@ export function createOrderDesk(data: Data) {
     customerDepartment = "";
     designer = "";
     planner = "";
+    executionCompany = "";
     status = "制作中";
     paymentStatus = "未结款";
     createdBy = creatorName;
@@ -1673,7 +1674,7 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "selectedCustomer", { get: () => selectedCustomer });
   Object.defineProperty(desk, "selectedProject", { get: () => selectedProject });
   Object.defineProperty(desk, "filteredOrders", { get: () => filteredOrders });
-  Object.defineProperty(desk, "projectStats", { get: () => projectStats });
+  Object.defineProperty(desk, "customerStats", { get: () => customerStats });
   Object.defineProperty(desk, "allFilteredSelected", { get: () => allFilteredSelected });
   Object.defineProperty(desk, "totalQuote", { get: () => totalQuote });
   Object.defineProperty(desk, "totalCost", { get: () => totalCost });
