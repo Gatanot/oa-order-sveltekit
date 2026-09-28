@@ -86,7 +86,6 @@ export type Data = {
     reimbursements: Reimbursement[];
     visitor: PublicArtifactVisitor;
     identity: { uid: number; username: string; displayName: string; role: string; department: string; active: boolean };
-    isAdmin?: boolean;
   };
 
 
@@ -1561,7 +1560,7 @@ export function createOrderDesk(data: Data) {
   }
 
 
-  const desk = { isAdmin: data.isAdmin === true } as Record<string, any>;
+  const desk = {} as Record<string, any>;
   Object.defineProperty(desk, "view", { get: () => view, set: (value) => { view = value; } });
   Object.defineProperty(desk, "workMode", { get: () => workMode, set: (value) => { setWorkMode(value); } });
   Object.defineProperty(desk, "canWrite", { get: () => workMode === "entry" });

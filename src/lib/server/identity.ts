@@ -15,18 +15,36 @@ export type Employee = {
   active: number;
 };
 export type CurrentIdentity = { uid: number; username: string; displayName: string; role: 'admin' | EmployeeRole | 'pending'; department: string; active: boolean };
-export const IDENTITY_SWITCH_COOKIE = 'oa-admin-identity';
+export type AdminExtraIdentity = { role: EmployeeRole };
 
-export function createIdentitySwitchToken(uid: number, role: EmployeeRole | 'admin') {
-  return `${uid}:${role}`;
+// 权限集合集中定义，避免页面和 API 各自维护一份角色列表。
+export const orderViewAllRoles = ['admin', 'manager', 'owner', 'finance'] as const;
+export const orderManageRoles = ['admin', 'manager', 'owner'] as const;
+export const reimbursementViewAllRoles = ['admin', 'manager', 'owner', 'finance'] as const;
+export const reimbursementActionRoles = ['admin', 'owner', 'finance'] as const;
+export const catalogManageRoles = ['admin', 'manager', 'owner', 'finance'] as const;
+export const employeeManageRoles = ['admin', 'manager', 'owner'] as const;
+
+export function hasAnyRole(identity: CurrentIdentity | null | undefined, roles: readonly string[]) {
+  return Boolean(identity && roles.includes(identity.role));
 }
 
-function readIdentitySwitchUid(cookieHeader: string) {
-  const value = cookieHeader.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${IDENTITY_SWITCH_COOKIE}=`))?.slice(IDENTITY_SWITCH_COOKIE.length + 1);
-  if (!value) return null;
-  const [uidText, role] = value.split(':');
-  if (!uidText || !role || !/^\d+$/.test(uidText) || !([...employeeRoles, 'admin'] as string[]).includes(role)) return null;
-  return { uid: Number(uidText), role: role as EmployeeRole | 'admin' };
+export function getAdminExtraIdentity(): AdminExtraIdentity | null {
+  const row = getOrderDb().prepare('SELECT role FROM system_admin_identity WHERE uid=?').get(ADMIN_UID) as { role: EmployeeRole } | undefined;
+  return row ? { role: row.role } : null;
+}
+
+export function setAdminExtraIdentity(role: EmployeeRole | null) {
+  const db = getOrderDb();
+  if (role === null) {
+    db.prepare('DELETE FROM system_admin_identity WHERE uid=?').run(ADMIN_UID);
+    return;
+  }
+  if (!employeeRoles.includes(role)) throw new Error('INVALID_ROLE');
+  const timestamp = new Date().toISOString();
+  db.prepare(`INSERT INTO system_admin_identity(uid,role,created_at,updated_at) VALUES(?,?,?,?)
+    ON CONFLICT(uid) DO UPDATE SET role=excluded.role,updated_at=excluded.updated_at`)
+    .run(ADMIN_UID, role, timestamp, timestamp);
 }
 
 export function resolveIdentity(visitor: ArtifactVisitor): CurrentIdentity | null {
@@ -49,20 +67,11 @@ export function resolveIdentity(visitor: ArtifactVisitor): CurrentIdentity | nul
   return { uid, username, displayName: employee.display_name, role: employee.role, department: employee.department, active: employee.active === 1 };
 }
 
-export function resolveActingIdentity(visitor: ArtifactVisitor, cookieHeader: string): CurrentIdentity | null {
+export function resolveActingIdentity(visitor: ArtifactVisitor): CurrentIdentity | null {
   const admin = resolveIdentity(visitor);
   if (!admin || admin.role !== 'admin') return admin;
-  const selected = readIdentitySwitchUid(cookieHeader);
-  if (!selected || selected.role === 'admin') return admin;
-  if (selected.uid === ADMIN_UID) return { ...admin, role: selected.role, displayName: `${admin.displayName}（${selected.role}）` };
-  const employee = getOrderDb().prepare('SELECT * FROM employees WHERE catsco_uid=? AND active=1').get(selected.uid) as Employee | undefined;
-  if (!employee || employee.role !== selected.role) return admin;
-  return { uid: employee.catsco_uid, username: employee.username, displayName: employee.display_name, role: employee.role, department: employee.department, active: employee.active === 1 };
-}
-
-export function listIdentitySwitchOptions() {
-  const adminOptions = employeeRoles.map((role) => ({ catsco_uid: ADMIN_UID, display_name: `catsco（${role}）`, department: '系统调试', role }));
-  return [...adminOptions, ...listActiveEmployees()];
+  const extra = getAdminExtraIdentity();
+  return extra ? { ...admin, role: extra.role, displayName: `${admin.displayName}（${extra.role}）` } : admin;
 }
 
 export function listActiveEmployees(): Pick<Employee, 'catsco_uid' | 'display_name' | 'department' | 'role'>[] {

@@ -20,7 +20,7 @@
 
 <section class="page-section">
   <div class="section-heading">
-    <div><p class="section-kicker">REFERENCE DATA</p><h2>报价库与成本库</h2><span>{desk.canManageCatalog ? '按客户与厂商维护订单录入所需的价格资料。' : '当前为只读浏览；新增和导入资料仅限财务。'}</span></div>
+    <div><p class="section-kicker">基础资料</p><h2>报价库与成本库</h2><span>{desk.canManageCatalog ? '按客户与厂商维护订单录入所需的价格资料。' : '当前为只读浏览；新增和导入资料仅限财务。'}</span></div>
     {#if desk.canManageCatalog}<div class="top-actions"><button class="outline-action" type="button" onclick={desk.openCatalogSourceForm}><Plus size={16} />新增{desk.catalogKind === 'quote' ? '公司' : '厂商'}</button><label class="upload-action"><Upload size={16} />配置文件<input type="file" accept=".xlsx,.xls,.csv" onchange={desk.importFile} /></label></div>{:else}<span class="readonly-badge">只读</span>{/if}
   </div>
 
@@ -59,7 +59,7 @@
 {#if desk.catalogSourceOpen}
   <div class="project-modal-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) desk.catalogSourceOpen = false; }}>
     <div class="project-modal" role="dialog" aria-modal="true" aria-labelledby="catalog-source-title">
-      <div class="project-modal-head"><div><p class="section-kicker">NEW CATALOG SOURCE</p><h2 id="catalog-source-title">新增{desk.catalogKind === 'quote' ? '客户公司' : '厂商'}</h2><span>可建立空资料库，也可沿用同类型资料库后再调整。</span></div><button class="icon-control" aria-label="关闭新增资料库" onclick={() => desk.catalogSourceOpen = false}><X size={18} /></button></div>
+      <div class="project-modal-head"><div><p class="section-kicker">新增资料库来源</p><h2 id="catalog-source-title">新增{desk.catalogKind === 'quote' ? '客户公司' : '厂商'}</h2><span>可建立空资料库，也可沿用同类型资料库后再调整。</span></div><button class="icon-control" aria-label="关闭新增资料库" onclick={() => desk.catalogSourceOpen = false}><X size={18} /></button></div>
       <form onsubmit={(event) => { event.preventDefault(); desk.createCatalogSourceFromForm(); }}>
         <div class="project-modal-body">
           <label>{desk.catalogKind === 'quote' ? '客户公司名称' : '厂商名称'} <em>*</em><input bind:value={desk.catalogSourceName} maxlength="80" placeholder={desk.catalogKind === 'quote' ? '例如：华东科技有限公司' : '例如：硕达'} required /></label>
@@ -74,7 +74,7 @@
 {#if detailSource}
   <div class="drawer-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) detailSource = null; }}>
     <div class="export-drawer catalog-detail-viewer" role="dialog" aria-modal="true" aria-labelledby="catalog-detail-title">
-      <div class="drawer-head"><div><p class="section-kicker">CATALOG SOURCE</p><h2 id="catalog-detail-title">{detailSource.owner_name}</h2><span>{detailSource.source_file || '手工配置'} · {detailSource.item_count} 个项目</span></div><button class="icon-control" aria-label="关闭明细" onclick={() => detailSource = null}><X size={17} /></button></div>
+      <div class="drawer-head"><div><p class="section-kicker">资料库来源</p><h2 id="catalog-detail-title">{detailSource.owner_name}</h2><span>{detailSource.source_file || '手工配置'} · {detailSource.item_count} 个项目</span></div><button class="icon-control" aria-label="关闭明细" onclick={() => detailSource = null}><X size={17} /></button></div>
       <div class="drawer-body"><label class="search-field"><Search size={16} /><input bind:value={detailSearch} placeholder="搜索名称、分类或制作要求" /></label><div class="table-panel"><div class="table-scroll"><table><thead><tr><th>分类</th><th>名称</th><th>规格 / 要求</th><th>单位</th><th>单价</th></tr></thead><tbody>{#each detailItems() as item}<tr><td>{item.category || '未分类'}</td><td><b>{item.name}</b></td><td>{item.specification || item.supplier_remark || '—'}</td><td>{item.unit}</td><td class="money">{desk.money(detailSource.kind === 'quote' ? item.quote_unit : item.cost_unit)}</td></tr>{:else}<tr><td colspan="5"><div class="empty-table">没有匹配的资料条目。</div></td></tr>{/each}</tbody></table></div></div></div>
       <div class="drawer-footer"><button class="outline-action" onclick={() => detailSource = null}>关闭</button></div>
     </div>
@@ -84,7 +84,7 @@
 {#if desk.catalogImportPreview}
   <div class="drawer-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) desk.cancelCatalogImport(); }}>
     <div class="export-drawer catalog-detail-viewer" role="dialog" aria-modal="true" aria-labelledby="catalog-import-title">
-      <div class="drawer-head"><div><p class="section-kicker">IMPORT PREVIEW</p><h2 id="catalog-import-title">导入预览</h2><span>{desk.catalogImportPreview.file_name} · {desk.catalogImportPreview.sheet || '首个工作表'}</span></div><button class="icon-control" aria-label="关闭导入预览" onclick={desk.cancelCatalogImport}><X size={17} /></button></div>
+      <div class="drawer-head"><div><p class="section-kicker">导入预览</p><h2 id="catalog-import-title">导入预览</h2><span>{desk.catalogImportPreview.file_name} · {desk.catalogImportPreview.sheet || '首个工作表'}</span></div><button class="icon-control" aria-label="关闭导入预览" onclick={desk.cancelCatalogImport}><X size={17} /></button></div>
       <div class="drawer-body">
         <div class="import-preview-summary"><div><small>读取行数</small><b>{desk.catalogImportPreview.total_rows}</b></div><div><small>有效行</small><b>{desk.catalogImportPreview.valid_rows}</b></div><div><small>忽略行</small><b>{desk.catalogImportPreview.ignored_rows}</b></div></div>
         {#if !desk.catalogSourceId}<label class="settings-name-field">{desk.catalogKind === 'quote' ? '客户公司名称' : '厂商名称'}<input bind:value={desk.catalogImportOwner} maxlength="80" placeholder={desk.catalogKind === 'quote' ? '例如：佛山广电' : '例如：硕达'} /></label>{/if}

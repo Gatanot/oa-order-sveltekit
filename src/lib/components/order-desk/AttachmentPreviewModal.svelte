@@ -16,7 +16,7 @@
   <div class="attachment-preview-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) desk.closeAttachmentPreview(); }}>
     <div class="attachment-preview-modal" role="dialog" aria-modal="true" aria-labelledby="attachment-preview-title" tabindex="-1">
       <header class="attachment-preview-head">
-        <div><p class="section-kicker">ATTACHMENT PREVIEW</p><h2 id="attachment-preview-title">{desk.attachmentPreviewName || '附件预览'}</h2><span>{isPdf() ? 'PDF 文件' : isImage() ? '图片文件' : desk.attachmentPreviewMime || '附件文件'}</span></div>
+        <div><p class="section-kicker">附件预览</p><h2 id="attachment-preview-title">{desk.attachmentPreviewName || '附件预览'}</h2><span>{isPdf() ? 'PDF 文件' : isImage() ? '图片文件' : desk.attachmentPreviewMime || '附件文件'}</span></div>
         <button class="icon-control" type="button" aria-label="关闭附件预览" onclick={desk.closeAttachmentPreview}><X size={18} /></button>
       </header>
 

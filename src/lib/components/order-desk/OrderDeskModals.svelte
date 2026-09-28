@@ -10,7 +10,7 @@
 
 {#if desk.showStandaloneReimbursement}<div class="project-modal-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) desk.showStandaloneReimbursement = false; }}>
   <div class="project-modal reimbursement-modal" role="dialog" aria-modal="true" aria-labelledby="reimbursement-modal-title">
-    <div class="project-modal-head"><div><p class="section-kicker">NEW REIMBURSEMENT</p><h2 id="reimbursement-modal-title">{desk.canFinance ? "代员工录入报销" : "新建报销"}</h2><span>{desk.canFinance ? "财务可填写员工姓名并代为录入纸质或线下报销。" : "报销人固定为当前填写人，可关联订单或作为内务报销提交。"}</span></div><button class="icon-control" aria-label="关闭新建报销窗口" onclick={() => desk.showStandaloneReimbursement = false}><X size={18} /></button></div>
+    <div class="project-modal-head"><div><p class="section-kicker">新增报销</p><h2 id="reimbursement-modal-title">{desk.canFinance ? "代员工录入报销" : "新建报销"}</h2><span>{desk.canFinance ? "财务可填写员工姓名并代为录入纸质或线下报销。" : "报销人固定为当前填写人，可关联订单或作为内务报销提交。"}</span></div><button class="icon-control" aria-label="关闭新建报销窗口" onclick={() => desk.showStandaloneReimbursement = false}><X size={18} /></button></div>
     <form onsubmit={(event) => { event.preventDefault(); desk.submitStandaloneReimbursement(); }}>
       <div class="project-modal-body reimbursement-form-body">
         <label>报销人 <em>*</em><input bind:value={desk.standaloneEmployee} placeholder="例如：张三" readonly={!desk.canFinance} required /></label>
@@ -40,7 +40,7 @@
     >
       <div class="project-modal-head">
         <div>
-          <p class="section-kicker">NEW PROJECT</p>
+          <p class="section-kicker">新增项目</p>
           <h2 id="project-modal-title">新建项目</h2>
           <span>创建成功后将自动选中该项目。</span>
         </div>
@@ -104,7 +104,7 @@
     >
       <div class="drawer-head">
         <div>
-          <p class="section-kicker">PERSONAL SETTINGS</p>
+          <p class="section-kicker">个人设置</p>
           <h2 id="creator-settings-title">设置填写人</h2>
           <span>名字会保存在当前浏览器中，不会自动过期。</span>
         </div>
@@ -142,7 +142,7 @@
   </div>{/if}
 {#if desk.showOrderFilters}<div class="drawer-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) desk.showOrderFilters = false; }}>
   <div class="export-drawer filter-drawer" role="dialog" aria-modal="true" aria-labelledby="order-filter-title" tabindex="-1">
-    <div class="drawer-head"><div><p class="section-kicker">ORDER FILTERS</p><h2 id="order-filter-title">筛选订单</h2><span>筛选结果会同步更新列表与金额汇总</span></div><button class="icon-control" aria-label="关闭筛选" onclick={() => desk.showOrderFilters = false}><X size={17} /></button></div>
+    <div class="drawer-head"><div><p class="section-kicker">订单筛选</p><h2 id="order-filter-title">筛选订单</h2><span>筛选结果会同步更新列表与金额汇总</span></div><button class="icon-control" aria-label="关闭筛选" onclick={() => desk.showOrderFilters = false}><X size={17} /></button></div>
     <div class="drawer-body"><div class="drawer-filter-grid">
       <label>项目负责人<select bind:value={desk.filterOwner}><option value="">全部负责人</option>{#each desk.owners as owner}<option value={owner}>{owner}</option>{/each}</select></label>
       <label>设计师<select bind:value={desk.filterDesigner}><option value="">全部设计师</option>{#each desk.designers as designer}<option value={designer}>{designer}</option>{/each}</select></label>
@@ -164,7 +164,7 @@
     <section class="export-drawer" role="dialog" aria-modal="true">
       <div class="drawer-head">
         <div>
-          <p class="section-kicker">EXPORT</p>
+          <p class="section-kicker">导出数据</p>
           <h2>导出订单</h2>
           <span>当前筛选条件会一并应用到导出结果</span>
         </div>
@@ -281,7 +281,7 @@
 
 {#if desk.reimbursementRejectOpen}<div class="project-modal-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) desk.reimbursementRejectOpen = false; }}>
   <div class="project-modal" role="dialog" aria-modal="true" aria-labelledby="reject-modal-title">
-    <div class="project-modal-head"><div><p class="section-kicker">REVIEW RESULT</p><h2 id="reject-modal-title">打回报销</h2><span>原因会显示给填写人，补传发票后重新进入待审核。</span></div><button class="icon-control" aria-label="关闭打回窗口" onclick={() => desk.reimbursementRejectOpen = false}><X size={18} /></button></div>
+    <div class="project-modal-head"><div><p class="section-kicker">审核结果</p><h2 id="reject-modal-title">打回报销</h2><span>原因会显示给填写人，补传发票后重新进入待审核。</span></div><button class="icon-control" aria-label="关闭打回窗口" onclick={() => desk.reimbursementRejectOpen = false}><X size={18} /></button></div>
     <form onsubmit={(event) => { event.preventDefault(); desk.confirmRejectReimbursements(); }}>
       <div class="project-modal-body"><label class="full-field">打回原因 <em>*</em><textarea bind:this={rejectReasonInput} bind:value={desk.reimbursementRejectReason} placeholder="请说明需要补充或修正的资料" required></textarea></label></div>
       <div class="project-modal-footer"><span>将处理 {desk.reimbursementRejectCount} 条记录</span><button type="button" class="outline-action" onclick={() => desk.reimbursementRejectOpen = false}>取消</button><button type="submit" class="delete-action" disabled={desk.busy}>{desk.busy ? '处理中...' : '确认打回'}</button></div>
@@ -291,7 +291,7 @@
 
 {#if desk.confirmOpen}<div class="project-modal-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) desk.confirmOpen = false; }}>
   <div class="project-modal confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="confirm-modal-title" aria-describedby="confirm-modal-message">
-    <div class="project-modal-head"><div><p class="section-kicker">CONFIRM ACTION</p><h2 id="confirm-modal-title">{desk.confirmTitle}</h2></div><button class="icon-control" aria-label="关闭确认窗口" onclick={() => desk.confirmOpen = false}><X size={18} /></button></div>
+    <div class="project-modal-head"><div><p class="section-kicker">确认操作</p><h2 id="confirm-modal-title">{desk.confirmTitle}</h2></div><button class="icon-control" aria-label="关闭确认窗口" onclick={() => desk.confirmOpen = false}><X size={18} /></button></div>
     <div class="project-modal-body"><p id="confirm-modal-message" class="confirm-message">{desk.confirmMessage}</p></div>
     <div class="project-modal-footer"><button type="button" class="outline-action" onclick={() => desk.confirmOpen = false}>取消</button><button type="button" class="delete-action" disabled={desk.busy} onclick={desk.runConfirm}>确认</button></div>
   </div>

@@ -3,6 +3,7 @@
 
   let { data, form }: { data: any; form: any } = $props();
   const stats = $derived(form?.stats || data.stats);
+  const roleLabels: Record<string, string> = { executor: '执行', designer: '设计师', planner: '策划', manager: '管理人员', finance: '财务', owner: '老板' };
 </script>
 
 <svelte:head><title>系统管理员 · 广告订单 OA</title></svelte:head>
@@ -11,7 +12,7 @@
   <div class="admin-shell">
     <header class="admin-header">
       <div>
-        <p class="section-kicker">STAFF ACCESS</p>
+        <p class="section-kicker">员工权限</p>
         <h1>系统管理员</h1>
         <span>系统级开发管理工具，仅 Catsco 系统管理员可访问。</span>
       </div>
@@ -20,29 +21,28 @@
 
     <div class="admin-notice">
       <ShieldAlert size={19} />
-      <div><b>开发管理员工具</b><span>仅 Catsco 管理员 UID 826（catsco）可访问；生成操作会向当前数据库追加模拟记录，不会覆盖已有数据。</span></div>
+      <div><b>开发管理员工具</b><span>仅 Catsco 系统管理员编号 826（账号 catsco）可访问；生成操作会向当前数据库追加模拟记录，不会覆盖已有数据。</span></div>
     </div>
 
     <section class="admin-action-card identity-switcher">
       <div class="admin-card-icon"><ShieldAlert size={22} /></div>
       <div class="admin-card-copy">
-        <p class="section-kicker">BUSINESS IDENTITY</p>
-        <h2>调试业务身份</h2>
-        <p>当前普通页面身份：{data.currentIdentity?.displayName || '系统管理员'} · {data.currentIdentity?.role || 'admin'}。切换后可按员工权限查看订单、报销和资料库，管理页仍保留管理员权限。</p>
+        <p class="section-kicker">业务身份</p>
+        <h2>我的额外业务身份</h2>
+        <p>设置后，离开管理页时系统管理员将仅按此业务身份查看数据并执行对应权限；管理页只能通过直接访问网址进入。当前额外身份：{data.extraIdentity ? roleLabels[data.extraIdentity.role] || data.extraIdentity.role : '未设置'}。</p>
       </div>
-      <form method="POST" action="?/switchIdentity">
-        <label>选择业务身份
-          <select name="identity" aria-label="选择业务身份" required>
-            <option value="" disabled selected={data.currentIdentity?.role === 'admin'}>请选择业务身份</option>
-            {#each data.employees as employee}
-              <option value={`${employee.catsco_uid}:${employee.role}`} selected={data.currentIdentity?.uid === employee.catsco_uid && data.currentIdentity?.role === employee.role}>{employee.display_name} · {employee.role}{employee.department ? ` · ${employee.department}` : ''}</option>
+      <form method="POST" action="?/saveExtraIdentity">
+        <label>选择额外身份
+          <select name="role" aria-label="选择额外身份" required>
+            {#each data.roles as role}
+              <option value={role} selected={data.extraIdentity?.role === role}>{roleLabels[role] || role}</option>
             {/each}
           </select>
         </label>
-        <button class="primary-action" type="submit"><ShieldAlert size={17} />进入该身份</button>
+        <button class="primary-action" type="submit"><ShieldAlert size={17} />保存并进入工作台</button>
       </form>
-      {#if data.currentIdentity?.role !== 'admin'}
-        <form method="POST" action="?/clearIdentity"><button class="outline-action" type="submit">恢复管理员身份</button></form>
+      {#if data.extraIdentity}
+        <form method="POST" action="?/clearExtraIdentity"><button class="outline-action" type="submit">移除额外身份</button></form>
       {/if}
     </section>
 
@@ -71,7 +71,7 @@
       <section class="admin-action-card">
         <div class="admin-card-icon"><Boxes size={22} /></div>
         <div class="admin-card-copy">
-          <p class="section-kicker">VENDOR COST CATALOG</p>
+          <p class="section-kicker">厂商成本库</p>
           <h2>厂商成本库模拟数据</h2>
           <p>生成喷印制作、广告物料等成本条目。每个厂商包含 8 条成本项目，可在订单成本录入时匹配。</p>
         </div>
@@ -89,7 +89,7 @@
       <section class="admin-action-card">
         <div class="admin-card-icon"><ReceiptText size={22} /></div>
         <div class="admin-card-copy">
-          <p class="section-kicker">ORDERS & REIMBURSEMENTS</p>
+          <p class="section-kicker">订单与报销</p>
           <h2>订单与报销模拟数据</h2>
           <p>生成多个模拟客户项目、订单产品、订单成本及报销记录，并覆盖待审核、已打回、待打款和已报销状态。</p>
         </div>

@@ -72,6 +72,30 @@ try {
   assert.equal(result.response.status, 400, '固定管理员身份不能被员工档案修改或授予');
   result = await request('/api/orders');
   assert.equal(result.response.status, 200, '工作台 API 不应要求登录');
+  result = await request('/admin');
+  assert.equal(result.response.status, 200, '系统管理员可通过网址直接进入 admin 页面');
+  assert.match(Buffer.from(result.data).toString(), /我的额外业务身份/);
+  result = await request('/orders');
+  assert.doesNotMatch(Buffer.from(result.data).toString(), /href="\/admin"|管理员入口/, '工作台导航不应出现 admin 入口');
+  const setExtraIdentity = new FormData();
+  setExtraIdentity.append('role', 'finance');
+  result = await request('/admin?/saveExtraIdentity', { method: 'POST', body: setExtraIdentity });
+  assert.equal(result.response.status, 200, '设置额外身份 action 应返回 SvelteKit redirect 响应');
+  assert.equal(result.data.type, 'redirect');
+  assert.equal(result.data.location, '/orders');
+  result = await request('/orders');
+  assert.match(Buffer.from(result.data).toString(), /财务身份/, '管理员普通页面应使用已设置的财务身份');
+  result = await request('/api/orders');
+  assert.equal(result.response.status, 200, '财务身份可以查看订单');
+  result = await request('/api/orders/export?mode=detail');
+  assert.equal(result.response.status, 200, '财务身份可以导出订单');
+  result = await request('/api/catalog/sources', { method: 'POST', json: { kind: 'cost', owner_name: '财务身份验证库', source_file: 'finance-check.csv' } });
+  assert.equal(result.response.status, 201, '财务身份可以维护资料库');
+  const clearExtraIdentity = new FormData();
+  result = await request('/admin?/clearExtraIdentity', { method: 'POST', body: clearExtraIdentity });
+  assert.equal(result.response.status, 200, '管理员可通过 admin 页面移除额外身份');
+  assert.equal(result.data.type, 'redirect');
+  assert.equal(result.data.location, '/admin');
 
   result = await request('/api/projects', { method: 'POST', json: { customer: '测试客户', name: '测试项目', owner: '项目负责人' } });
   assert.equal(result.response.status, 201, JSON.stringify(result.data));
@@ -194,6 +218,8 @@ try {
 
   const db = new Database(databasePath, { readonly: true });
   assert.equal(db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '23');
+  assert.equal(db.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='system_admin_identity'").pluck().get(), 1, '系统管理员额外身份应持久化保存');
+  assert.equal(db.prepare('SELECT COUNT(*) FROM system_admin_identity').pluck().get(), 0, '清除额外身份后应回到系统管理员身份');
   assert.equal(db.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, '幂等键不能产生重复订单');
   assert.equal(db.prepare('SELECT created_by_uid FROM orders_simple LIMIT 1').pluck().get(), 826, '订单录入人应关联可信的 Catsco UID');
   assert.ok(db.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name IN ('created_by_uid','designer_uid','planner_uid')").pluck().get() === 3, '订单应保存员工 UID 关联');

@@ -1,4 +1,5 @@
 import { json } from '@sveltejs/kit';
+import { hasAnyRole, orderViewAllRoles } from '$lib/server/identity';
 import { body, action } from '$lib/server/http';
 import { addAuditLog, createOrder, listOrders, resolveOrderEmployeeUid, setOrderEmployees } from '$lib/server/order-db';
 import type { RequestHandler } from './$types';
@@ -6,8 +7,9 @@ import type { RequestHandler } from './$types';
 export const GET: RequestHandler = async ({ locals }) => {
   const identity = await locals.getCurrentIdentity();
   if (!identity) return json({ error: { code: 'UNAUTHORIZED' } }, { status: 401 });
-  const canSeeAll = ['admin', 'manager', 'owner'].includes(identity.role);
-  const orders = listOrders().filter((order) => canSeeAll || order.created_by_uid === identity.uid || order.designer_uid === identity.uid || order.planner_uid === identity.uid);
+  const canSeeAll = hasAnyRole(identity, orderViewAllRoles);
+  const identityUid = identity.uid;
+  const orders = listOrders().filter((order) => canSeeAll || order.created_by_uid === identityUid || order.designer_uid === identityUid || order.planner_uid === identityUid);
   return json({ data: orders });
 };
 export const POST: RequestHandler = async (event) => {

@@ -1,6 +1,6 @@
 import { json, type Handle, type HandleServerError } from '@sveltejs/kit';
 import { getArtifactVisitor } from '$lib/server/artifact-visitor';
-import { resolveActingIdentity, resolveIdentity } from '$lib/server/identity';
+import { getAdminExtraIdentity, orderViewAllRoles, reimbursementActionRoles, resolveActingIdentity, resolveIdentity, hasAnyRole } from '$lib/server/identity';
 
 export const handle: Handle = async ({ event, resolve }) => {
   let visitor: ReturnType<typeof getArtifactVisitor> | undefined;
@@ -25,9 +25,13 @@ export const handle: Handle = async ({ event, resolve }) => {
   let identity: ReturnType<typeof resolveActingIdentity> | undefined;
   event.locals.getCurrentIdentity = async () => {
     if (identity === undefined) {
-      identity = process.env.NODE_ENV === 'test' && process.env.OA_TEST_AUTH_BYPASS === '1'
-        ? { uid: 826, username: 'catsco', displayName: 'catsco', role: 'admin', department: '', active: true }
-        : resolveActingIdentity(await event.locals.getArtifactVisitor(), event.request.headers.get('cookie') || '');
+      if (process.env.NODE_ENV === 'test' && process.env.OA_TEST_AUTH_BYPASS === '1') {
+        const admin = { uid: 826, username: 'catsco', displayName: 'catsco', role: 'admin' as const, department: '', active: true };
+        const extra = getAdminExtraIdentity();
+        identity = extra ? { ...admin, role: extra.role, displayName: `${admin.displayName}（${extra.role}）` } : admin;
+      } else {
+        identity = resolveActingIdentity(await event.locals.getArtifactVisitor());
+      }
     }
     return identity;
   };
@@ -40,14 +44,14 @@ export const handle: Handle = async ({ event, resolve }) => {
       return json({ error: { code: 'FORBIDDEN', message: '账户待管理员开通' } }, { status: 403 });
     }
     const method = event.request.method;
-    const isOrderExport = routeId === '/api/orders/export' && !['admin', 'manager', 'owner'].includes(current.role);
+    const isOrderExport = routeId === '/api/orders/export' && !hasAnyRole(current, orderViewAllRoles);
     const isReimbursementAction = routeId.startsWith('/api/reimbursements') && (
       ['PATCH', 'DELETE'].includes(method) ||
       (method === 'POST' && (routeId.includes('/batch') || routeId.includes('/archive') || routeId.includes('/voucher'))) ||
       (method === 'GET' && routeId.endsWith('/export'))
     );
     if (isOrderExport) return json({ error: { code: 'FORBIDDEN', message: '没有订单导出权限' } }, { status: 403 });
-    if (isReimbursementAction && !['admin', 'finance', 'owner'].includes(current.role)) {
+    if (isReimbursementAction && !hasAnyRole(current, reimbursementActionRoles)) {
       return json({ error: { code: 'FORBIDDEN', message: '没有财务操作权限' } }, { status: 403 });
     }
   }

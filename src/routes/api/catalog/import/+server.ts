@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import { json } from '@sveltejs/kit';
 import { importCatalog, maxAttachmentSize } from '$lib/server/order-db';
+import { catalogManageRoles, hasAnyRole } from '$lib/server/identity';
 import type { RequestHandler } from './$types';
 
 function readRows(fileName: string, data: Buffer): { rows: Array<Record<string, unknown>>; errors: string[] } {
@@ -55,7 +56,7 @@ export const POST: RequestHandler = async (event) => {
   if (file.size > maxAttachmentSize) return json({ error: { code: 'FILE_TOO_LARGE', message: '资料库文件不能超过 10MB' } }, { status: 413 });
   const parsed = readRows(file.name, Buffer.from(await file.arrayBuffer()));
   if (mode !== 'import') return json({ data: { file_name: file.name, sheet: parsed.rows[0]?.source_sheet || '', total_rows: parsed.rows.length + parsed.errors.length, valid_rows: parsed.rows.length, ignored_rows: parsed.errors.length, errors: parsed.errors.slice(0, 100), rows: parsed.rows.slice(0, 20) } });
-  if (!identity || !['admin', 'manager', 'owner'].includes(identity.role)) return json({ error: { code: 'FORBIDDEN', message: '没有导入资料库权限' } }, { status: 403 });
+  if (!identity || !hasAnyRole(identity, catalogManageRoles)) return json({ error: { code: 'FORBIDDEN', message: '没有导入资料库权限' } }, { status: 403 });
   if (!sourceId) return json({ error: { code: 'SOURCE_REQUIRED', message: '请选择资料库来源' } }, { status: 400 });
   try {
     const count = importCatalog(parsed.rows, sourceId, { replace, actorName: identity.displayName });

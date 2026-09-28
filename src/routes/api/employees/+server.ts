@@ -1,11 +1,11 @@
 import { json } from '@sveltejs/kit';
 import { addAuditLog } from '$lib/server/order-db';
-import { departments, employeeRoles, listEmployees, updateEmployee } from '$lib/server/identity';
+import { departments, employeeManageRoles, employeeRoles, hasAnyRole, listEmployees, updateEmployee } from '$lib/server/identity';
 import type { RequestHandler } from './$types';
 import type { CurrentIdentity } from '$lib/server/identity';
 
 function requireAdmin(identity: CurrentIdentity | null) {
-  if (!identity || !['admin', 'manager', 'owner'].includes(identity.role)) return json({ error: { code: 'FORBIDDEN', message: '没有员工管理权限' } }, { status: 403 });
+  if (!hasAnyRole(identity, employeeManageRoles)) return json({ error: { code: 'FORBIDDEN', message: '没有员工管理权限' } }, { status: 403 });
   return null;
 }
 

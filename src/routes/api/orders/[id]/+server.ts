@@ -1,4 +1,5 @@
 import { action, body } from '$lib/server/http';
+import { hasAnyRole, orderManageRoles } from '$lib/server/identity';
 import { addAuditLog, deleteOrder, getOrderAccessInfo, resolveOrderEmployeeUid, setOrderEmployees, updateOrder } from '$lib/server/order-db';
 import type { RequestHandler } from './$types';
 
@@ -9,7 +10,7 @@ export const PATCH: RequestHandler = async (event) => {
     const existing = getOrderAccessInfo(event.params.id);
     if (!existing) throw new Error('ORDER_NOT_FOUND');
     if (!identity) throw new Error('UNAUTHORIZED');
-    const canManage = ['admin', 'manager', 'owner'].includes(identity.role);
+    const canManage = hasAnyRole(identity, orderManageRoles);
     const isParticipant = existing.created_by_uid === identity.uid || existing.designer_uid === identity.uid || existing.planner_uid === identity.uid;
     if (!canManage && !isParticipant) throw new Error('FORBIDDEN');
     if (!existing.created_by_uid) throw new Error('ORDER_CREATOR_UID_MISSING');
@@ -25,7 +26,7 @@ export const PATCH: RequestHandler = async (event) => {
 };
 export const DELETE: RequestHandler = async (event) => {
   const identity = await event.locals.getCurrentIdentity();
-  if (!identity || !['admin', 'manager', 'owner'].includes(identity.role)) return new Response(JSON.stringify({ error: { code: 'FORBIDDEN', message: '没有删除订单权限' } }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+  if (!identity || !hasAnyRole(identity, orderManageRoles)) return new Response(JSON.stringify({ error: { code: 'FORBIDDEN', message: '没有删除订单权限' } }), { status: 403, headers: { 'Content-Type': 'application/json' } });
   return action(() => {
   deleteOrder(event.params.id);
   addAuditLog({ actorName: identity.displayName, action: 'delete', entityType: 'order', entityId: event.params.id });

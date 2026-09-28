@@ -295,6 +295,12 @@ export function getOrderDb() {
 
 
     instance.exec(`
+      CREATE TABLE IF NOT EXISTS system_admin_identity (
+        uid INTEGER PRIMARY KEY,
+        role TEXT NOT NULL CHECK(role IN ('executor','designer','planner','manager','finance','owner')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS employees (
         catsco_uid INTEGER PRIMARY KEY,
         username TEXT NOT NULL,

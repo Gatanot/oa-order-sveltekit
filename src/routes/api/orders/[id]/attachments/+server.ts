@@ -1,16 +1,18 @@
 import { error, json } from '@sveltejs/kit';
 import { action } from '$lib/server/http';
 import { addOrderAttachment, canEmployeeAccessOrder, listOrderAttachments, maxAttachmentSize } from '$lib/server/order-db';
+import { hasAnyRole, orderManageRoles, orderViewAllRoles } from '$lib/server/identity';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
   const identity = await event.locals.getCurrentIdentity();
-  if (!identity || (!['admin', 'manager', 'owner'].includes(identity.role) && !canEmployeeAccessOrder(event.params.id, identity.uid))) error(403, '没有订单附件访问权限');
+  if (!identity) error(403, '没有订单附件访问权限');
+  if (!hasAnyRole(identity, orderViewAllRoles) && !canEmployeeAccessOrder(event.params.id, identity.uid)) error(403, '没有订单附件访问权限');
   return action(() => ({ data: listOrderAttachments(event.params.id) }));
 };
 export const POST: RequestHandler = async (event) => {
   const identity = await event.locals.getCurrentIdentity();
-  if (!identity || (!['admin', 'manager', 'owner'].includes(identity.role) && !canEmployeeAccessOrder(event.params.id, identity.uid))) return json({ error: { code: 'FORBIDDEN', message: '没有订单附件上传权限' } }, { status: 403 });
+  if (!identity || (!hasAnyRole(identity, orderManageRoles) && !canEmployeeAccessOrder(event.params.id, identity.uid))) return json({ error: { code: 'FORBIDDEN', message: '没有订单附件上传权限' } }, { status: 403 });
   const contentType = event.request.headers.get('content-type') || '';
   if (!contentType.includes('multipart/form-data')) return json({ message: '请使用 multipart/form-data 上传附件' }, { status: 400 });
   const length = Number(event.request.headers.get('content-length') || 0);
