@@ -55,7 +55,9 @@ const apiFetch = (input: RequestInfo | URL, init?: RequestInit) =>
     reimbursement_status?: string;
     customer_department?: string;
     designer?: string;
+    designer_uid?: number | null;
     planner?: string;
+    planner_uid?: number | null;
     delivery_date?: string;
     contact?: string;
     payment_status?: string;
@@ -83,6 +85,8 @@ export type Data = {
     orders: Order[];
     reimbursements: Reimbursement[];
     visitor: PublicArtifactVisitor;
+    identity: { uid: number; username: string; displayName: string; role: string; department: string; active: boolean };
+    isAdmin?: boolean;
   };
 
 
@@ -109,7 +113,9 @@ export function createOrderDesk(data: Data) {
   let contact = $state("");
   let customerDepartment = $state("");
   let designer = $state("");
+  let designerUid = $state<number | null>(null);
   let planner = $state("");
+  let plannerUid = $state<number | null>(null);
   let executionCompany = $state("");
   let paymentStatus = $state("未结款");
   let status = $state("制作中");
@@ -490,15 +496,14 @@ export function createOrderDesk(data: Data) {
     const savedName = localStorage.getItem("oa-creator-name") || "";
     const visitorName = data.visitor.status === "authenticated" ? data.visitor.username : "";
     const initialName = visitorName || savedName;
-    const savedMode = localStorage.getItem("oa-work-mode");
+    const role = data.identity?.role;
     creatorName = initialName;
     creatorNameDraft = initialName;
     createdBy = initialName;
     if (visitorName) localStorage.setItem("oa-creator-name", visitorName);
-    if (savedMode === "entry" || savedMode === "finance" || savedMode === "view") {
-      workMode = savedMode;
-      reimbursementRole = savedMode === "finance" ? "finance" : "employee";
-    }
+    // 工作权限由服务端核验的身份决定，不再由浏览器工作模式或用户手动切换。
+    workMode = ["admin", "owner", "finance"].includes(role) ? "finance" : "entry";
+    reimbursementRole = workMode === "finance" ? "finance" : "employee";
     let restoringHistory = false;
     const escape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -1104,7 +1109,7 @@ export function createOrderDesk(data: Data) {
     }
     busy = true;
     try {
-      const payload = { project_id: projectId, order_date: orderDate, delivery_date: deliveryDate, contact, customer_department: customerDepartment, designer, planner, execution_company: executionCompany, payment_status: paymentStatus, status, created_by: createdBy.trim() || creatorName || "未填写", note, products: validProducts, costs: validCosts, advances: validAdvances, idempotency_key: editingOrderId ? "" : (submissionKey ||= crypto.randomUUID()) };
+      const payload = { project_id: projectId, order_date: orderDate, delivery_date: deliveryDate, contact, customer_department: customerDepartment, designer, designer_uid: designerUid, planner, planner_uid: plannerUid, execution_company: executionCompany, payment_status: paymentStatus, status, created_by: createdBy.trim() || creatorName || "未填写", note, products: validProducts, costs: validCosts, advances: validAdvances, idempotency_key: editingOrderId ? "" : (submissionKey ||= crypto.randomUUID()) };
       const result = editingOrderId
         ? await api.patch<{ data: Order }>(`/api/orders/${editingOrderId}`, payload)
         : await api.post<{ data: Order }>("/api/orders", payload);
@@ -1134,7 +1139,9 @@ export function createOrderDesk(data: Data) {
       contact = "";
       customerDepartment = "";
       designer = "";
+      designerUid = null;
       planner = "";
+      plannerUid = null;
       executionCompany = "";
       paymentStatus = "未结款";
       orderFormDirty = false;
@@ -1282,15 +1289,17 @@ export function createOrderDesk(data: Data) {
     contact = order.contact || "";
     customerDepartment = order.customer_department || "";
     designer = order.designer || "";
+    designerUid = order.designer_uid || null;
     planner = order.planner || "";
+    plannerUid = order.planner_uid || null;
     executionCompany = order.execution_company || "";
     paymentStatus = order.payment_status || "未结款";
     status = order.status || "制作中";
     createdBy = order.created_by || creatorName;
     note = order.note || "";
-    products = order.products?.length ? order.products : [{ name: order.service_name, quantity: order.quantity, unit: order.unit, unit_price: Number(order.quote_amount || 0) / 100 / Number(order.quantity || 1), subtotal: Number(order.quote_amount || 0) / 100, specification: order.specification || "" }];
-    costs = order.costs || [];
-    advances = order.advances || [];
+    products = order.products;
+    costs = order.costs;
+    advances = order.advances;
     detailOrder = null;
     view = "entry";
     orderFormDirty = false;
@@ -1380,7 +1389,9 @@ export function createOrderDesk(data: Data) {
     contact = "";
     customerDepartment = "";
     designer = "";
+    designerUid = null;
     planner = "";
+    plannerUid = null;
     executionCompany = "";
     status = "制作中";
     paymentStatus = "未结款";
@@ -1550,7 +1561,7 @@ export function createOrderDesk(data: Data) {
   }
 
 
-  const desk = {} as Record<string, any>;
+  const desk = { isAdmin: data.isAdmin === true } as Record<string, any>;
   Object.defineProperty(desk, "view", { get: () => view, set: (value) => { view = value; } });
   Object.defineProperty(desk, "workMode", { get: () => workMode, set: (value) => { setWorkMode(value); } });
   Object.defineProperty(desk, "canWrite", { get: () => workMode === "entry" });
@@ -1558,6 +1569,7 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "canManageCatalog", { get: () => workMode === "finance" });
   Object.defineProperty(desk, "sidebarCollapsed", { get: () => sidebarCollapsed, set: (value) => { sidebarCollapsed = value; } });
   Object.defineProperty(desk, "visitor", { get: () => data.visitor });
+  Object.defineProperty(desk, "identity", { get: () => data.identity });
   Object.defineProperty(desk, "isEmbedded", { get: () => isEmbedded });
   Object.defineProperty(desk, "onArtifactGateway", { get: () => onArtifactGateway });
   Object.defineProperty(desk, "customers", { get: () => customers, set: (value) => { customers = value; } });
@@ -1576,7 +1588,9 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "contact", { get: () => contact, set: (value) => { contact = value; } });
   Object.defineProperty(desk, "customerDepartment", { get: () => customerDepartment, set: (value) => { customerDepartment = value; } });
   Object.defineProperty(desk, "designer", { get: () => designer, set: (value) => { designer = value; } });
+  Object.defineProperty(desk, "designerUid", { get: () => designerUid, set: (value) => { designerUid = value ? Number(value) : null; } });
   Object.defineProperty(desk, "planner", { get: () => planner, set: (value) => { planner = value; } });
+  Object.defineProperty(desk, "plannerUid", { get: () => plannerUid, set: (value) => { plannerUid = value ? Number(value) : null; } });
   Object.defineProperty(desk, "executionCompany", { get: () => executionCompany, set: (value) => { executionCompany = value; } });
   Object.defineProperty(desk, "paymentStatus", { get: () => paymentStatus, set: (value) => { paymentStatus = value; } });
   Object.defineProperty(desk, "status", { get: () => status, set: (value) => { status = value; } });

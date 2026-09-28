@@ -1,5 +1,5 @@
 import { action, body } from '$lib/server/http';
-import { addAuditLog, deleteOrder, getOrderAccessInfo, setOrderEmployees, updateOrder } from '$lib/server/order-db';
+import { addAuditLog, deleteOrder, getOrderAccessInfo, resolveOrderEmployeeUid, setOrderEmployees, updateOrder } from '$lib/server/order-db';
 import type { RequestHandler } from './$types';
 
 export const PATCH: RequestHandler = async (event) => {
@@ -12,9 +12,13 @@ export const PATCH: RequestHandler = async (event) => {
     const canManage = ['admin', 'manager', 'owner'].includes(identity.role);
     const isParticipant = existing.created_by_uid === identity.uid || existing.designer_uid === identity.uid || existing.planner_uid === identity.uid;
     if (!canManage && !isParticipant) throw new Error('FORBIDDEN');
+    if (!existing.created_by_uid) throw new Error('ORDER_CREATOR_UID_MISSING');
+    // 在写订单前先校验员工 UID，避免订单已提交后 setOrderEmployees 再抛错导致部分写入。
+    const designerUid = resolveOrderEmployeeUid(data.designer_uid, 'designer');
+    const plannerUid = resolveOrderEmployeeUid(data.planner_uid, 'planner');
     data.created_by = existing.created_by;
     const updated = updateOrder(event.params.id, data);
-    setOrderEmployees(event.params.id, existing.created_by_uid || identity.uid, String(data.designer || existing.designer), String(data.planner || existing.planner));
+    setOrderEmployees(event.params.id, existing.created_by_uid as number, designerUid, plannerUid);
     addAuditLog({ actorName: identity?.displayName || '', action: 'update', entityType: 'order', entityId: event.params.id });
     return { data: updated };
   });

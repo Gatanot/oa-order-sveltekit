@@ -1,6 +1,6 @@
 import { json, type Handle, type HandleServerError } from '@sveltejs/kit';
 import { getArtifactVisitor } from '$lib/server/artifact-visitor';
-import { resolveIdentity } from '$lib/server/identity';
+import { resolveActingIdentity, resolveIdentity } from '$lib/server/identity';
 
 export const handle: Handle = async ({ event, resolve }) => {
   let visitor: ReturnType<typeof getArtifactVisitor> | undefined;
@@ -12,12 +12,22 @@ export const handle: Handle = async ({ event, resolve }) => {
     return visitor;
   };
 
-  let identity: ReturnType<typeof resolveIdentity> | undefined;
+  let adminIdentity: ReturnType<typeof resolveIdentity> | undefined;
+  event.locals.getAdminIdentity = async () => {
+    if (adminIdentity === undefined) {
+      adminIdentity = process.env.NODE_ENV === 'test' && process.env.OA_TEST_AUTH_BYPASS === '1'
+        ? { uid: 826, username: 'catsco', displayName: 'catsco', role: 'admin', department: '', active: true }
+        : resolveIdentity(await event.locals.getArtifactVisitor());
+    }
+    return adminIdentity;
+  };
+
+  let identity: ReturnType<typeof resolveActingIdentity> | undefined;
   event.locals.getCurrentIdentity = async () => {
     if (identity === undefined) {
       identity = process.env.NODE_ENV === 'test' && process.env.OA_TEST_AUTH_BYPASS === '1'
         ? { uid: 826, username: 'catsco', displayName: 'catsco', role: 'admin', department: '', active: true }
-        : resolveIdentity(await event.locals.getArtifactVisitor());
+        : resolveActingIdentity(await event.locals.getArtifactVisitor(), event.request.headers.get('cookie') || '');
     }
     return identity;
   };

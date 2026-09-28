@@ -1,6 +1,6 @@
 import type { JsonRecord } from './types';
 
-const APP_ROUTE_SEGMENTS = new Set(['orders', 'reimbursements', 'catalog', 'admin', 'api']);
+const APP_ROUTE_SEGMENTS = new Set(['orders', 'reimbursements', 'catalog', 'admin', 'employees', 'api']);
 
 export function appPath(path: string): string {
   if (!path.startsWith('/') || typeof window === 'undefined') return path;
@@ -46,7 +46,7 @@ export const api = {
   patch<T>(path: string, body: JsonRecord = {}) {
     return request<T>(path, { method: 'PATCH', body: JSON.stringify(body) });
   },
-  delete<T>(path: string) {
-    return request<T>(path, { method: 'DELETE' });
+  delete<T>(path: string, body?: JsonRecord) {
+    return request<T>(path, { method: 'DELETE', ...(body ? { body: JSON.stringify(body) } : {}) });
   }
 };

@@ -6,6 +6,7 @@ declare global {
     interface Locals {
       getArtifactVisitor: () => Promise<ArtifactVisitor>;
       getCurrentIdentity: () => Promise<CurrentIdentity | null>;
+      getAdminIdentity: () => Promise<CurrentIdentity | null>;
     }
   }
 }

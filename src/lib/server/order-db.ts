@@ -470,13 +470,21 @@ function normalizedReimbursementStatus(value: unknown): ReimbursementStatus {
   return reimbursementStatusCode(value);
 }
 
+/** 订单垫付仍以姓名录入，按姓名唯一匹配在职员工后写回稳定的 UID 关联。 */
+function resolveEmployeeUidByName(db: Database.Database, name: string): number | null {
+  const value = text(name);
+  if (!value) return null;
+  const matches = db.prepare('SELECT catsco_uid FROM employees WHERE active=1 AND (display_name=? OR username=?)').all(value, value) as Array<{ catsco_uid: number }>;
+  return matches.length === 1 ? matches[0].catsco_uid : null;
+}
+
 function insertReimbursements(db: Database.Database, orderId: string, advances: Array<Record<string, unknown>>, userName = '') {
-  const insert = db.prepare('INSERT INTO reimbursements_simple(id,employee,item,amount,advance_date,order_id,invoice,note,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)');
+  const insert = db.prepare('INSERT INTO reimbursements_simple(id,employee,employee_uid,item,amount,advance_date,order_id,invoice,note,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)');
   for (const item of advances) {
     const amount = Number(item.amount || 0);
     if (!text(item.item) && !(amount > 0)) continue;
     const employee = text(item.employee) || userName;
-    insert.run(text(item.id) || uuid(), employee, text(item.item), moneyToCents(String(amount)), text(item.date) || now().slice(0, 10), orderId, text(item.invoice), text(item.note), normalizedReimbursementStatus(item.status), now());
+    insert.run(text(item.id) || uuid(), employee, resolveEmployeeUidByName(db, employee), text(item.item), moneyToCents(String(amount)), text(item.date) || now().slice(0, 10), orderId, text(item.invoice), text(item.note), normalizedReimbursementStatus(item.status), now());
   }
 }
 
@@ -484,8 +492,8 @@ function syncOrderReimbursements(db: Database.Database, orderId: string, advance
   const existing = db.prepare('SELECT id,status,employee,item,amount,advance_date,invoice,note FROM reimbursements_simple WHERE order_id=?').all(orderId) as Array<{ id: string; status: string; employee: string; item: string; amount: number; advance_date: string; invoice: string; note: string }>;
   const byId = new Map(existing.map((item) => [item.id, item]));
   const keep = new Set<string>();
-  const insert = db.prepare('INSERT INTO reimbursements_simple(id,employee,item,amount,advance_date,order_id,invoice,note,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)');
-  const update = db.prepare("UPDATE reimbursements_simple SET employee=?,item=?,amount=?,advance_date=?,invoice=?,note=? WHERE id=? AND order_id=? AND status='pending_review'");
+  const insert = db.prepare('INSERT INTO reimbursements_simple(id,employee,employee_uid,item,amount,advance_date,order_id,invoice,note,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)');
+  const update = db.prepare("UPDATE reimbursements_simple SET employee=?,employee_uid=?,item=?,amount=?,advance_date=?,invoice=?,note=? WHERE id=? AND order_id=? AND status='pending_review'");
 
   // Once a reimbursement has been rejected, approved, or paid, its original
   // claim must remain an immutable accounting record. The editor renders these
@@ -512,7 +520,7 @@ function syncOrderReimbursements(db: Database.Database, orderId: string, advance
     const id = text(item.id);
     if (id && byId.has(id)) {
       keep.add(id);
-      update.run(text(item.employee) || userName, text(item.item), moneyToCents(String(amount)), text(item.date) || now().slice(0, 10), text(item.invoice), text(item.note), id, orderId);
+      update.run(text(item.employee) || userName, resolveEmployeeUidByName(db, text(item.employee) || userName), text(item.item), moneyToCents(String(amount)), text(item.date) || now().slice(0, 10), text(item.invoice), text(item.note), id, orderId);
     } else {
       // Do not trust a client-provided ID that already belongs to another
       // reimbursement. Keep locally generated IDs when possible so attachment
@@ -521,7 +529,7 @@ function syncOrderReimbursements(db: Database.Database, orderId: string, advance
       const nextId = id && !idTaken ? id : uuid();
       keep.add(nextId);
       const employee = text(item.employee) || userName;
-      insert.run(nextId, employee, text(item.item), moneyToCents(String(amount)), text(item.date) || now().slice(0, 10), orderId, text(item.invoice), text(item.note), 'pending_review', now());
+      insert.run(nextId, employee, resolveEmployeeUidByName(db, employee), text(item.item), moneyToCents(String(amount)), text(item.date) || now().slice(0, 10), orderId, text(item.invoice), text(item.note), 'pending_review', now());
     }
   }
   const removable = existing.filter((item) => item.status === 'pending_review' && !keep.has(item.id));
@@ -557,19 +565,23 @@ export function getOrderAccessInfo(id: string) {
   return getOrderDb().prepare('SELECT id,created_by,designer,planner,created_by_uid,designer_uid,planner_uid,status,payment_status FROM orders_simple WHERE id=?').get(id) as { id: string; created_by: string; designer: string; planner: string; created_by_uid: number | null; designer_uid: number | null; planner_uid: number | null; status: string; payment_status: string } | undefined;
 }
 
-export function setOrderEmployees(id: string, creatorUid: number, designer: string, planner: string) {
-  const db = getOrderDb();
-  const findUid = db.prepare(`SELECT catsco_uid FROM employees WHERE active=1 AND (display_name=? OR username=?)`);
-  const findUniqueUid = (name: string): number | null => {
-    if (!name.trim()) return null;
-    const matches = findUid.all(name.trim(), name.trim()) as Array<{ catsco_uid: number }>;
-    return matches.length === 1 ? matches[0].catsco_uid : null;
-  };
-  db.prepare('UPDATE orders_simple SET created_by_uid=?,designer_uid=?,planner_uid=? WHERE id=?')
-    .run(creatorUid, findUniqueUid(designer), findUniqueUid(planner), id);
-  const updateAdvance = db.prepare('UPDATE reimbursements_simple SET employee_uid=? WHERE id=?');
-  const advances = db.prepare('SELECT id,employee FROM reimbursements_simple WHERE order_id=?').all(id) as Array<{ id: string; employee: string }>;
-  for (const advance of advances) updateAdvance.run(findUniqueUid(advance.employee), advance.id);
+/**
+ * 校验并解析订单设计师/策划人的 UID。调用方应在写入订单之前执行，
+ * 这样无效 UID 不会在订单提交后才抛错，造成部分写入。
+ */
+export function resolveOrderEmployeeUid(uid: unknown, role: 'designer' | 'planner'): number | null {
+  const value = Number(uid) || null;
+  if (value === null) return null;
+  if (!Number.isSafeInteger(value) || value < 1) throw new Error(`INVALID_${role.toUpperCase()}_UID`);
+  const employee = getOrderDb().prepare('SELECT catsco_uid FROM employees WHERE catsco_uid=? AND active=1 AND role=?').get(value, role);
+  if (!employee) throw new Error(`INVALID_${role.toUpperCase()}_UID`);
+  return value;
+}
+
+/** 只写入已解析的 UID；姓名仍由订单表保存为展示文本。 */
+export function setOrderEmployees(id: string, creatorUid: number, designerUid: number | null, plannerUid: number | null) {
+  getOrderDb().prepare('UPDATE orders_simple SET created_by_uid=?,designer_uid=?,planner_uid=? WHERE id=?')
+    .run(creatorUid, designerUid, plannerUid, id);
 }
 
 export function canEmployeeAccessOrder(id: string, uid: number): boolean {

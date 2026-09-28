@@ -15,6 +15,42 @@ export const GET: RequestHandler = async ({ locals }) => {
   return json({ data: listEmployees(), departments, roles: employeeRoles });
 };
 
+export const POST: RequestHandler = async ({ locals, request }) => {
+  const identity = await locals.getCurrentIdentity();
+  const denied = requireAdmin(identity);
+  if (denied) return denied;
+  const data = await request.json().catch(() => null);
+  const uid = Number(data?.uid);
+  const username = String(data?.username || '').trim();
+  if (!Number.isSafeInteger(uid) || uid <= 0 || !username || uid === 826) {
+    return json({ error: { code: 'INVALID_REQUEST', message: 'UID 或用户名格式不正确' } }, { status: 400 });
+  }
+  try {
+    const { getOrderDb } = await import('$lib/server/order-db');
+    const timestamp = new Date().toISOString();
+    getOrderDb().prepare('INSERT INTO employees(catsco_uid,username,display_name,department,role,active,created_at,updated_at) VALUES(?,?,?,\'\',\'pending\',0,?,?)')
+      .run(uid, username, username, timestamp, timestamp);
+    addAuditLog({ actorName: identity?.displayName, action: 'create_employee', entityType: 'employee', entityId: String(uid) });
+    return json({ data: { catsco_uid: uid, username, display_name: username, department: '', role: 'pending', active: 0 } }, { status: 201 });
+  } catch {
+    return json({ error: { code: 'EMPLOYEE_EXISTS', message: '该 UID 已存在或无法创建' } }, { status: 409 });
+  }
+};
+
+export const DELETE: RequestHandler = async ({ locals, request }) => {
+  const identity = await locals.getCurrentIdentity();
+  const denied = requireAdmin(identity);
+  if (denied) return denied;
+  const data = await request.json().catch(() => null);
+  const uid = Number(data?.uid);
+  if (!Number.isSafeInteger(uid) || uid <= 0 || uid === 826) return json({ error: { code: 'INVALID_REQUEST', message: 'UID 不合法' } }, { status: 400 });
+  const { getOrderDb } = await import('$lib/server/order-db');
+  const result = getOrderDb().prepare('DELETE FROM employees WHERE catsco_uid=?').run(uid);
+  if (!result.changes) return json({ error: { code: 'EMPLOYEE_NOT_FOUND', message: '员工不存在' } }, { status: 404 });
+  addAuditLog({ actorName: identity?.displayName, action: 'delete_employee', entityType: 'employee', entityId: String(uid) });
+  return json({ data: { uid } });
+};
+
 export const PATCH: RequestHandler = async ({ locals, request }) => {
   const identity = await locals.getCurrentIdentity();
   const denied = requireAdmin(identity);

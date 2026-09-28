@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { body, action } from '$lib/server/http';
-import { addAuditLog, createOrder, listOrders, setOrderEmployees } from '$lib/server/order-db';
+import { addAuditLog, createOrder, listOrders, resolveOrderEmployeeUid, setOrderEmployees } from '$lib/server/order-db';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ locals }) => {
@@ -16,8 +16,11 @@ export const POST: RequestHandler = async (event) => {
   if (!identity || identity.role === 'pending' || identity.role === 'finance') return json({ error: { code: 'FORBIDDEN', message: '没有创建订单权限' } }, { status: 403 });
   data.created_by = identity.displayName;
   return action(() => {
+    // 在写订单前先校验员工 UID，避免订单已提交后 setOrderEmployees 再抛错导致部分写入。
+    const designerUid = resolveOrderEmployeeUid(data.designer_uid, 'designer');
+    const plannerUid = resolveOrderEmployeeUid(data.planner_uid, 'planner');
     const created = createOrder(data);
-    setOrderEmployees(String(created.id), identity.uid, String(data.designer || ''), String(data.planner || ''));
+    setOrderEmployees(String(created.id), identity.uid, designerUid, plannerUid);
     addAuditLog({ actorName: String(data.created_by || '填写人'), action: 'create', entityType: 'order', entityId: String(created.id) });
     return { data: created };
   }, 201);

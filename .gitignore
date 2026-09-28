@@ -11,3 +11,4 @@ npm-debug.log*
 *.png
 *.xls
 *.xlsx
+report*.md

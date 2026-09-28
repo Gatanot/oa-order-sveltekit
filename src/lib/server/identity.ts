@@ -15,6 +15,19 @@ export type Employee = {
   active: number;
 };
 export type CurrentIdentity = { uid: number; username: string; displayName: string; role: 'admin' | EmployeeRole | 'pending'; department: string; active: boolean };
+export const IDENTITY_SWITCH_COOKIE = 'oa-admin-identity';
+
+export function createIdentitySwitchToken(uid: number, role: EmployeeRole | 'admin') {
+  return `${uid}:${role}`;
+}
+
+function readIdentitySwitchUid(cookieHeader: string) {
+  const value = cookieHeader.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${IDENTITY_SWITCH_COOKIE}=`))?.slice(IDENTITY_SWITCH_COOKIE.length + 1);
+  if (!value) return null;
+  const [uidText, role] = value.split(':');
+  if (!uidText || !role || !/^\d+$/.test(uidText) || !([...employeeRoles, 'admin'] as string[]).includes(role)) return null;
+  return { uid: Number(uidText), role: role as EmployeeRole | 'admin' };
+}
 
 export function resolveIdentity(visitor: ArtifactVisitor): CurrentIdentity | null {
   if (visitor.status !== 'authenticated') return null;
@@ -34,6 +47,22 @@ export function resolveIdentity(visitor: ArtifactVisitor): CurrentIdentity | nul
     db.prepare('UPDATE employees SET username=?,updated_at=? WHERE catsco_uid=?').run(username, new Date().toISOString(), uid);
   }
   return { uid, username, displayName: employee.display_name, role: employee.role, department: employee.department, active: employee.active === 1 };
+}
+
+export function resolveActingIdentity(visitor: ArtifactVisitor, cookieHeader: string): CurrentIdentity | null {
+  const admin = resolveIdentity(visitor);
+  if (!admin || admin.role !== 'admin') return admin;
+  const selected = readIdentitySwitchUid(cookieHeader);
+  if (!selected || selected.role === 'admin') return admin;
+  if (selected.uid === ADMIN_UID) return { ...admin, role: selected.role, displayName: `${admin.displayName}（${selected.role}）` };
+  const employee = getOrderDb().prepare('SELECT * FROM employees WHERE catsco_uid=? AND active=1').get(selected.uid) as Employee | undefined;
+  if (!employee || employee.role !== selected.role) return admin;
+  return { uid: employee.catsco_uid, username: employee.username, displayName: employee.display_name, role: employee.role, department: employee.department, active: employee.active === 1 };
+}
+
+export function listIdentitySwitchOptions() {
+  const adminOptions = employeeRoles.map((role) => ({ catsco_uid: ADMIN_UID, display_name: `catsco（${role}）`, department: '系统调试', role }));
+  return [...adminOptions, ...listActiveEmployees()];
 }
 
 export function listActiveEmployees(): Pick<Employee, 'catsco_uid' | 'display_name' | 'department' | 'role'>[] {
