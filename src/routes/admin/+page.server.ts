@@ -20,7 +20,7 @@ export const actions: Actions = {
     const previousRole = getAdminExtraIdentity()?.role || '';
     setAdminExtraIdentity(role as typeof employeeRoles[number]);
     addAuditLog({ actorName: identity.displayName, action: 'set_admin_extra_identity', entityType: 'system_admin_identity', entityId: '826', fromValue: previousRole, toValue: role });
-    throw redirect(303, '/orders');
+    throw redirect(303, './orders');
   },
   clearExtraIdentity: async ({ locals }) => {
     const identity = await locals.getAdminIdentity();
@@ -28,7 +28,7 @@ export const actions: Actions = {
     const previousRole = getAdminExtraIdentity()?.role || '';
     setAdminExtraIdentity(null);
     addAuditLog({ actorName: identity.displayName, action: 'clear_admin_extra_identity', entityType: 'system_admin_identity', entityId: '826', fromValue: previousRole, toValue: '' });
-    throw redirect(303, '/admin');
+    throw redirect(303, './admin');
   },
   catalogs: async ({ request, locals }) => {
     if ((await locals.getAdminIdentity())?.role !== 'admin') return fail(403, { success: false, message: '仅 Catsco 管理员可执行此操作' });

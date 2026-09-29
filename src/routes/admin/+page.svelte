@@ -16,7 +16,7 @@
         <h1>系统管理员</h1>
         <span>系统级开发管理工具，仅 Catsco 系统管理员可访问。</span>
       </div>
-      <a class="outline-action" href="../orders"><ArrowLeft size={16} />返回订单</a>
+      <a class="outline-action" href="./orders"><ArrowLeft size={16} />返回订单</a>
     </header>
 
     <div class="admin-notice">
@@ -108,7 +108,7 @@
     </div>
 
     <footer class="admin-footer">
-      <a href="../employees">员工与权限管理</a><a href="../catalog">查看报价成本库</a><a href="../orders">查看订单</a><a href="../reimbursements">查看报销</a>
+      <a href="./employees">员工与权限管理</a><a href="./catalog">查看报价成本库</a><a href="./orders">查看订单</a><a href="./reimbursements">查看报销</a>
     </footer>
     {/if}
   </div>

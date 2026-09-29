@@ -2,9 +2,11 @@ import type { JsonRecord } from './types';
 
 const APP_ROUTE_SEGMENTS = new Set(['orders', 'reimbursements', 'catalog', 'admin', 'employees', 'api']);
 
-export function appPath(path: string): string {
-  if (!path.startsWith('/') || typeof window === 'undefined') return path;
-  const segments = window.location.pathname.split('/').filter(Boolean);
+export function appPath(path: string, pathname?: string): string {
+  if (!path.startsWith('/')) return path;
+  const currentPath = pathname ?? (typeof window === 'undefined' ? undefined : window.location.pathname);
+  if (!currentPath) return path;
+  const segments = currentPath.split('/').filter(Boolean);
   const routeIndex = segments.findIndex((segment) => APP_ROUTE_SEGMENTS.has(segment));
   const routeDepth = routeIndex < 0 ? 0 : Math.max(segments.length - routeIndex - 1, 0);
   return `${'../'.repeat(routeDepth)}${path.slice(1)}`;

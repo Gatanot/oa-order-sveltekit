@@ -48,7 +48,7 @@
   <div class="admin-shell">
     <header class="admin-header">
       <div><p class="section-kicker">员工权限</p><h1>员工与权限管理</h1><span>管理员工状态、所属部门和业务身份。</span></div>
-      <a class="outline-action" href="../orders"><ArrowLeft size={16} />返回订单</a>
+      <a class="outline-action" href="./orders"><ArrowLeft size={16} />返回订单</a>
     </header>
     <section class="employee-admin">
       <h2>员工与权限</h2>

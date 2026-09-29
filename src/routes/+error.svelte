@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from "$app/state";
+  import { appPath } from "$lib/api";
 </script>
 
 <svelte:head><title>页面错误 · ORBIT OA</title></svelte:head>
@@ -7,7 +8,7 @@
   <strong>{page.status}</strong>
   <h1>页面暂时无法显示</h1>
   <p>{page.error?.message ?? "请稍后再试"}</p>
-  <a href="./orders">返回工作台</a>
+  <a href={appPath('/orders', page.url.pathname)}>返回工作台</a>
 </main>
 
 <style>
