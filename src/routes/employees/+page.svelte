@@ -36,7 +36,13 @@
   async function saveEmployee(employee: any) {
     employeeError = '';
     try {
-      const result = await api.patch<{ data: any }>('/api/employees', employee);
+      const result = await api.patch<{ data: any }>('/api/employees', {
+        uid: Number(employee.catsco_uid),
+        display_name: employee.display_name,
+        department: employee.department,
+        role: employee.role,
+        active: Boolean(employee.active)
+      });
       employees = employees.map((item) => item.catsco_uid === result.data.catsco_uid ? result.data : item);
     } catch (reason) { employeeError = reason instanceof Error ? reason.message : '员工保存失败'; }
   }
