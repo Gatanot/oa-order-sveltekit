@@ -84,7 +84,7 @@ try {
   result = await request('/admin?/saveExtraIdentity', { method: 'POST', body: setExtraIdentity });
   assert.equal(result.response.status, 200, '设置额外身份 action 应返回 SvelteKit redirect 响应');
   assert.equal(result.data.type, 'redirect');
-  assert.equal(result.data.location, '/orders');
+  assert.equal(result.data.location, './orders');
   result = await request('/orders');
   assert.match(Buffer.from(result.data).toString(), /财务身份/, '管理员普通页面应使用已设置的财务身份');
   result = await request('/api/orders');
@@ -97,7 +97,7 @@ try {
   result = await request('/admin?/clearExtraIdentity', { method: 'POST', body: clearExtraIdentity });
   assert.equal(result.response.status, 200, '管理员可通过 admin 页面移除额外身份');
   assert.equal(result.data.type, 'redirect');
-  assert.equal(result.data.location, '/admin');
+  assert.equal(result.data.location, './admin');
 
   result = await request('/api/projects', { method: 'POST', json: { customer: '测试客户', name: '测试项目', owner: '项目负责人' } });
   assert.equal(result.response.status, 201, JSON.stringify(result.data));
