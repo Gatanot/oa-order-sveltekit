@@ -52,13 +52,12 @@
     </header>
     <section class="employee-admin">
       <h2>员工与权限</h2>
-      <p>管理员、管理人员和老板可维护员工资料；系统管理员是固定的 Catsco 用户编号 826（账号 catsco），不能通过此页面授予。新增员工以待开通状态创建。</p>
-      <form onsubmit={(event) => { event.preventDefault(); addEmployee(); }}>
+      <form class="employee-create-form" onsubmit={(event) => { event.preventDefault(); addEmployee(); }}>
         <label>Catsco 用户编号 <input type="number" min="1" bind:value={newUid} required /></label>
         <label>用户名 <input bind:value={newUsername} required /></label>
         <button type="submit" class="primary-action">新增员工</button>
       </form>
-      {#if employeeError}<p role="alert">{employeeError}</p>{/if}
+      {#if employeeError}<p class="employee-error" role="alert">{employeeError}</p>{/if}
       {#if employees.length}
         <div class="employee-table-wrap"><table>
           <thead><tr><th>员工</th><th>用户编号</th><th>部门</th><th>身份</th><th>启用</th><th></th></tr></thead>
@@ -69,11 +68,11 @@
               <td><select aria-label="所属部门" bind:value={employee.department}><option value="">未设置</option>{#each departments as department}<option value={department}>{department}</option>{/each}</select></td>
               <td><select aria-label="员工身份" bind:value={employee.role}><option value="pending">待开通</option>{#each roles as role}<option value={role}>{({executor:'执行',designer:'设计师',planner:'策划',manager:'管理人员',finance:'财务',owner:'老板'} as Record<string,string>)[role] || role}</option>{/each}</select></td>
               <td><input type="checkbox" aria-label="启用员工" bind:checked={employee.active} /></td>
-              <td><button type="button" class="primary-action" onclick={() => saveEmployee(employee)}>保存</button> <button type="button" onclick={() => deleteEmployee(employee)}>删除</button></td>
+              <td><div class="employee-row-actions"><button type="button" class="primary-action" onclick={() => saveEmployee(employee)}>保存</button><button type="button" class="employee-delete-action" onclick={() => deleteEmployee(employee)}>删除</button></div></td>
             </tr>
           {/each}</tbody>
         </table></div>
-      {:else if !employeeError}<p>暂无待开通员工。员工首次通过 Catsco 访问后会出现在此处。</p>{/if}
+      {:else if !employeeError}<p class="employee-empty">暂无待开通员工。员工首次通过 Catsco 访问后会出现在此处。</p>{/if}
     </section>
   </div>
 </main>

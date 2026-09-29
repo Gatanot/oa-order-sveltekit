@@ -72,10 +72,12 @@ try {
   assert.equal(result.response.status, 400, '固定管理员身份不能被员工档案修改或授予');
   result = await request('/api/orders');
   assert.equal(result.response.status, 200, '工作台 API 不应要求登录');
+  assert.equal(result.response.headers.get('cache-control'), null, 'API 不应继承页面缓存策略');
   result = await request('/admin');
   assert.equal(result.response.status, 200, '系统管理员可通过网址直接进入 admin 页面');
   assert.match(Buffer.from(result.data).toString(), /我的额外业务身份/);
   result = await request('/orders');
+  assert.equal(result.response.headers.get('cache-control'), 'no-store', '页面 HTML 不应缓存');
   assert.doesNotMatch(Buffer.from(result.data).toString(), /href="\/admin"|管理员入口/, '工作台导航不应出现 admin 入口');
   const setExtraIdentity = new FormData();
   setExtraIdentity.append('role', 'finance');
@@ -228,6 +230,11 @@ try {
   assert.ok(db.prepare('SELECT COUNT(*) FROM audit_logs').pluck().get() >= 5);
   db.close();
 
+  await withMigratedFixture('oa-v23.db', '23', () => {}, (migrated) => {
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '23');
+    assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v23 数据库重启后应保留订单');
+  });
+
   await withMigratedFixture('oa-v18.db', '18', (legacy) => {
     legacy.exec(`
       DROP INDEX IF EXISTS idx_orders_idempotency;
@@ -272,7 +279,7 @@ try {
     assert.deepEqual(migrated.prepare('PRAGMA foreign_key_check').all(), []);
   });
 
-  console.log('Smoke test passed: public workbench, catalog import/copy, creator snapshots, order totals, independent attachments, immutable processed advances, reimbursement filters/state machine, voucher idempotency, aligned exports, audit and v18/v20/v21 migrations.');
+  console.log('Smoke test passed: public workbench, catalog import/copy, creator snapshots, order totals, independent attachments, immutable processed advances, reimbursement filters/state machine, voucher idempotency, aligned exports, audit and v18/v20/v21/v23 migrations.');
 } finally {
   server.kill('SIGTERM');
   await new Promise((resolve) => { server.once('exit', resolve); setTimeout(resolve, 1000); });

@@ -3610,13 +3610,69 @@ textarea[readonly] {
 }
 
 .employee-admin h2 {
-  margin: 0 0 6px;
+  margin: 0 0 18px;
   color: var(--navy);
+  font-size: 20px;
 }
 
-.employee-admin > p {
+.employee-create-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.employee-create-form label {
+  display: grid;
+  flex: 1;
+  gap: 7px;
+  color: #42536b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.employee-create-form input,
+.employee-admin td input:not([type="checkbox"]),
+.employee-admin td select {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink);
+  outline: none;
+}
+
+.employee-create-form input:focus,
+.employee-admin td input:not([type="checkbox"]):focus,
+.employee-admin td select:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(49, 91, 220, .1);
+}
+
+.employee-create-form .primary-action {
+  flex: 0 0 auto;
+}
+
+.employee-error {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border: 1px solid #eec4c1;
+  border-radius: 10px;
+  background: var(--red-soft);
+  color: #9f2929;
+  font-size: 13px;
+}
+
+.employee-empty {
+  margin: 0;
+  padding: 24px 12px 8px;
   color: var(--muted);
   font-size: 13px;
+  text-align: center;
 }
 
 .employee-table-wrap {
@@ -3631,7 +3687,7 @@ textarea[readonly] {
 
 .employee-admin th,
 .employee-admin td {
-  padding: 9px;
+  padding: 12px 10px;
   border-bottom: 1px solid var(--line-soft);
   text-align: left;
   white-space: nowrap;
@@ -3640,11 +3696,56 @@ textarea[readonly] {
 .employee-admin th {
   color: var(--muted);
   font-size: 12px;
+  font-weight: 700;
+}
+
+.employee-admin tbody tr:last-child td {
+  border-bottom: 0;
 }
 
 .employee-admin td input:not([type="checkbox"]),
 .employee-admin td select {
-  min-width: 110px;
+  min-width: 130px;
+}
+
+.employee-admin td:first-child input {
+  min-width: 140px;
+}
+
+.employee-admin td:nth-child(2) {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.employee-admin input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--blue);
+}
+
+.employee-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.employee-row-actions .primary-action,
+.employee-delete-action {
+  min-height: 36px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.employee-delete-action {
+  border: 1px solid #e2b7b7;
+  background: #fff;
+  color: #a43838;
+}
+
+.employee-delete-action:hover {
+  border-color: #cf8d8d;
+  background: #fff7f7;
 }
 
 .admin-actions-grid {
@@ -3748,9 +3849,14 @@ textarea[readonly] {
   }
 
   .admin-header,
-  .admin-action-card form {
+  .admin-action-card form,
+  .employee-create-form {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .employee-admin {
+    padding: 16px;
   }
 
   .admin-stats {

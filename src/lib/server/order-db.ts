@@ -65,7 +65,7 @@ export function moneyToCents(value: unknown): number {
 function migrate(db: Database.Database) {
   db.exec('CREATE TABLE IF NOT EXISTS schema_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)');
   const version = db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").get() as { value: string } | undefined;
-  if (version?.value === '22') return;
+  if (version?.value === '23' || version?.value === '22') return;
   if (version?.value === '21') {
     db.exec(`ALTER TABLE orders_simple ADD COLUMN execution_company TEXT NOT NULL DEFAULT ''; UPDATE schema_meta SET value='22' WHERE key='order_app_version';`);
     return;

@@ -61,6 +61,9 @@ export const handle: Handle = async ({ event, resolve }) => {
   // Artifact 发布入口使用 sandbox iframe 内嵌工作台；不发送 X-Frame-Options 或 frame-ancestors，
   // 否则沙箱 iframe 的不透明来源会被浏览器拦截。应用没有本地会话，放开嵌入限制只影响展示层。
   response.headers.set('Referrer-Policy', 'same-origin');
+  if (response.headers.get('content-type')?.toLowerCase().includes('text/html')) {
+    response.headers.set('Cache-Control', 'no-store');
+  }
   return response;
 };
 
