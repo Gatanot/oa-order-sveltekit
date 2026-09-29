@@ -8,10 +8,12 @@
   let departments = $state<string[]>([]);
   let roles = $state<string[]>([]);
   let employeeError = $state('');
+  let employeeSuccess = $state('');
   let newUid = $state('');
   let newUsername = $state('');
   async function addEmployee() {
     employeeError = '';
+    employeeSuccess = '';
     try {
       const result = await api.post<{ data: any }>('/api/employees', { uid: Number(newUid), username: newUsername });
       employees = [...employees, result.data]; newUid = ''; newUsername = '';
@@ -20,6 +22,7 @@
   async function deleteEmployee(employee: any) {
     if (!confirm(`确定删除员工 ${employee.display_name}（${employee.catsco_uid}）？`)) return;
     employeeError = '';
+    employeeSuccess = '';
     try {
       await api.delete('/api/employees', { uid: employee.catsco_uid });
       employees = employees.filter((item) => item.catsco_uid !== employee.catsco_uid);
@@ -35,6 +38,7 @@
   });
   async function saveEmployee(employee: any) {
     employeeError = '';
+    employeeSuccess = '';
     try {
       const result = await api.patch<{ data: any }>('/api/employees', {
         uid: Number(employee.catsco_uid),
@@ -44,6 +48,7 @@
         active: Boolean(employee.active)
       });
       employees = employees.map((item) => item.catsco_uid === result.data.catsco_uid ? result.data : item);
+      employeeSuccess = '员工资料已保存';
     } catch (reason) { employeeError = reason instanceof Error ? reason.message : '员工保存失败'; }
   }
 </script>
@@ -64,6 +69,7 @@
         <button type="submit" class="primary-action">新增员工</button>
       </form>
       {#if employeeError}<p class="employee-error" role="alert">{employeeError}</p>{/if}
+      {#if employeeSuccess}<p class="employee-success" role="status">{employeeSuccess}</p>{/if}
       {#if employees.length}
         <div class="employee-table-wrap"><table>
           <thead><tr><th>员工</th><th>用户编号</th><th>部门</th><th>身份</th><th>启用</th><th></th></tr></thead>

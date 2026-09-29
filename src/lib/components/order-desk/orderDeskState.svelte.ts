@@ -494,15 +494,14 @@ export function createOrderDesk(data: Data) {
 
     const savedName = localStorage.getItem("oa-creator-name") || "";
     const visitorName = data.visitor.status === "authenticated" ? data.visitor.username : "";
-    const initialName = visitorName || savedName;
+    const initialName = savedName || visitorName;
     const role = data.identity?.role;
     creatorName = initialName;
     creatorNameDraft = initialName;
     createdBy = initialName;
-    if (visitorName) localStorage.setItem("oa-creator-name", visitorName);
     // 工作权限由服务端核验的身份决定，不再由浏览器工作模式或用户手动切换。
     workMode = ["admin", "owner", "finance"].includes(role) ? "finance" : "entry";
-    reimbursementRole = workMode === "finance" ? "finance" : "employee";
+    reimbursementRole = ["admin", "manager", "owner", "finance"].includes(role) ? "finance" : "employee";
     let restoringHistory = false;
     const escape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -616,7 +615,7 @@ export function createOrderDesk(data: Data) {
       orderFormDirty = false;
     }
     workMode = mode;
-    reimbursementRole = mode === "finance" ? "finance" : "employee";
+    reimbursementRole = ["admin", "manager", "owner", "finance"].includes(data.identity?.role) ? "finance" : "employee";
     localStorage.setItem("oa-work-mode", mode);
     resetReimbursementFilters();
     if (mode !== "entry" && view === "entry") navigate("/orders");
@@ -1174,7 +1173,7 @@ export function createOrderDesk(data: Data) {
     }
   }
   function requireCatalogManager() {
-    if (workMode === "finance") return true;
+    if (["admin", "manager", "owner", "finance"].includes(data.identity?.role)) return true;
     notify("报价成本库对所有成员开放查看，仅财务可以新增或导入资料", true);
     return false;
   }
@@ -1565,7 +1564,11 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "workMode", { get: () => workMode, set: (value) => { setWorkMode(value); } });
   Object.defineProperty(desk, "canWrite", { get: () => workMode === "entry" });
   Object.defineProperty(desk, "canFinance", { get: () => workMode === "finance" });
-  Object.defineProperty(desk, "canManageCatalog", { get: () => workMode === "finance" });
+  Object.defineProperty(desk, "canViewAllOrders", { get: () => ["admin", "manager", "owner", "finance"].includes(data.identity?.role) });
+  Object.defineProperty(desk, "canViewAllReimbursements", { get: () => ["admin", "manager", "owner", "finance"].includes(data.identity?.role) });
+  Object.defineProperty(desk, "canManageReimbursements", { get: () => ["admin", "owner", "finance"].includes(data.identity?.role) });
+  Object.defineProperty(desk, "canDeleteOrders", { get: () => ["admin", "manager", "owner"].includes(data.identity?.role) });
+  Object.defineProperty(desk, "canManageCatalog", { get: () => ["admin", "manager", "owner", "finance"].includes(data.identity?.role) });
   Object.defineProperty(desk, "sidebarCollapsed", { get: () => sidebarCollapsed, set: (value) => { sidebarCollapsed = value; } });
   Object.defineProperty(desk, "visitor", { get: () => data.visitor });
   Object.defineProperty(desk, "identity", { get: () => data.identity });

@@ -59,8 +59,8 @@
     <label class="field"><span>开始日期</span><input class="date-input" type="date" bind:value={desk.reimbursementFrom} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} /></label>
     <label class="field"><span>结束日期</span><input class="date-input" type="date" bind:value={desk.reimbursementTo} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} /></label>
   </div>
-  <div class="reimbursement-actions"><span class="role-context">当前：{desk.reimbursementRole === "finance" ? (desk.reimbursementPerson ? `${desk.reimbursementPerson} 的报销队列` : "全部员工的待处理报销") : `当前账号：${desk.creatorName || "未设置填写人"}`}</span>{#if desk.reimbursementRole === "finance"}<button class="outline-action" type="button" onclick={desk.exportReimbursements}>导出当前筛选</button>{/if}<button class="outline-action" type="button" onclick={desk.resetReimbursementFilters}>重置筛选</button>{#if desk.reimbursementRole === "finance"}<button class="outline-action" type="button" disabled={!desk.selectedPendingReviewCount || desk.busy} onclick={desk.batchReviewReimbursements}>批量审核通过（{desk.selectedPendingReviewCount}）</button><button class="delete-action" type="button" disabled={!desk.selectedPendingReviewCount || desk.busy} onclick={desk.batchRejectReimbursements}>批量打回（{desk.selectedPendingReviewCount}）</button>{/if}</div>
-  {#if desk.reimbursementRole === "finance"}<div class="workflow-section-heading"><div><span class="workflow-step">1</span><div><b>审核报销</b><small>核对报销内容和附件，审核通过后进入待打款队列</small></div></div><strong>{desk.reimbursementStats.pendingReview} 笔待审核</strong></div>{/if}
+  <div class="reimbursement-actions"><span class="role-context">当前：{desk.reimbursementRole === "finance" ? (desk.reimbursementPerson ? `${desk.reimbursementPerson} 的报销队列` : "全部员工的待处理报销") : `当前账号：${desk.creatorName || "未设置填写人"}`}</span>{#if desk.canManageReimbursements}<button class="outline-action" type="button" onclick={desk.exportReimbursements}>导出当前筛选</button>{/if}<button class="outline-action" type="button" onclick={desk.resetReimbursementFilters}>重置筛选</button>{#if desk.canManageReimbursements}<button class="outline-action" type="button" disabled={!desk.selectedPendingReviewCount || desk.busy} onclick={desk.batchReviewReimbursements}>批量审核通过（{desk.selectedPendingReviewCount}）</button><button class="delete-action" type="button" disabled={!desk.selectedPendingReviewCount || desk.busy} onclick={desk.batchRejectReimbursements}>批量打回（{desk.selectedPendingReviewCount}）</button>{/if}</div>
+  {#if desk.canManageReimbursements}<div class="workflow-section-heading"><div><span class="workflow-step">1</span><div><b>审核报销</b><small>核对报销内容和附件，审核通过后进入待打款队列</small></div></div><strong>{desk.reimbursementStats.pendingReview} 笔待审核</strong></div>{/if}
   <div class="table-panel reimbursement-review-table">
     <div class="table-scroll">
       <table>
@@ -72,7 +72,7 @@
           ></thead
         ><tbody
           >{#each desk.reimbursementRows() as item}<tr
-              ><td><input type="checkbox" aria-label={`选择报销 ${item.advance_item || item.item}`} disabled={desk.reimbursementRole !== "finance" || !["待审核", "待打款"].includes(item.reimbursement_status)} checked={desk.selectedReimbursementIds.includes(item.id)} onchange={() => desk.toggleReimbursement(item.id)} /></td><td>{#if item.order_id}<button class="link-action" type="button" onclick={() => desk.openDetail(desk.orders.find((order: any) => order.id === item.order_id))}><b>{item.code}</b></button>{:else}<b class="muted">内务报销</b>{/if}</td><td
+              ><td><input type="checkbox" aria-label={`选择报销 ${item.advance_item || item.item}`} disabled={!desk.canManageReimbursements || !["待审核", "待打款"].includes(item.reimbursement_status)} checked={desk.selectedReimbursementIds.includes(item.id)} onchange={() => desk.toggleReimbursement(item.id)} /></td><td>{#if item.order_id}<button class="link-action" type="button" onclick={() => desk.openDetail(desk.orders.find((order: any) => order.id === item.order_id))}><b>{item.code}</b></button>{:else}<b class="muted">内务报销</b>{/if}</td><td
                 ><b>{item.project_name}</b><small>{item.employee}</small></td
               ><td>{item.advance_date}</td><td>{item.advance_item || "—"}</td><td
                 class="money">{desk.money(item.advance_amount)}</td
@@ -87,13 +87,13 @@
               ><td
                 ><span class:reimbursement-rejected={item.reimbursement_status === "已打回"} class="status-dot">{item.reimbursement_status}</span>{#if item.reimbursement_status === "已打回" && item.reject_reason}<small class="reject-reason">{item.reject_reason}</small>{/if}</td
               ><td
-                >{#if item.voucher_no}<button class="link-action" type="button" onclick={() => detailItem = item}>查看单据</button>{:else if desk.reimbursementRole === "finance" && (item.reimbursement_status === "待打款" || item.reimbursement_status === "已报销")}<button class="link-action" type="button" disabled={desk.busy} onclick={() => desk.generateReimbursementVoucher(item)}>生成单据</button>{:else}<span class="muted">查看明细</span>{/if}<br />{#if desk.reimbursementRole === "employee"}{#if desk.canWrite && item.reimbursement_status === "已打回"}<button class="outline-action reupload-action" type="button" disabled={desk.busy} onclick={() => desk.reuploadReimbursement(item)}>重新上传发票</button>{:else}<span class="muted">{item.reimbursement_status === "待审核" ? "等待财务核验" : item.reimbursement_status === "待打款" ? "等待付款" : "已完成"}</span>{/if}{:else if item.reimbursement_status === "待审核"}<button
+                >{#if item.voucher_no}<button class="link-action" type="button" onclick={() => detailItem = item}>查看单据</button>{:else if desk.canManageReimbursements && (item.reimbursement_status === "待打款" || item.reimbursement_status === "已报销")}<button class="link-action" type="button" disabled={desk.busy} onclick={() => desk.generateReimbursementVoucher(item)}>生成单据</button>{:else}<span class="muted">查看明细</span>{/if}<br />{#if desk.reimbursementRole === "employee"}{#if desk.canWrite && item.reimbursement_status === "已打回"}<button class="outline-action reupload-action" type="button" disabled={desk.busy} onclick={() => desk.reuploadReimbursement(item)}>重新上传发票</button>{:else}<span class="muted">{item.reimbursement_status === "待审核" ? "等待财务核验" : item.reimbursement_status === "待打款" ? "等待付款" : "已完成"}</span>{/if}{:else if desk.canManageReimbursements && item.reimbursement_status === "待审核"}<button
                     class="primary-action"
                     type="button"
                     disabled={desk.busy}
                     onclick={() => desk.markReimbursement(item, "待打款")}
                     >审核通过</button><button class="delete-action" type="button" disabled={desk.busy} onclick={() => desk.rejectReimbursement(item)}>打回</button
-                  >{:else if item.reimbursement_status === "待打款"}<button
+                  >{:else if desk.canManageReimbursements && item.reimbursement_status === "待打款"}<button
                     class="primary-action"
                     type="button"
                     disabled={desk.busy}
@@ -124,7 +124,7 @@
       </table>
     </div>
   </div>
-  {#if desk.reimbursementRole === "finance"}
+  {#if desk.canManageReimbursements}
     <div class="workflow-section-heading payment-workflow-heading"><div><span class="workflow-step">2</span><div><b>报销打款</b><small>仅显示已审核通过、等待付款的报销记录</small></div></div><strong>{desk.reimbursementStats.pendingPay} 笔待打款</strong></div>
     <section class="finance-workbench payment-workbench" aria-label="待付款报销汇总">
       <div class="finance-workbench-head"><div><b>最近应付汇总单</b><span>可同时选择多个员工卡片，再批量确认已打款</span></div><div class="finance-head-actions">{#if desk.selectedPendingPaymentCount}<span class="payment-selected-total"><Check size={14} />已选择 {desk.selectedPendingPaymentCount} 笔</span>{/if}<strong>{desk.reimbursementStats.pendingPay} 笔 · {desk.money(desk.reimbursementStats.pendingPayAmount)}</strong><button class="outline-action" type="button" onclick={desk.exportPaymentSummary}>导出打款单</button><button class="primary-action payment-batch-action" type="button" disabled={!desk.selectedPendingPaymentCount || desk.busy} onclick={desk.batchMarkReimbursed}>批量确认已打款{desk.selectedPendingPaymentCount ? `（${desk.selectedPendingPaymentCount}）` : ''}</button></div></div>

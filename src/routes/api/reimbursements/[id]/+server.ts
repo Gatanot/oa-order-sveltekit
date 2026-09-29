@@ -18,5 +18,7 @@ export const DELETE: RequestHandler = async (event) => {
 export const PATCH: RequestHandler = async (event) => {
   const data = await body(event);
   const identity = await event.locals.getCurrentIdentity();
-  return action(() => ({ data: updateReimbursement(event.params.id, String(data.status || ''), identity?.displayName || '', String(data.reject_reason || '')) }));
+  if (!identity) return new Response(JSON.stringify({ error: { code: 'UNAUTHORIZED' } }), { status: 401 });
+  if (!hasAnyRole(identity, reimbursementActionRoles)) return new Response(JSON.stringify({ error: { code: 'FORBIDDEN', message: '没有财务操作权限' } }), { status: 403 });
+  return action(() => ({ data: updateReimbursement(event.params.id, String(data.status || ''), identity.displayName, String(data.reject_reason || '')) }));
 };

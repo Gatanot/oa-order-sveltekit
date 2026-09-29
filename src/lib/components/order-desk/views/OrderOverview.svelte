@@ -110,7 +110,7 @@
                 ><span class="status-dot">{order.status}</span
                 >{#if order.reimbursement_status === "待审核" || order.reimbursement_status === "待打款"}<small
                     class="status-dot">需报销</small
-                  >{/if}</td>{/if}<td class="order-action-column"><div class="order-row-actions">{#if desk.canWrite}<button class="icon-control" type="button" title="编辑订单" aria-label={`编辑订单 ${order.service_name}`} onclick={(event) => { event.stopPropagation(); desk.editOrder(order); }}><Pencil size={15} /></button>{/if}{#if desk.canFinance}<button class="delete-action" type="button" title="删除订单" aria-label={`删除订单 ${order.service_name}`} disabled={desk.busy} onclick={(event) => { event.stopPropagation(); desk.deleteOrder(order); }}><Trash2 size={15} /></button>{/if}</div></td></tr
+                  >{/if}</td>{/if}<td class="order-action-column"><div class="order-row-actions">{#if desk.canWrite}<button class="icon-control" type="button" title="编辑订单" aria-label={`编辑订单 ${order.service_name}`} onclick={(event) => { event.stopPropagation(); desk.editOrder(order); }}><Pencil size={15} /></button>{/if}{#if desk.canDeleteOrders}<button class="delete-action" type="button" title="删除订单" aria-label={`删除订单 ${order.service_name}`} disabled={desk.busy} onclick={(event) => { event.stopPropagation(); desk.deleteOrder(order); }}><Trash2 size={15} /></button>{/if}</div></td></tr
             >{:else}<tr
               ><td colspan="15"
                 ><div class="empty-table">
@@ -137,7 +137,7 @@
           <span><small>日期</small><b>{order.order_date}</b></span>
           <span><small>状态</small><b><span class="status-dot">{order.status}</span></b></span>
         </div>
-        <div class="mobile-order-card-foot"><span>{order.payment_status || "未结款"}{order.reimbursement_status === "待审核" || order.reimbursement_status === "待打款" ? " · 需报销" : ""}</span><div class="order-row-actions">{#if desk.canWrite}<button class="icon-control" type="button" title="编辑订单" aria-label={`编辑订单 ${order.service_name}`} onclick={(event) => { event.stopPropagation(); desk.editOrder(order); }}><Pencil size={15} /></button>{/if}{#if desk.canFinance}<button class="delete-action" type="button" title="删除订单" aria-label={`删除订单 ${order.service_name}`} disabled={desk.busy} onclick={(event) => { event.stopPropagation(); desk.deleteOrder(order); }}><Trash2 size={15} /></button>{/if}</div></div>
+        <div class="mobile-order-card-foot"><span>{order.payment_status || "未结款"}{order.reimbursement_status === "待审核" || order.reimbursement_status === "待打款" ? " · 需报销" : ""}</span><div class="order-row-actions">{#if desk.canWrite}<button class="icon-control" type="button" title="编辑订单" aria-label={`编辑订单 ${order.service_name}`} onclick={(event) => { event.stopPropagation(); desk.editOrder(order); }}><Pencil size={15} /></button>{/if}{#if desk.canDeleteOrders}<button class="delete-action" type="button" title="删除订单" aria-label={`删除订单 ${order.service_name}`} disabled={desk.busy} onclick={(event) => { event.stopPropagation(); desk.deleteOrder(order); }}><Trash2 size={15} /></button>{/if}</div></div>
       </article>
     {:else}
       <div class="empty-table">没有匹配的订单，先录入一笔订单吧。</div>

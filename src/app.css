@@ -3657,14 +3657,24 @@ textarea[readonly] {
   flex: 0 0 auto;
 }
 
-.employee-error {
+.employee-error,
+.employee-success {
   margin: 0 0 16px;
   padding: 10px 12px;
-  border: 1px solid #eec4c1;
   border-radius: 10px;
+  font-size: 13px;
+}
+
+.employee-error {
+  border: 1px solid #eec4c1;
   background: var(--red-soft);
   color: #9f2929;
-  font-size: 13px;
+}
+
+.employee-success {
+  border: 1px solid #b9dfcf;
+  background: #effaf5;
+  color: #176c58;
 }
 
 .employee-empty {
