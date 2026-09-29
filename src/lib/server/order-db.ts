@@ -13,22 +13,22 @@ let instance: Database.Database | undefined;
 
 const now = () => new Date().toISOString();
 export const uuid = () => randomUUID();
-type AuditInput = { actorName?: string; action: string; entityType: string; entityId?: string; fromValue?: string; toValue?: string; detail?: Record<string, unknown> };
+type AuditInput = { actorName?: string; actorUid?: number | null; action: string; entityType: string; entityId?: string; fromValue?: string; toValue?: string; detail?: Record<string, unknown> };
 function recordAudit(db: Database.Database, input: AuditInput) {
-  db.prepare('INSERT INTO audit_logs(id,actor_name,action,entity_type,entity_id,from_value,to_value,detail_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)')
-    .run(uuid(), input.actorName || '', input.action, input.entityType, input.entityId || '', input.fromValue || '', input.toValue || '', JSON.stringify(input.detail || {}), now());
+  db.prepare('INSERT INTO audit_logs(id,actor_name,actor_uid,action,entity_type,entity_id,from_value,to_value,detail_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)')
+    .run(uuid(), input.actorName || '', input.actorUid ?? null, input.action, input.entityType, input.entityId || '', input.fromValue || '', input.toValue || '', JSON.stringify(input.detail || {}), now());
 }
 export function addAuditLog(input: AuditInput) { recordAudit(getOrderDb(), input); }
 function reimbursementVoucherNo(id: string, date: string): string {
   return `BX-${String(date || '').replaceAll('-', '')}-${String(id).replaceAll('-', '').slice(0, 6).toUpperCase()}`;
 }
 
-function ensureReimbursementVoucher(db: Database.Database, row: Record<string, any>, actor: string, automatic = false) {
+function ensureReimbursementVoucher(db: Database.Database, row: Record<string, any>, actor: string, actorUid: number | null, automatic = false) {
   if (row.voucher_no) return { voucherNo: row.voucher_no, createdAt: row.voucher_created_at };
   const voucherNo = reimbursementVoucherNo(String(row.id), String(row.advance_date));
   const createdAt = now();
   db.prepare('UPDATE reimbursements_simple SET voucher_no=?, voucher_created_at=? WHERE id=?').run(voucherNo, createdAt, row.id);
-  recordAudit(db, { actorName: actor, action: 'generate_voucher', entityType: 'reimbursement', entityId: String(row.id), detail: { voucher_no: voucherNo, automatic } });
+  recordAudit(db, { actorName: actor, actorUid, action: 'generate_voucher', entityType: 'reimbursement', entityId: String(row.id), detail: { voucher_no: voucherNo, automatic } });
   return { voucherNo, createdAt };
 }
 
@@ -65,7 +65,7 @@ export function moneyToCents(value: unknown): number {
 function migrate(db: Database.Database) {
   db.exec('CREATE TABLE IF NOT EXISTS schema_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)');
   const version = db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").get() as { value: string } | undefined;
-  if (version?.value === '23' || version?.value === '22') return;
+  if (version?.value === '24' || version?.value === '23' || version?.value === '22') return;
   if (version?.value === '21') {
     db.exec(`ALTER TABLE orders_simple ADD COLUMN execution_company TEXT NOT NULL DEFAULT ''; UPDATE schema_meta SET value='22' WHERE key='order_app_version';`);
     return;
@@ -262,7 +262,7 @@ function migrate(db: Database.Database) {
     CREATE TABLE order_attachments(id TEXT PRIMARY KEY, order_id TEXT NOT NULL, file_name TEXT NOT NULL, mime_type TEXT NOT NULL DEFAULT '', file_size INTEGER NOT NULL DEFAULT 0, storage_path TEXT NOT NULL DEFAULT '', attachment_kind TEXT NOT NULL DEFAULT 'note', visibility TEXT NOT NULL DEFAULT 'order', created_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE);
     CREATE TABLE reimbursements_simple(id TEXT PRIMARY KEY, employee TEXT NOT NULL, item TEXT NOT NULL, amount INTEGER NOT NULL DEFAULT 0, advance_date TEXT NOT NULL, order_id TEXT, invoice TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending_review' CHECK(status IN ('pending_review','rejected','pending_payment','paid')), reject_reason TEXT NOT NULL DEFAULT '', reviewed_by TEXT NOT NULL DEFAULT '', reviewed_at TEXT, reimbursed_by TEXT NOT NULL DEFAULT '', reimbursed_at TEXT, voucher_no TEXT NOT NULL DEFAULT '', voucher_created_at TEXT, voucher_archived_at TEXT, created_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE);
     CREATE TABLE reimbursement_attachments(id TEXT PRIMARY KEY, reimbursement_id TEXT NOT NULL, file_name TEXT NOT NULL, mime_type TEXT NOT NULL DEFAULT '', file_size INTEGER NOT NULL DEFAULT 0, storage_path TEXT NOT NULL DEFAULT '', attachment_kind TEXT NOT NULL DEFAULT 'invoice', visibility TEXT NOT NULL DEFAULT 'participants', created_at TEXT NOT NULL, FOREIGN KEY(reimbursement_id) REFERENCES reimbursements_simple(id) ON DELETE CASCADE);
-    CREATE TABLE audit_logs(id TEXT PRIMARY KEY, actor_name TEXT NOT NULL DEFAULT '', action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL DEFAULT '', from_value TEXT NOT NULL DEFAULT '', to_value TEXT NOT NULL DEFAULT '', detail_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL);
+    CREATE TABLE audit_logs(id TEXT PRIMARY KEY, actor_name TEXT NOT NULL DEFAULT '', actor_uid INTEGER, action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL DEFAULT '', from_value TEXT NOT NULL DEFAULT '', to_value TEXT NOT NULL DEFAULT '', detail_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL);
     CREATE INDEX idx_simple_orders_date ON orders_simple(order_date DESC);
     CREATE INDEX idx_simple_orders_customer ON orders_simple(customer_id,project_id);
     CREATE UNIQUE INDEX idx_orders_idempotency ON orders_simple(idempotency_key) WHERE idempotency_key <> '';
@@ -318,7 +318,9 @@ export function getOrderDb() {
     }
     const reimbursementColumns = new Set((instance.pragma('table_info(reimbursements_simple)') as Array<{ name: string }>).map((column) => column.name));
     if (!reimbursementColumns.has('employee_uid')) instance.exec('ALTER TABLE reimbursements_simple ADD COLUMN employee_uid INTEGER');
-    instance.prepare("UPDATE schema_meta SET value='23' WHERE key='order_app_version'").run();
+    const auditColumns = new Set((instance.pragma('table_info(audit_logs)') as Array<{ name: string }>).map((column) => column.name));
+    if (!auditColumns.has('actor_uid')) instance.exec('ALTER TABLE audit_logs ADD COLUMN actor_uid INTEGER');
+    instance.prepare("UPDATE schema_meta SET value='24' WHERE key='order_app_version'").run();
     importBundledExcel(instance);
   }
   return instance;
@@ -1054,7 +1056,7 @@ export function exportReimbursements(filters: Record<string, string>) {
   return { data: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }), count: output.length, name: mode === 'voucher' ? '报销单据' : '报销明细' };
 }
 
-export function createReimbursement(data: Record<string, unknown>) {
+export function createReimbursement(data: Record<string, unknown>, actorUid: number | null = null) {
   const employee = text(data.employee);
   const item = text(data.item);
   if (!employee || !item) throw new Error('请填写报销人和报销物品');
@@ -1067,12 +1069,12 @@ export function createReimbursement(data: Record<string, unknown>) {
   const db = getOrderDb();
   db.transaction(() => {
     db.prepare('INSERT INTO reimbursements_simple(id,employee,item,amount,advance_date,order_id,invoice,note,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run(id, employee, item, amount, advanceDate, orderId || null, text(data.invoice), text(data.note), now());
-    recordAudit(db, { actorName: employee, action: 'create', entityType: 'reimbursement', entityId: id, detail: { amount, order_id: orderId } });
+    recordAudit(db, { actorName: employee, actorUid, action: 'create', entityType: 'reimbursement', entityId: id, detail: { amount, order_id: orderId } });
   })();
   return { id, employee, item, amount, advance_date: advanceDate, order_id: orderId, reimbursement_status: '待审核' };
 }
 
-export function updateReimbursement(id: string, status: string, actor: string, rejectReason = '') {
+export function updateReimbursement(id: string, status: string, actor: string, rejectReason = '', actorUid: number | null = null) {
   const target = reimbursementStatusCode(status);
   const db = getOrderDb();
   const reimbursement = db.prepare('SELECT * FROM reimbursements_simple WHERE id=?').get(id) as Record<string, any> | undefined;
@@ -1085,14 +1087,14 @@ export function updateReimbursement(id: string, status: string, actor: string, r
   const changedAt = now();
   db.transaction(() => {
     db.prepare(`UPDATE reimbursements_simple SET status=?, reject_reason=CASE WHEN ?='rejected' THEN ? WHEN ?='pending_review' THEN '' ELSE reject_reason END, reviewed_by=CASE WHEN ? IN ('pending_payment','rejected') THEN ? ELSE reviewed_by END, reviewed_at=CASE WHEN ? IN ('pending_payment','rejected') THEN ? ELSE reviewed_at END, reimbursed_by=CASE WHEN ?='paid' THEN ? ELSE reimbursed_by END, reimbursed_at=CASE WHEN ?='paid' THEN ? ELSE reimbursed_at END WHERE id=?`).run(target, target, rejectReason, target, target, actor, target, changedAt, target, actor, target, changedAt, id);
-    recordAudit(db, { actorName: actor, action: 'status_change', entityType: 'reimbursement', entityId: id, fromValue: reimbursement.status, toValue: target, detail: { reject_reason: target === 'rejected' ? rejectReason : '' } });
-    if (target === 'pending_payment') ensureReimbursementVoucher(db, reimbursement, actor, true);
+    recordAudit(db, { actorName: actor, actorUid, action: 'status_change', entityType: 'reimbursement', entityId: id, fromValue: reimbursement.status, toValue: target, detail: { reject_reason: target === 'rejected' ? rejectReason : '' } });
+    if (target === 'pending_payment') ensureReimbursementVoucher(db, reimbursement, actor, actorUid, true);
   })();
   const updated = db.prepare('SELECT * FROM reimbursements_simple WHERE id=?').get(id) as Record<string, any>;
   return { ...updated, order_id: updated.order_id || '', reimbursement_status: reimbursementStatusLabel(updated.status) };
 }
 
-export function updateReimbursementsBatch(ids: string[], status: string, actor: string, rejectReason = '') {
+export function updateReimbursementsBatch(ids: string[], status: string, actor: string, rejectReason = '', actorUid: number | null = null) {
   const target = reimbursementStatusCode(status);
   const uniqueIds = [...new Set(ids.map((id) => text(id)).filter(Boolean))];
   if (!uniqueIds.length) throw new Error('请选择报销记录');
@@ -1107,8 +1109,8 @@ export function updateReimbursementsBatch(ids: string[], status: string, actor: 
     const update = db.prepare(`UPDATE reimbursements_simple SET status=?, reject_reason=CASE WHEN ?='rejected' THEN ? WHEN ?='pending_review' THEN '' ELSE reject_reason END, reviewed_by=CASE WHEN ? IN ('pending_payment','rejected') THEN ? ELSE reviewed_by END, reviewed_at=CASE WHEN ? IN ('pending_payment','rejected') THEN ? ELSE reviewed_at END, reimbursed_by=CASE WHEN ?='paid' THEN ? ELSE reimbursed_by END, reimbursed_at=CASE WHEN ?='paid' THEN ? ELSE reimbursed_at END WHERE id=?`);
     for (const row of rows as Array<Record<string, any>>) {
       update.run(target, target, rejectReason, target, target, actor, target, changedAt, target, actor, target, changedAt, row.id);
-      recordAudit(db, { actorName: actor, action: 'status_change', entityType: 'reimbursement', entityId: row.id, fromValue: row.status, toValue: target, detail: { batch: true, reject_reason: target === 'rejected' ? rejectReason : '' } });
-      if (target === 'pending_payment') ensureReimbursementVoucher(db, row, actor, true);
+      recordAudit(db, { actorName: actor, actorUid, action: 'status_change', entityType: 'reimbursement', entityId: row.id, fromValue: row.status, toValue: target, detail: { batch: true, reject_reason: target === 'rejected' ? rejectReason : '' } });
+      if (target === 'pending_payment') ensureReimbursementVoucher(db, row, actor, actorUid, true);
     }
   })();
   return uniqueIds.map((id) => {
@@ -1117,16 +1119,16 @@ export function updateReimbursementsBatch(ids: string[], status: string, actor: 
   });
 }
 
-export function generateReimbursementVoucher(id: string, actor = '财务人员') {
+export function generateReimbursementVoucher(id: string, actor = '财务人员', actorUid: number | null = null) {
   const db = getOrderDb();
   const row = db.prepare('SELECT * FROM reimbursements_simple WHERE id=?').get(id) as Record<string, any> | undefined;
   if (!row) throw new Error('REIMBURSEMENT_NOT_FOUND');
   if (!['pending_payment', 'paid'].includes(row.status)) throw new Error('报销确认后才能生成单据');
-  const voucher = ensureReimbursementVoucher(db, row, actor);
+  const voucher = ensureReimbursementVoucher(db, row, actor, actorUid);
   return { ...row, voucher_no: voucher.voucherNo, voucher_created_at: voucher.createdAt, order_id: row.order_id || '', reimbursement_status: reimbursementStatusLabel(row.status) };
 }
 
-export function archiveReimbursementVoucher(id: string, actor = '财务人员') {
+export function archiveReimbursementVoucher(id: string, actor = '财务人员', actorUid: number | null = null) {
   const db = getOrderDb();
   const row = db.prepare("SELECT status,voucher_no FROM reimbursements_simple WHERE id=?").get(id) as { status: string; voucher_no: string } | undefined;
   if (!row) throw new Error('REIMBURSEMENT_NOT_FOUND');
@@ -1134,7 +1136,7 @@ export function archiveReimbursementVoucher(id: string, actor = '财务人员') 
   if (!['pending_payment', 'paid'].includes(row.status)) throw new Error('当前状态不能归档单据');
   const archivedAt = now();
   db.prepare('UPDATE reimbursements_simple SET voucher_archived_at=? WHERE id=?').run(archivedAt, id);
-  recordAudit(db, { actorName: actor, action: 'archive_voucher', entityType: 'reimbursement', entityId: id, detail: { voucher_no: row.voucher_no } });
+  recordAudit(db, { actorName: actor, actorUid, action: 'archive_voucher', entityType: 'reimbursement', entityId: id, detail: { voucher_no: row.voucher_no } });
   return { id, voucher_no: row.voucher_no, voucher_archived_at: archivedAt };
 }
 
@@ -1162,7 +1164,7 @@ export function listOrderAttachments(orderId: string) {
   return getOrderDb().prepare('SELECT id,order_id,file_name,mime_type,file_size,attachment_kind,created_at FROM order_attachments WHERE order_id=? ORDER BY created_at DESC').all(orderId);
 }
 
-export function addStandaloneReimbursementAttachment(reimbursementId: string, file: { name: string; data: Buffer }) {
+export function addStandaloneReimbursementAttachment(reimbursementId: string, file: { name: string; data: Buffer }, actor: { name?: string; uid?: number | null } = {}) {
   const db = getOrderDb();
   const reimbursement = db.prepare('SELECT id,employee,status FROM reimbursements_simple WHERE id=?').get(reimbursementId) as { id: string; employee: string; status: string } | undefined;
   if (!reimbursement) throw new Error('REIMBURSEMENT_NOT_FOUND');
@@ -1180,7 +1182,7 @@ export function addStandaloneReimbursementAttachment(reimbursementId: string, fi
   db.prepare('INSERT INTO reimbursement_attachments(id,reimbursement_id,file_name,mime_type,file_size,storage_path,attachment_kind,created_at) VALUES(?,?,?,?,?,?,?,?)').run(id, reimbursementId, safeName, mime, file.data.length, storagePath, 'invoice', now());
   const status = (reimbursement.status === 'rejected' ? 'pending_review' : reimbursement.status);
   db.prepare("UPDATE reimbursements_simple SET invoice=?, status=?, reject_reason=CASE WHEN ?='pending_review' THEN '' ELSE reject_reason END WHERE id=?").run(safeName, status, status, reimbursementId);
-  recordAudit(db, { actorName: reimbursement.employee, action: reimbursement.status === 'rejected' ? 'reupload_attachment' : 'upload_attachment', entityType: 'reimbursement', entityId: reimbursementId, detail: { file_name: safeName, file_size: file.data.length } });
+  recordAudit(db, { actorName: actor.name || reimbursement.employee, actorUid: actor.uid ?? null, action: reimbursement.status === 'rejected' ? 'reupload_attachment' : 'upload_attachment', entityType: 'reimbursement', entityId: reimbursementId, detail: { file_name: safeName, file_size: file.data.length } });
   return { id, reimbursement_id: reimbursementId, file_name: safeName, mime_type: mime, file_size: file.data.length, created_at: now() };
 }
 
@@ -1190,10 +1192,6 @@ export function getReimbursementAccessInfo(reimbursementId: string) {
 
 export function setReimbursementEmployee(id: string, uid: number) {
   getOrderDb().prepare('UPDATE reimbursements_simple SET employee_uid=? WHERE id=?').run(uid, id);
-}
-
-export function canEmployeeAccessReimbursement(id: string, uid: number): boolean {
-  return Boolean(getOrderDb().prepare('SELECT 1 FROM reimbursements_simple WHERE id=? AND employee_uid=?').get(id, uid));
 }
 
 export function listReimbursementAttachments(reimbursementId: string) {
@@ -1222,7 +1220,7 @@ function removeAttachmentFile(storagePath: string) {
   try { unlinkSync(path); } catch (reason) { console.warn(`附件清理失败: ${path}`, reason); }
 }
 
-export function addOrderAttachment(orderId: string, file: { name: string; data: Buffer; kind?: string; advanceId?: string }) {
+export function addOrderAttachment(orderId: string, file: { name: string; data: Buffer; kind?: string; advanceId?: string }, actor: { name?: string; uid?: number | null } = {}) {
   const db = getOrderDb();
   const order = db.prepare('SELECT id FROM orders_simple WHERE id=? OR code=?').get(orderId, orderId) as { id: string } | undefined;
   if (!order) throw new Error('ORDER_NOT_FOUND');
@@ -1237,11 +1235,11 @@ export function addOrderAttachment(orderId: string, file: { name: string; data: 
   mkdirSync(join(attachmentDir, order.id), { recursive: true });
   writeFileSync(join(attachmentDir, storagePath), file.data);
   db.prepare('INSERT INTO order_attachments(id,order_id,file_name,mime_type,file_size,created_at,storage_path,attachment_kind) VALUES(?,?,?,?,?,?,?,?)').run(id, order.id, safeName, mime, file.data.length, now(), storagePath, 'note');
-  recordAudit(db, { actorName: '填写人', action: 'upload_attachment', entityType: 'order', entityId: order.id, detail: { file_name: safeName, file_size: file.data.length } });
+  recordAudit(db, { actorName: actor.name || '填写人', actorUid: actor.uid ?? null, action: 'upload_attachment', entityType: 'order', entityId: order.id, detail: { file_name: safeName, file_size: file.data.length } });
   return db.prepare('SELECT id,order_id,file_name,mime_type,file_size,attachment_kind,created_at FROM order_attachments WHERE id=?').get(id);
 }
 
-export function importCatalog(rows: Array<Record<string, unknown>>, sourceId = '', options: { replace?: boolean; actorName?: string } = {}) {
+export function importCatalog(rows: Array<Record<string, unknown>>, sourceId = '', options: { replace?: boolean; actorName?: string; actorUid?: number | null } = {}) {
   const db = getOrderDb();
   const source = sourceId ? db.prepare('SELECT * FROM catalog_sources WHERE id=?').get(sourceId) as Record<string, unknown> | undefined : undefined;
   if (sourceId && !source) throw new Error('资料库来源不存在');
@@ -1262,7 +1260,7 @@ export function importCatalog(rows: Array<Record<string, unknown>>, sourceId = '
     if (source) {
       const summary = JSON.stringify({ rows: rows.length, imported: count, replaced: Boolean(options.replace), imported_at: now() });
       db.prepare("UPDATE catalog_sources SET source_file=COALESCE(NULLIF(?,''),source_file),source_method='upload',import_summary_json=?,updated_at=? WHERE id=?").run(text(rows[0]?.source_file), summary, now(), sourceId);
-      recordAudit(db, { actorName: options.actorName, action: options.replace ? 'replace_catalog' : 'import_catalog', entityType: 'catalog_source', entityId: sourceId, detail: { rows: rows.length, imported: count } });
+      recordAudit(db, { actorName: options.actorName, actorUid: options.actorUid ?? null, action: options.replace ? 'replace_catalog' : 'import_catalog', entityType: 'catalog_source', entityId: sourceId, detail: { rows: rows.length, imported: count } });
     }
     return count;
   })();
@@ -1298,7 +1296,7 @@ function dateOffset(base: Date, days: number) {
   return value.toISOString().slice(0, 10);
 }
 
-export function seedDemoCostCatalogs(requestedCount = 2) {
+export function seedDemoCostCatalogs(requestedCount = 2, actorUid: number | null = null) {
   const count = Math.max(1, Math.min(2, Math.round(Number(requestedCount) || 2)));
   const batch = demoBatchId();
   const vendors = [
@@ -1344,10 +1342,10 @@ export function seedDemoCostCatalogs(requestedCount = 2) {
       source_sheet: vendor.name,
       item_no: index + 1,
     }));
-    const items = importCatalog(rows, source.id, { actorName: '后台模拟数据工具' });
+    const items = importCatalog(rows, source.id, { actorName: '后台模拟数据工具', actorUid });
     created.push({ id: source.id, owner, items });
   }
-  addAuditLog({ actorName: '后台模拟数据工具', action: 'seed_demo_catalogs', entityType: 'admin_demo', entityId: batch, detail: { count: created.length, items: created.reduce((sum, item) => sum + item.items, 0) } });
+  addAuditLog({ actorName: '后台模拟数据工具', actorUid, action: 'seed_demo_catalogs', entityType: 'admin_demo', entityId: batch, detail: { count: created.length, items: created.reduce((sum, item) => sum + item.items, 0) } });
   return { batch, catalogs: created.length, items: created.reduce((sum, item) => sum + item.items, 0), created };
 }
 
@@ -1378,7 +1376,7 @@ function ensureDemoProjects() {
   return result;
 }
 
-export function seedDemoOrdersAndReimbursements(requestedCount = 36) {
+export function seedDemoOrdersAndReimbursements(requestedCount = 36, actorUid: number | null = null) {
   const orderCount = Math.max(20, Math.min(80, Math.round(Number(requestedCount) || 36)));
   const batch = demoBatchId();
   const projects = ensureDemoProjects();
@@ -1498,6 +1496,6 @@ export function seedDemoOrdersAndReimbursements(requestedCount = 36) {
     }
   }
 
-  addAuditLog({ actorName: '后台模拟数据工具', action: 'seed_demo_operations', entityType: 'admin_demo', entityId: batch, detail: { orders: orderCount, reimbursements: reimbursementCount, statuses: statusCounts } });
+  addAuditLog({ actorName: '后台模拟数据工具', actorUid, action: 'seed_demo_operations', entityType: 'admin_demo', entityId: batch, detail: { orders: orderCount, reimbursements: reimbursementCount, statuses: statusCounts } });
   return { batch, orders: orderCount, reimbursements: reimbursementCount, statusCounts };
 }

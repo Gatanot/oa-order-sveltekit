@@ -20,5 +20,5 @@ export const PATCH: RequestHandler = async (event) => {
   const identity = await event.locals.getCurrentIdentity();
   if (!identity) return new Response(JSON.stringify({ error: { code: 'UNAUTHORIZED' } }), { status: 401 });
   if (!hasAnyRole(identity, reimbursementActionRoles)) return new Response(JSON.stringify({ error: { code: 'FORBIDDEN', message: '没有财务操作权限' } }), { status: 403 });
-  return action(() => ({ data: updateReimbursement(event.params.id, String(data.status || ''), identity.displayName, String(data.reject_reason || '')) }));
+  return action(() => ({ data: updateReimbursement(event.params.id, String(data.status || ''), identity.displayName, String(data.reject_reason || ''), identity.uid) }));
 };

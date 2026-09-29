@@ -3758,6 +3758,33 @@ textarea[readonly] {
   background: #fff7f7;
 }
 
+.employee-admin td input:disabled,
+.employee-admin td select:disabled {
+  background: #f3f4f6;
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.employee-admin input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.employee-row-readonly td {
+  background: #fafafa;
+}
+
+.employee-self-tag {
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.employee-locked {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .admin-actions-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

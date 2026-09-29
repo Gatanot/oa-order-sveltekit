@@ -9,5 +9,5 @@ export const POST: RequestHandler = async (event) => {
   if (!identity) return new Response(JSON.stringify({ error: { code: 'UNAUTHORIZED' } }), { status: 401 });
   if (!hasAnyRole(identity, reimbursementActionRoles)) return new Response(JSON.stringify({ error: { code: 'FORBIDDEN', message: '没有财务操作权限' } }), { status: 403 });
   const ids = Array.isArray(data.ids) ? data.ids.map(String) : [];
-  return action(() => ({ data: updateReimbursementsBatch(ids, String(data.status || ''), identity.displayName, String(data.reject_reason || '')) }));
+  return action(() => ({ data: updateReimbursementsBatch(ids, String(data.status || ''), identity.displayName, String(data.reject_reason || ''), identity.uid) }));
 };

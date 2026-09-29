@@ -64,6 +64,32 @@ async function withMigratedFixture(name, legacyVersion, prepare, assertions) {
   }
 }
 
+async function requestOn(base, path, { json, ...options } = {}) {
+  const headers = new Headers(options.headers);
+  if (json !== undefined) headers.set('content-type', 'application/json');
+  if (options.body instanceof FormData) headers.set('origin', base);
+  const response = await fetch(`${base}${path}`, { ...options, headers, body: json === undefined ? options.body : JSON.stringify(json), redirect: 'manual' });
+  const contentType = response.headers.get('content-type') || '';
+  const data = contentType.includes('json') ? await response.json() : await response.arrayBuffer();
+  return { response, data };
+}
+
+/** 以指定员工 UID 启动一次服务，用于验证非管理员的员工管理授权。 */
+async function withIdentityServer(uid, assertions) {
+  const identityPort = port + 900 + fixturePortOffset++;
+  const identityOrigin = `http://127.0.0.1:${identityPort}`;
+  let identityLogs = '';
+  const identityServer = spawn(process.execPath, ['build'], { env: { ...process.env, DATABASE_PATH: databasePath, NODE_ENV: 'test', OA_TEST_AUTH_BYPASS: '1', OA_TEST_UID: String(uid), PORT: String(identityPort), ORIGIN: identityOrigin }, stdio: ['ignore', 'pipe', 'pipe'] });
+  identityServer.stdout.on('data', (chunk) => { identityLogs += chunk; });
+  identityServer.stderr.on('data', (chunk) => { identityLogs += chunk; });
+  try {
+    await waitForServer(identityOrigin, () => identityLogs);
+    await assertions(identityOrigin);
+  } finally {
+    identityServer.kill('SIGTERM');
+  }
+}
+
 try {
   await waitForServer();
   let result = await request('/api/employees');
@@ -219,7 +245,9 @@ try {
   assert.match(result.response.headers.get('content-type') || '', /spreadsheet/);
 
   const db = new Database(databasePath, { readonly: true });
-  assert.equal(db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '23');
+  assert.equal(db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '24');
+  assert.ok(db.prepare("SELECT COUNT(*) FROM pragma_table_info('audit_logs') WHERE name='actor_uid'").pluck().get(), '审计表应包含操作者 UID');
+  assert.ok(db.prepare('SELECT COUNT(*) FROM audit_logs WHERE actor_uid=826').pluck().get() >= 1, '审计应记录操作者 UID');
   assert.equal(db.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='system_admin_identity'").pluck().get(), 1, '系统管理员额外身份应持久化保存');
   assert.equal(db.prepare('SELECT COUNT(*) FROM system_admin_identity').pluck().get(), 0, '清除额外身份后应回到系统管理员身份');
   assert.equal(db.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, '幂等键不能产生重复订单');
@@ -231,7 +259,8 @@ try {
   db.close();
 
   await withMigratedFixture('oa-v23.db', '23', () => {}, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '23');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '24');
+    assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('audit_logs') WHERE name='actor_uid'").pluck().get(), 'v23 数据库迁移后应补齐审计 actor_uid');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v23 数据库重启后应保留订单');
   });
 
@@ -250,7 +279,7 @@ try {
       ALTER TABLE audit_logs ADD COLUMN actor_user_id TEXT;
     `);
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '23');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '24');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='idempotency_key'").pluck().get(), 'v18 数据库应补齐幂等字段');
     assert.equal(migrated.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('users','sessions')").pluck().get(), 0, '迁移后不应保留登录表');
     for (const [table, column] of [['orders_simple', 'created_by_user_id'], ['reimbursements_simple', 'employee_user_id'], ['reimbursements_simple', 'voucher_archived_by_user_id'], ['order_attachments', 'uploaded_by_user_id'], ['reimbursement_attachments', 'uploaded_by_user_id'], ['catalog_sources', 'maintained_by_user_id'], ['audit_logs', 'actor_user_id']]) {
@@ -263,7 +292,7 @@ try {
   await withMigratedFixture('oa-v20.db', '20', (legacy) => {
     legacy.exec('ALTER TABLE orders_simple DROP COLUMN planner; ALTER TABLE orders_simple DROP COLUMN execution_company;');
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '23');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '24');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='planner'").pluck().get(), 'v20 数据库应补齐策划人字段');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='execution_company'").pluck().get(), 'v20 数据库应补齐执行公司字段');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v20 迁移不应丢失订单');
@@ -273,13 +302,93 @@ try {
   await withMigratedFixture('oa-v21.db', '21', (legacy) => {
     legacy.exec('ALTER TABLE orders_simple DROP COLUMN execution_company;');
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '23');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '24');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='execution_company'").pluck().get(), 'v21 数据库应补齐执行公司字段');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v21 迁移不应丢失订单');
     assert.deepEqual(migrated.prepare('PRAGMA foreign_key_check').all(), []);
   });
 
-  console.log('Smoke test passed: public workbench, catalog import/copy, creator snapshots, order totals, independent attachments, immutable processed advances, reimbursement filters/state machine, voucher idempotency, aligned exports, audit and v18/v20/v21/v23 migrations.');
+  // 员工管理授权：管理人员与老板都不能改自己的身份/启用状态，也不能管理同级或更高级别。
+  const identityDb = new Database(databasePath);
+  const seededAt = new Date().toISOString();
+  const insertEmployee = identityDb.prepare('INSERT OR REPLACE INTO employees(catsco_uid,username,display_name,department,role,active,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)');
+  insertEmployee.run(1001, 'test1001', '王管理', '商务', 'manager', 1, seededAt, seededAt);
+  insertEmployee.run(1002, 'test1002', '李老板', '商务', 'owner', 1, seededAt, seededAt);
+  insertEmployee.run(1003, 'test1003', '赵执行', '执行', 'executor', 1, seededAt, seededAt);
+  insertEmployee.run(1004, 'test1004', '钱财务', '内务', 'finance', 1, seededAt, seededAt);
+  insertEmployee.run(1005, 'test1005', '孙执行', '执行', 'executor', 1, seededAt, seededAt);
+  identityDb.close();
+
+  await withIdentityServer(1001, async (base) => {
+    let result = await requestOn(base, '/api/employees');
+    assert.equal(result.response.status, 200, '管理人员可访问员工列表');
+    result = await requestOn(base, '/api/employees', { method: 'PATCH', json: { uid: 1001, display_name: '王管理', department: '商务', role: 'owner', active: true } });
+    assert.equal(result.response.status, 403, '管理人员不能把自己提升为老板');
+    result = await requestOn(base, '/api/employees', { method: 'PATCH', json: { uid: 1001, display_name: '王管理', department: '商务', role: 'manager', active: false } });
+    assert.equal(result.response.status, 403, '管理人员不能停用自己');
+    result = await requestOn(base, '/api/employees', { method: 'PATCH', json: { uid: 1001, display_name: '王管理改名', department: '商务', role: 'manager', active: true } });
+    assert.equal(result.response.status, 200, '管理人员可维护自己的姓名和部门');
+    result = await requestOn(base, '/api/employees', { method: 'PATCH', json: { uid: 1002, display_name: '李老板', department: '商务', role: 'executor', active: true } });
+    assert.equal(result.response.status, 403, '管理人员不能降级老板');
+    result = await requestOn(base, '/api/employees', { method: 'DELETE', json: { uid: 1002 } });
+    assert.equal(result.response.status, 403, '管理人员不能删除老板');
+    result = await requestOn(base, '/api/employees', { method: 'PATCH', json: { uid: 1003, display_name: '赵执行', department: '执行', role: 'manager', active: true } });
+    assert.equal(result.response.status, 403, '管理人员不能授予管理身份');
+    result = await requestOn(base, '/api/employees', { method: 'PATCH', json: { uid: 1003, display_name: '赵执行', department: '设计', role: 'designer', active: true } });
+    assert.equal(result.response.status, 200, '管理人员可管理下级员工');
+    result = await requestOn(base, '/api/employees', { method: 'DELETE', json: { uid: 1005 } });
+    assert.equal(result.response.status, 200, '管理人员可删除下级员工');
+  });
+
+  await withIdentityServer(1002, async (base) => {
+    let result = await requestOn(base, '/api/employees', { method: 'PATCH', json: { uid: 1002, display_name: '李老板', department: '商务', role: 'manager', active: true } });
+    assert.equal(result.response.status, 403, '老板不能改变自己的身份');
+    result = await requestOn(base, '/api/employees', { method: 'PATCH', json: { uid: 1002, display_name: '李老板', department: '商务', role: 'owner', active: false } });
+    assert.equal(result.response.status, 403, '老板不能停用自己');
+    result = await requestOn(base, '/api/employees', { method: 'PATCH', json: { uid: 1001, display_name: '王管理', department: '商务', role: 'manager', active: true } });
+    assert.equal(result.response.status, 200, '老板可管理管理人员');
+    result = await requestOn(base, '/api/employees', { method: 'PATCH', json: { uid: 1004, display_name: '钱财务', department: '内务', role: 'finance', active: true } });
+    assert.equal(result.response.status, 200, '老板可管理财务人员');
+  });
+
+  // 财务代传发票：审计记录财务本人，报销仍归属原员工。
+  result = await request('/api/reimbursements', { method: 'POST', json: { item: '财务代传测试', amount: '10.00', advance_date: '2026-09-18' } });
+  assert.equal(result.response.status, 201, JSON.stringify(result.data));
+  const financeUploadReimbursementId = result.data.data.id;
+  await withIdentityServer(1004, async (base) => {
+    const invoiceForm = new FormData();
+    invoiceForm.append('file', new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], { type: 'image/png' }), 'finance-invoice.png');
+    const uploaded = await requestOn(base, `/api/reimbursements/${financeUploadReimbursementId}/attachments`, { method: 'POST', body: invoiceForm });
+    assert.equal(uploaded.response.status, 201, JSON.stringify(uploaded.data));
+  });
+  const auditDb = new Database(databasePath, { readonly: true });
+  const financeUploadAudit = auditDb.prepare("SELECT actor_name,actor_uid FROM audit_logs WHERE entity_type='reimbursement' AND entity_id=? AND action IN ('upload_attachment','reupload_attachment') ORDER BY created_at DESC LIMIT 1").get(financeUploadReimbursementId);
+  assert.equal(financeUploadAudit?.actor_uid, 1004, '财务代传发票应记录财务 UID');
+  assert.equal(financeUploadAudit?.actor_name, '钱财务', '财务代传发票应记录财务姓名');
+  assert.equal(auditDb.prepare('SELECT employee FROM reimbursements_simple WHERE id=?').pluck().get(financeUploadReimbursementId), 'catsco', '财务代传后报销仍属于原员工');
+  auditDb.close();
+
+  // 订单参与者不能修改结款状态，也不能使用资料库导入预览等管理能力。
+  result = await request('/api/orders', { method: 'POST', json: { project_id: projectId, order_date: '2026-09-17', designer: '赵执行', designer_uid: 1003, created_by: 'catsco', idempotency_key: 'smoke-participant-1', products: [{ name: '参与者测试产品', unit: '项', quantity: 1, unit_price: '10.00' }], costs: [], advances: [] } });
+  assert.equal(result.response.status, 201, JSON.stringify(result.data));
+  const participantOrderId = result.data.data.id;
+
+  await withIdentityServer(1003, async (base) => {
+    let result = await requestOn(base, '/api/employees');
+    assert.equal(result.response.status, 403, '普通员工不能访问员工管理接口');
+    const previewForm = new FormData();
+    previewForm.append('mode', 'preview');
+    previewForm.append('file', new Blob(['name,unit,cost_unit\nprint,sqm,10.50'], { type: 'text/csv' }), 'cost.csv');
+    result = await requestOn(base, '/api/catalog/import', { method: 'POST', body: previewForm });
+    assert.equal(result.response.status, 403, '普通员工不能使用资料库导入预览');
+    result = await requestOn(base, `/api/orders/${participantOrderId}`, { method: 'PATCH', json: { designer_uid: 1003, designer: '赵执行', payment_status: '已结款', products: [{ name: '参与者测试产品', unit: '项', quantity: 1, unit_price: '10.00' }], costs: [], advances: [] } });
+    assert.equal(result.response.status, 200, JSON.stringify(result.data));
+    result = await requestOn(base, '/api/orders');
+    const participantOrder = result.data.data.find((order) => order.id === participantOrderId);
+    assert.equal(participantOrder.payment_status, '未结款', '订单参与者不能把订单改为已结款');
+  });
+
+  console.log('Smoke test passed: public workbench, catalog import/copy, creator snapshots, order totals, independent attachments, immutable processed advances, reimbursement filters/state machine, voucher idempotency, aligned exports, employee management authorization, audit and v18/v20/v21/v23 migrations.');
 } finally {
   server.kill('SIGTERM');
   await new Promise((resolve) => { server.once('exit', resolve); setTimeout(resolve, 1000); });

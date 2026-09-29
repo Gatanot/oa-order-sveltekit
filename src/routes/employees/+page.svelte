@@ -74,13 +74,13 @@
         <div class="employee-table-wrap"><table>
           <thead><tr><th>员工</th><th>用户编号</th><th>部门</th><th>身份</th><th>启用</th><th></th></tr></thead>
           <tbody>{#each employees as employee (employee.catsco_uid)}
-            <tr>
-              <td><input aria-label="员工姓名" bind:value={employee.display_name} /></td>
+            <tr class:employee-row-readonly={!employee.canManage && !employee.isSelf}>
+              <td><input aria-label="员工姓名" bind:value={employee.display_name} disabled={!employee.canManage && !employee.isSelf} />{#if employee.isSelf}<span class="employee-self-tag">（我）</span>{/if}</td>
               <td>{employee.catsco_uid} · {employee.username}</td>
-              <td><select aria-label="所属部门" bind:value={employee.department}><option value="">未设置</option>{#each departments as department}<option value={department}>{department}</option>{/each}</select></td>
-              <td><select aria-label="员工身份" bind:value={employee.role}><option value="pending">待开通</option>{#each roles as role}<option value={role}>{({executor:'执行',designer:'设计师',planner:'策划',manager:'管理人员',finance:'财务',owner:'老板'} as Record<string,string>)[role] || role}</option>{/each}</select></td>
-              <td><input type="checkbox" aria-label="启用员工" bind:checked={employee.active} /></td>
-              <td><div class="employee-row-actions"><button type="button" class="primary-action" onclick={() => saveEmployee(employee)}>保存</button><button type="button" class="employee-delete-action" onclick={() => deleteEmployee(employee)}>删除</button></div></td>
+              <td><select aria-label="所属部门" bind:value={employee.department} disabled={!employee.canManage && !employee.isSelf}><option value="">未设置</option>{#each departments as department}<option value={department}>{department}</option>{/each}</select></td>
+              <td><select aria-label="员工身份" bind:value={employee.role} disabled={!employee.canManage}><option value="pending">待开通</option>{#each roles as role}<option value={role}>{({executor:'执行',designer:'设计师',planner:'策划',manager:'管理人员',finance:'财务',owner:'老板'} as Record<string,string>)[role] || role}</option>{/each}</select></td>
+              <td><input type="checkbox" aria-label="启用员工" bind:checked={employee.active} disabled={!employee.canManage} /></td>
+              <td><div class="employee-row-actions">{#if employee.canManage || employee.isSelf}<button type="button" class="primary-action" onclick={() => saveEmployee(employee)}>保存</button>{/if}{#if employee.canManage}<button type="button" class="employee-delete-action" onclick={() => deleteEmployee(employee)}>删除</button>{/if}{#if !employee.canManage && !employee.isSelf}<span class="employee-locked" title="不能管理同级或更高级别的员工">无权限</span>{/if}</div></td>
             </tr>
           {/each}</tbody>
         </table></div>

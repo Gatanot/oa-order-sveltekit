@@ -11,7 +11,7 @@ export const POST: RequestHandler = async (event) => {
   const data = await body(event);
   return action(() => {
     const created = createCatalogSource(data) as { id: string };
-    addAuditLog({ actorName: identity.displayName, action: 'create', entityType: 'catalog_source', entityId: created.id });
+    addAuditLog({ actorName: identity.displayName, actorUid: identity.uid, action: 'create', entityType: 'catalog_source', entityId: created.id });
     return { data: created };
   }, 201);
 };

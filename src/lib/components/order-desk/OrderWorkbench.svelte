@@ -16,12 +16,12 @@
   setContext('order-desk', desk);
   onMount(() => {
     if (initialView === 'entry' && !orderId) {
-      if (desk.workMode === 'entry') desk.startNewOrder();
+      if (desk.canWrite) desk.startNewOrder();
       else desk.navigate('/orders');
     }
     if (orderId) {
       const order = desk.orders.find((item: any) => item.id === orderId);
-      if (order) edit && desk.workMode === 'entry' ? desk.editOrder(order) : desk.openDetail(order);
+      if (order) edit && desk.canWrite ? desk.editOrder(order) : desk.openDetail(order);
     }
   });
 </script>

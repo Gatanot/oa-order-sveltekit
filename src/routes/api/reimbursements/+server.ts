@@ -18,7 +18,7 @@ export const POST: RequestHandler = async (event) => {
   if (!identity || identity.role === 'pending') return json({ error: { code: 'FORBIDDEN' } }, { status: 403 });
   data.employee = identity.displayName;
   return action(() => {
-    const reimbursement = createReimbursement(data);
+    const reimbursement = createReimbursement(data, identity.uid);
     setReimbursementEmployee(String(reimbursement.id), identity.uid);
     return { data: reimbursement };
   }, 201);

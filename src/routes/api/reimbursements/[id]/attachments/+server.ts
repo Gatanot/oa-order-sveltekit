@@ -23,6 +23,6 @@ export const POST: RequestHandler = async (event) => {
   const form = await event.request.formData();
   const file = form.get('file');
   if (!(file instanceof File) || !file.size) return json({ message: '请选择发票附件' }, { status: 400 });
-  try { return json({ data: addStandaloneReimbursementAttachment(event.params.id, { name: file.name, data: Buffer.from(await file.arrayBuffer()) }) }, { status: 201 }); }
+  try { return json({ data: addStandaloneReimbursementAttachment(event.params.id, { name: file.name, data: Buffer.from(await file.arrayBuffer()) }, { name: identity.displayName, uid: identity.uid }) }, { status: 201 }); }
   catch (reason) { return json({ message: reason instanceof Error ? reason.message : '附件保存失败' }, { status: 400 }); }
 };

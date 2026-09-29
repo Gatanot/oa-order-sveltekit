@@ -9,7 +9,7 @@ export const GET: RequestHandler = async (event) => {
   if (!row) return json({ message: '附件不存在或已被删除' }, { status: 404 });
   if (!identity) return json({ error: { code: 'FORBIDDEN' } }, { status: 403 });
   if (!hasAnyRole(identity, orderViewAllRoles) && !canEmployeeAccessOrder(row.order_id, identity.uid)) return json({ error: { code: 'FORBIDDEN' } }, { status: 403 });
-  addAuditLog({ actorName: identity.displayName, action: 'download_attachment', entityType: 'order', detail: { attachment_id: event.params.id, file_name: row.file_name } });
+  addAuditLog({ actorName: identity.displayName, actorUid: identity.uid, action: 'download_attachment', entityType: 'order', detail: { attachment_id: event.params.id, file_name: row.file_name } });
   let data: Buffer;
   try { data = readAttachmentFile(row); } catch { return json({ message: '附件文件已丢失，请重新上传' }, { status: 404 }); }
   return new Response(new Uint8Array(data), { headers: { 'Content-Type': row.mime_type || 'application/octet-stream', 'Content-Length': String(data.length), 'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(row.file_name)}`, 'Cache-Control': 'private, max-age=3600' } });

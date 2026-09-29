@@ -3,6 +3,19 @@ import { pushState, replaceState } from "$app/navigation";
 import type * as XLSXType from "xlsx";
 import type { PublicArtifactVisitor } from "$lib/artifact-visitor";
 import { api, appPath, currentAppPath } from "$lib/api";
+import { hasAnyRole, orderCreateRoles, orderExportRoles, orderManageRoles, orderViewAllRoles, reimbursementActionRoles, reimbursementViewAllRoles, catalogManageRoles } from "$lib/permissions";
+
+function readSavedName() {
+  try { return localStorage.getItem("oa-creator-name") || ""; }
+  catch { return ""; }
+}
+function persistName(name: string) {
+  try {
+    if (name) localStorage.setItem("oa-creator-name", name);
+    else localStorage.removeItem("oa-creator-name");
+    return true;
+  } catch { return false; }
+}
 
 const apiFetch = (input: RequestInfo | URL, init?: RequestInit) =>
   fetch(typeof input === "string" ? appPath(input) : input, init);
@@ -91,7 +104,7 @@ export type Data = {
 
 export function createOrderDesk(data: Data) {
   let view = $state<"overview" | "entry" | "catalog" | "finance">("overview");
-  let workMode = $state<"view" | "entry" | "finance">("view");
+  let workMode = $state<"view" | "entry" | "finance">(hasAnyRole(data.identity, reimbursementActionRoles) ? "finance" : "entry");
   let sidebarCollapsed = $state(false);
   let isEmbedded = $state(false);
   let onArtifactGateway = $state(false);
@@ -145,7 +158,7 @@ export function createOrderDesk(data: Data) {
   let busy = $state(false);
   let message = $state("");
   let error = $state("");
-  let reimbursementRole = $state<"employee" | "finance">("employee");
+  let reimbursementRole = $state<"employee" | "finance">(hasAnyRole(data.identity, reimbursementViewAllRoles) ? "finance" : "employee");
   let reimbursementProject = $state("");
   let reimbursementPerson = $state("");
   let reimbursementType = $state<"" | "order" | "internal">("");
@@ -321,7 +334,7 @@ export function createOrderDesk(data: Data) {
         (!filterOwner || o.project_owner === filterOwner) &&
         (!filterDesigner || o.designer === filterDesigner) &&
         (!filterCreator || o.created_by === filterCreator) &&
-        (!filterPayment || o.payment_status === filterPayment) &&
+        (!filterPayment || (o.payment_status || "未结款") === filterPayment) &&
         (!filterFrom || o.order_date >= filterFrom) &&
         (!filterTo || o.order_date <= filterTo),
     ).sort((a, b) => {
@@ -485,14 +498,18 @@ export function createOrderDesk(data: Data) {
     onArtifactGateway = isArtifactGatewayHost();
     if (data.visitor.status === "guest" && !isEmbedded && onArtifactGateway) {
       const handshakeKey = "oa-artifact-auth-handshake";
-      if (!sessionStorage.getItem(handshakeKey)) {
-        sessionStorage.setItem(handshakeKey, "started");
-        window.location.assign("/_auth/start");
-        return;
+      try {
+        if (!sessionStorage.getItem(handshakeKey)) {
+          sessionStorage.setItem(handshakeKey, "started");
+          window.location.assign("/_auth/start");
+          return;
+        }
+      } catch {
+        // Embedded browsers may deny storage; keep the workbench interactive.
       }
     }
 
-    const savedName = localStorage.getItem("oa-creator-name") || "";
+    const savedName = readSavedName();
     const visitorName = data.visitor.status === "authenticated" ? data.visitor.username : "";
     const initialName = savedName || visitorName;
     const role = data.identity?.role;
@@ -500,7 +517,7 @@ export function createOrderDesk(data: Data) {
     creatorNameDraft = initialName;
     createdBy = initialName;
     // 工作权限由服务端核验的身份决定，不再由浏览器工作模式或用户手动切换。
-    workMode = ["admin", "owner", "finance"].includes(role) ? "finance" : "entry";
+    workMode = hasAnyRole(data.identity, reimbursementActionRoles) ? "finance" : "entry";
     reimbursementRole = ["admin", "manager", "owner", "finance"].includes(role) ? "finance" : "employee";
     let restoringHistory = false;
     const escape = (event: KeyboardEvent) => {
@@ -596,16 +613,15 @@ export function createOrderDesk(data: Data) {
   function saveCreatorName() {
     creatorName = creatorNameDraft.trim();
     createdBy = creatorName;
-    if (creatorName) localStorage.setItem("oa-creator-name", creatorName);
-    else localStorage.removeItem("oa-creator-name");
+    const persisted = persistName(creatorName);
     settingsOpen = false;
-    notify("填写人名字已保存，将在订单录入时自动填入");
+    notify(persisted ? "填写人名字已保存，将在订单录入时自动填入" : "填写人已设置，当前浏览器不允许持久保存，仅本次有效");
   }
   function removeCreatorName() {
     creatorName = "";
     creatorNameDraft = "";
     createdBy = "";
-    localStorage.removeItem("oa-creator-name");
+    persistName("");
     settingsOpen = false;
     notify("已删除填写人名字");
   }
@@ -616,7 +632,7 @@ export function createOrderDesk(data: Data) {
     }
     workMode = mode;
     reimbursementRole = ["admin", "manager", "owner", "finance"].includes(data.identity?.role) ? "finance" : "employee";
-    localStorage.setItem("oa-work-mode", mode);
+
     resetReimbursementFilters();
     if (mode !== "entry" && view === "entry") navigate("/orders");
     notify(`已切换到${mode === "finance" ? "财务" : mode === "entry" ? "填写" : "查看"}模式`);
@@ -640,11 +656,11 @@ export function createOrderDesk(data: Data) {
     const editMatch = path.match(/^\/orders\/([^/]+)\/edit$/);
     const detailMatch = path.match(/^\/orders\/([^/]+)$/);
     if (path === "/orders/new") {
-      if (workMode === "entry") startNewOrder();
+      if (desk.canWrite) startNewOrder();
       else navigate("/orders");
       return;
     }
-    if (editMatch && workMode === "entry") {
+    if (editMatch && desk.canWrite) {
       const order = orders.find((item) => item.id === decodeURIComponent(editMatch[1]));
       if (order) editOrder(order, false);
       return;
@@ -715,7 +731,7 @@ export function createOrderDesk(data: Data) {
         creatorName = standaloneEmployee.trim();
         creatorNameDraft = creatorName;
         createdBy = creatorName;
-        localStorage.setItem("oa-creator-name", creatorName);
+        persistName(creatorName);
       }
       notify("报销记录已保存，等待审核");
     } catch (e) {
@@ -1419,6 +1435,7 @@ export function createOrderDesk(data: Data) {
     selectedOrderIds = [...ids];
   }
   function openExport() {
+    if (!desk.canExportOrders) return;
     selectedOrderIds = filteredOrders.map((order) => order.id);
     const first = filteredOrders[0];
     exportTitle = first ? `${first.project_name || first.customer_name || "订单"}结算明细` : "订单结算明细";
@@ -1436,6 +1453,8 @@ export function createOrderDesk(data: Data) {
     showExport = true;
   }
   function downloadExport() {
+    if (!desk.canExportOrders) return;
+    if (!selectedOrderIds.length) { notify("请选择要导出的订单", true); return; }
     const params = new URLSearchParams({
       from: filterFrom,
       to: filterTo,
@@ -1562,13 +1581,15 @@ export function createOrderDesk(data: Data) {
   const desk = {} as Record<string, any>;
   Object.defineProperty(desk, "view", { get: () => view, set: (value) => { view = value; } });
   Object.defineProperty(desk, "workMode", { get: () => workMode, set: (value) => { setWorkMode(value); } });
-  Object.defineProperty(desk, "canWrite", { get: () => workMode === "entry" });
-  Object.defineProperty(desk, "canFinance", { get: () => workMode === "finance" });
-  Object.defineProperty(desk, "canViewAllOrders", { get: () => ["admin", "manager", "owner", "finance"].includes(data.identity?.role) });
-  Object.defineProperty(desk, "canViewAllReimbursements", { get: () => ["admin", "manager", "owner", "finance"].includes(data.identity?.role) });
-  Object.defineProperty(desk, "canManageReimbursements", { get: () => ["admin", "owner", "finance"].includes(data.identity?.role) });
-  Object.defineProperty(desk, "canDeleteOrders", { get: () => ["admin", "manager", "owner"].includes(data.identity?.role) });
-  Object.defineProperty(desk, "canManageCatalog", { get: () => ["admin", "manager", "owner", "finance"].includes(data.identity?.role) });
+  Object.defineProperty(desk, "canWrite", { get: () => hasAnyRole(data.identity, orderCreateRoles) });
+  Object.defineProperty(desk, "canExportOrders", { get: () => hasAnyRole(data.identity, orderExportRoles) });
+  Object.defineProperty(desk, "canManageOrders", { get: () => hasAnyRole(data.identity, orderManageRoles) });
+  Object.defineProperty(desk, "canFinance", { get: () => hasAnyRole(data.identity, reimbursementActionRoles) });
+  Object.defineProperty(desk, "canViewAllOrders", { get: () => hasAnyRole(data.identity, orderViewAllRoles) });
+  Object.defineProperty(desk, "canViewAllReimbursements", { get: () => hasAnyRole(data.identity, reimbursementViewAllRoles) });
+  Object.defineProperty(desk, "canManageReimbursements", { get: () => hasAnyRole(data.identity, reimbursementActionRoles) });
+  Object.defineProperty(desk, "canDeleteOrders", { get: () => hasAnyRole(data.identity, orderManageRoles) });
+  Object.defineProperty(desk, "canManageCatalog", { get: () => hasAnyRole(data.identity, catalogManageRoles) });
   Object.defineProperty(desk, "sidebarCollapsed", { get: () => sidebarCollapsed, set: (value) => { sidebarCollapsed = value; } });
   Object.defineProperty(desk, "visitor", { get: () => data.visitor });
   Object.defineProperty(desk, "identity", { get: () => data.identity });

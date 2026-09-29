@@ -18,15 +18,24 @@ export type CurrentIdentity = { uid: number; username: string; displayName: stri
 export type AdminExtraIdentity = { role: EmployeeRole };
 
 // 权限集合集中定义，避免页面和 API 各自维护一份角色列表。
-export const orderViewAllRoles = ['admin', 'manager', 'owner', 'finance'] as const;
-export const orderManageRoles = ['admin', 'manager', 'owner'] as const;
-export const reimbursementViewAllRoles = ['admin', 'manager', 'owner', 'finance'] as const;
-export const reimbursementActionRoles = ['admin', 'owner', 'finance'] as const;
-export const catalogManageRoles = ['admin', 'manager', 'owner', 'finance'] as const;
-export const employeeManageRoles = ['admin', 'manager', 'owner'] as const;
+export { orderViewAllRoles, orderManageRoles, orderExportRoles, orderCreateRoles, reimbursementViewAllRoles, reimbursementActionRoles, catalogManageRoles, employeeManageRoles, hasAnyRole } from '$lib/permissions';
 
-export function hasAnyRole(identity: CurrentIdentity | null | undefined, roles: readonly string[]) {
-  return Boolean(identity && roles.includes(identity.role));
+// 业务身份层级只用于员工管理授权判定：上级可管理下级，同级与更高级别不可互相管理。
+// pending/未知身份按最低级别处理，避免绕过判定被负责。
+const employeeRoleRanks: Record<EmployeeRole, number> = { executor: 1, designer: 1, planner: 1, finance: 1, manager: 2, owner: 3 };
+
+export function employeeRoleRank(role: string): number {
+  return role in employeeRoleRanks ? employeeRoleRanks[role as EmployeeRole] : 0;
+}
+
+// admin 可管理除固定管理员外的所有员工；manager/owner 只能管理级别严格低于自己且非本人的员工，
+// 因此管理人员和老板都无法修改自己的身份、启用状态或与自己同级/更高级别的员工。
+export function canManageEmployee(actor: CurrentIdentity | null | undefined, target: { catsco_uid: number; role: string }): boolean {
+  if (!actor || target.catsco_uid === ADMIN_UID) return false;
+  if (actor.role === 'admin') return true;
+  if (actor.role !== 'manager' && actor.role !== 'owner') return false;
+  if (target.catsco_uid === actor.uid) return false;
+  return employeeRoleRank(target.role) < employeeRoleRank(actor.role);
 }
 
 export function getAdminExtraIdentity(): AdminExtraIdentity | null {

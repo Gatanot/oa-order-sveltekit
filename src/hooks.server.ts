@@ -1,6 +1,19 @@
 import { json, type Handle, type HandleServerError } from '@sveltejs/kit';
 import { getArtifactVisitor } from '$lib/server/artifact-visitor';
-import { getAdminExtraIdentity, orderViewAllRoles, reimbursementActionRoles, resolveActingIdentity, resolveIdentity, hasAnyRole } from '$lib/server/identity';
+import { ADMIN_UID, getAdminExtraIdentity, orderExportRoles, reimbursementActionRoles, resolveActingIdentity, resolveIdentity, hasAnyRole } from '$lib/server/identity';
+import type { CurrentIdentity } from '$lib/server/identity';
+
+// 仅供 smoke test 使用：在测试环境下可指定一个固定的 Catsco UID，以便验证非管理员员工的权限。
+function testBypassIdentity(): CurrentIdentity | null {
+  const uid = Number(process.env.OA_TEST_UID || String(ADMIN_UID));
+  if (uid === ADMIN_UID) return { uid, username: 'catsco', displayName: 'catsco', role: 'admin', department: '', active: true };
+  return resolveIdentity({
+    status: 'authenticated',
+    authenticated: true,
+    viewer: { id: `test-${uid}`, uid, username: `test${uid}` },
+    topicId: null
+  });
+}
 
 export const handle: Handle = async ({ event, resolve }) => {
   let visitor: ReturnType<typeof getArtifactVisitor> | undefined;
@@ -16,7 +29,7 @@ export const handle: Handle = async ({ event, resolve }) => {
   event.locals.getAdminIdentity = async () => {
     if (adminIdentity === undefined) {
       adminIdentity = process.env.NODE_ENV === 'test' && process.env.OA_TEST_AUTH_BYPASS === '1'
-        ? { uid: 826, username: 'catsco', displayName: 'catsco', role: 'admin', department: '', active: true }
+        ? testBypassIdentity()
         : resolveIdentity(await event.locals.getArtifactVisitor());
     }
     return adminIdentity;
@@ -26,9 +39,9 @@ export const handle: Handle = async ({ event, resolve }) => {
   event.locals.getCurrentIdentity = async () => {
     if (identity === undefined) {
       if (process.env.NODE_ENV === 'test' && process.env.OA_TEST_AUTH_BYPASS === '1') {
-        const admin = { uid: 826, username: 'catsco', displayName: 'catsco', role: 'admin' as const, department: '', active: true };
-        const extra = getAdminExtraIdentity();
-        identity = extra ? { ...admin, role: extra.role, displayName: `${admin.displayName}（${extra.role}）` } : admin;
+        const base = testBypassIdentity();
+        const extra = base?.role === 'admin' ? getAdminExtraIdentity() : null;
+        identity = base && extra ? { ...base, role: extra.role, displayName: `${base.displayName}（${extra.role}）` } : base;
       } else {
         identity = resolveActingIdentity(await event.locals.getArtifactVisitor());
       }
@@ -44,7 +57,7 @@ export const handle: Handle = async ({ event, resolve }) => {
       return json({ error: { code: 'FORBIDDEN', message: '账户待管理员开通' } }, { status: 403 });
     }
     const method = event.request.method;
-    const isOrderExport = routeId === '/api/orders/export' && !hasAnyRole(current, orderViewAllRoles);
+    const isOrderExport = routeId === '/api/orders/export' && !hasAnyRole(current, orderExportRoles);
     const isReimbursementAction = routeId.startsWith('/api/reimbursements') && (
       ['PATCH', 'DELETE'].includes(method) ||
       (method === 'POST' && (routeId.includes('/batch') || routeId.includes('/archive') || routeId.includes('/voucher'))) ||

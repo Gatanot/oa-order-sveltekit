@@ -10,7 +10,7 @@ export const GET: RequestHandler = async (event) => {
   const reimbursement = getReimbursementAccessInfo(row.reimbursement_id);
   if (!identity || !reimbursement) return json({ error: { code: 'FORBIDDEN' } }, { status: 403 });
   if (!hasAnyRole(identity, reimbursementViewAllRoles) && reimbursement.employee_uid !== identity.uid) return json({ error: { code: 'FORBIDDEN' } }, { status: 403 });
-  addAuditLog({ actorName: identity.displayName, action: 'download_attachment', entityType: 'reimbursement', detail: { attachment_id: event.params.id, file_name: row.file_name } });
+  addAuditLog({ actorName: identity.displayName, actorUid: identity.uid, action: 'download_attachment', entityType: 'reimbursement', detail: { attachment_id: event.params.id, file_name: row.file_name } });
   let data: Buffer;
   try { data = readAttachmentFile(row); } catch { return json({ message: '附件文件已丢失，请重新上传' }, { status: 404 }); }
   return new Response(new Uint8Array(data), { headers: { 'Content-Type': row.mime_type || 'application/octet-stream', 'Content-Length': String(data.length), 'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(row.file_name)}`, 'Cache-Control': 'private, max-age=3600' } });

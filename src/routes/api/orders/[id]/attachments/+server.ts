@@ -23,7 +23,7 @@ export const POST: RequestHandler = async (event) => {
   if (!files.length) return json({ message: '请选择要上传的附件' }, { status: 400 });
   const saved: unknown[] = [];
   for (const file of files) {
-    try { saved.push(addOrderAttachment(event.params.id, { name: file.name, data: Buffer.from(await file.arrayBuffer()) })); }
+    try { saved.push(addOrderAttachment(event.params.id, { name: file.name, data: Buffer.from(await file.arrayBuffer()) }, { name: identity.displayName, uid: identity.uid })); }
     catch (reason) { return json({ message: `${file.name}：${reason instanceof Error ? reason.message : '附件保存失败'}` }, { status: 400 }); }
   }
   return json({ data: saved }, { status: 201 });
