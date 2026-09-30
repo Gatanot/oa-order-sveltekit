@@ -122,7 +122,6 @@ export function createOrderDesk(data: Data) {
   let paymentStatus = $state("未结款");
   let status = $state("制作中");
   let products = $state<Array<Record<string, any>>>([]);
-  let costs = $state<Array<Record<string, any>>>([]);
   let advances = $state<Array<Record<string, any>>>([]);
   let editingOrderId = $state("");
   let submissionKey = $state("");
@@ -1065,7 +1064,18 @@ export function createOrderDesk(data: Data) {
     // 部门、联系人和垫付均是业务补充信息；和 demo 一致，订单的最小可保存单位是产品明细。
     // 空白的动态行会被忽略，但不能用成本或垫付行替代产品行。
     const validProducts = products.filter((item) => hasName(item.name));
-    const validCosts = costs.filter((item) => hasName(item.name));
+    // 成本随产品明细自动匹配，提交时展开为订单成本行。
+    const validCosts = validProducts
+      .filter((item) => Number(item.cost_unit) > 0)
+      .map((item) => ({
+        name: item.name,
+        vendor: String(item.vendor || "").trim(),
+        unit: item.unit || "项",
+        quantity: item.quantity,
+        unit_price: item.cost_unit,
+        subtotal: (Number(item.quantity || 0) * Number(item.cost_unit || 0)).toFixed(2),
+        catalog_id: item.cost_catalog_id,
+      }));
     const validAdvances = advances.filter((item) => hasName(item.item) || Number(item.amount) > 0);
     if (!validProducts.length) {
       notify("请至少添加一项产品", true);
@@ -1094,7 +1104,6 @@ export function createOrderDesk(data: Data) {
       submissionKey = crypto.randomUUID();
       detailOrder = null;
       products = [];
-      costs = [];
       advances = [];
       note = "";
       noteFiles = [];
@@ -1261,19 +1270,43 @@ export function createOrderDesk(data: Data) {
     status = order.status || "制作中";
     createdBy = order.created_by || creatorName;
     note = order.note || "";
-    products = order.products;
-    costs = order.costs;
+    products = mergeCostsIntoProducts(order.products, order.costs);
     advances = order.advances;
     detailOrder = null;
     view = "entry";
     orderFormDirty = false;
   }
-  function addProduct() { products = [...products, { name: "", quantity: 1, unit: "项", unit_price: 0, cost_unit: 0, subtotal: 0, specification: "" }]; orderFormDirty = true; }
+  // 固定厂商成本已并入产品明细：按同名把历史成本挂到产品行，无法对应的成本保留为仅含成本的明细行，避免编辑时丢失。
+  function mergeCostsIntoProducts(productList: any[], costList: any[]): any[] {
+    const pending = (costList || []).map((item) => ({ ...item }));
+    const merged = (productList || []).map((product) => {
+      const name = String(product.name || "").trim().toLowerCase();
+      const index = name ? pending.findIndex((cost) => String(cost.name || "").trim().toLowerCase() === name) : -1;
+      const base = { vendor: "", cost_unit: 0, ...product };
+      if (index < 0) return base;
+      const [cost] = pending.splice(index, 1);
+      return { ...base, vendor: cost.vendor || "", cost_unit: cost.unit_price ?? cost.cost_unit ?? base.cost_unit, cost_catalog_id: cost.catalog_id };
+    });
+    for (const cost of pending) {
+      merged.push({ name: cost.name, unit: cost.unit || "项", quantity: cost.quantity ?? 1, unit_price: 0, cost_unit: cost.unit_price ?? cost.cost_unit ?? 0, vendor: cost.vendor || "", specification: "", cost_catalog_id: cost.catalog_id });
+    }
+    return merged;
+  }
+  function addProduct() { products = [...products, { name: "", quantity: 1, unit: "项", unit_price: 0, cost_unit: 0, vendor: "", subtotal: 0, specification: "" }]; orderFormDirty = true; }
   function removeProduct(index: number) { products = products.filter((_, i) => i !== index); orderFormDirty = true; }
   function updateProduct(index: number, key: string, value: unknown) {
-    // 手动修改名称意味着不再对应库内条目，取消匹配状态与随库价格
-    if (key === "name" && products[index]?.catalog_id) products[index] = { ...products[index], catalog_id: undefined };
-    products[index] = { ...products[index], [key]: value };
+    const product = products[index];
+    if (!product) return;
+    // 手动修改名称意味着不再对应库内条目，取消报价匹配；自动匹配到的成本一并清空，失焦时按新名称重新匹配。
+    if (key === "name") {
+      const hadAutoCost = Boolean(product.cost_catalog_id);
+      products[index] = { ...product, catalog_id: undefined, cost_catalog_id: undefined, cost_manual: false, cost_unit: hadAutoCost ? 0 : product.cost_unit, vendor: hadAutoCost ? "" : product.vendor, [key]: value };
+    } else if (key === "vendor" || key === "cost_unit") {
+      // 手动填写成本后不再被同名成本库覆盖。
+      products[index] = { ...product, cost_manual: true, [key]: value };
+    } else {
+      products[index] = { ...product, [key]: value };
+    }
     products = [...products];
     orderFormDirty = true;
   }
@@ -1294,6 +1327,23 @@ export function createOrderDesk(data: Data) {
       return bExact - aExact || bContext - aContext;
     })[0];
   }
+  function costVendorOf(item: Catalog) {
+    const raw = (item.raw_data ? (() => { try { return JSON.parse(item.raw_data as string); } catch { return {}; } })() : {}) as Record<string, unknown>;
+    return String(raw.vendor || raw.supplier || item.source_owner || item.supplier_remark || (item.source_type === "supplier_cost" ? item.source_file?.match(/硕达|印客邦|[^】]+(?=202\d)/)?.[0] || "成本库" : ""));
+  }
+  function findCostItem(name: string) {
+    const keyword = name.trim().toLowerCase();
+    if (!keyword) return undefined;
+    return catalog.find((item) => item.cost_unit > 0 && (!item.quote_unit || item.source_type === "supplier_cost") && item.name.trim().toLowerCase() === keyword);
+  }
+  function applyProductCost(index: number) {
+    const product = products[index];
+    if (!product || product.cost_manual) return;
+    const item = findCostItem(String(product.name || ""));
+    if (!item) return;
+    products[index] = { ...product, cost_unit: (item.cost_unit / 100).toFixed(2), vendor: costVendorOf(item) || "成本库", cost_catalog_id: item.id };
+    products = [...products];
+  }
   function applyProductCatalog(index: number, value: string) {
     const item = catalog.find((entry) => entry.id === value) || findCatalogItem(value);
     if (!item) { updateProduct(index, "name", value); return; }
@@ -1305,39 +1355,20 @@ export function createOrderDesk(data: Data) {
       cost_unit: (item.cost_unit / 100).toFixed(2),
       specification: item.specification || item.supplier_remark || "",
       catalog_id: item.id,
+      cost_manual: false,
     };
     products = [...products];
     orderFormDirty = true;
+    // 报价库命中后再按同名成本库覆盖成本，保证成本取供应商报价。
+    applyProductCost(index);
   }
   function matchProductCatalog(index: number) {
     const product = products[index];
-    if (!product || product.catalog_id || !String(product.name || "").trim()) return;
+    if (!product || !String(product.name || "").trim()) return;
+    if (product.catalog_id) { applyProductCost(index); return; }
     const item = findCatalogItem(String(product.name));
     if (item && item.name.trim().toLowerCase() === String(product.name).trim().toLowerCase()) applyProductCatalog(index, item.id);
-  }
-  function addCost() { costs = [...costs, { name: "", vendor: "手工录入", unit: "项", quantity: 1, unit_price: 0, subtotal: 0 }]; orderFormDirty = true; }
-  function removeCost(index: number) { costs = costs.filter((_, i) => i !== index); orderFormDirty = true; }
-  function updateCost(index: number, key: string, value: unknown) {
-    if (key === "name" && costs[index]?.catalog_id) costs[index] = { ...costs[index], catalog_id: undefined };
-    costs[index] = { ...costs[index], [key]: value };
-    costs = [...costs];
-    orderFormDirty = true;
-  }
-  function applyCostCatalog(index: number, value: string) {
-    const selected = catalog.find((item) => item.id === value);
-    const keyword = (selected?.name || value).trim().toLowerCase();
-    let found: { item: Catalog; vendor: string } | undefined;
-    for (const item of selected ? [selected] : catalog) {
-      const raw = (item.raw_data ? (() => { try { return JSON.parse(item.raw_data as string); } catch { return {}; } })() : {}) as Record<string, unknown>;
-      const vendor = String(raw.vendor || raw.supplier || item.source_owner || item.supplier_remark || (item.source_type === "supplier_cost" ? item.source_file?.match(/硕达|印客邦|[^】]+(?=202\d)/)?.[0] || "成本库" : ""));
-      const isCost = item.cost_unit > 0 && (!item.quote_unit || item.source_type === "supplier_cost");
-      if (isCost && (item.name.toLowerCase() === keyword || item.name.toLowerCase().includes(keyword) || keyword.includes(item.name.toLowerCase()))) { found = { item, vendor }; break; }
-    }
-    if (found) {
-      costs[index] = { ...costs[index], name: found.item.name, vendor: found.vendor || "成本库", unit: found.item.unit, unit_price: (found.item.cost_unit / 100).toFixed(2), catalog_id: found.item.id };
-      costs = [...costs];
-      orderFormDirty = true;
-    } else updateCost(index, "name", value);
+    else applyProductCost(index);
   }
   function addAdvance() { advances = [...advances, { id: crypto.randomUUID(), employee: designer || createdBy, item: "", amount: 0, date: orderDate, invoice: "", status: "已提交待审核", invoiceFile: null as File | null }]; orderFormDirty = true; }
   function removeAdvance(index: number) { advances = advances.filter((_, i) => i !== index); orderFormDirty = true; }
@@ -1362,8 +1393,7 @@ export function createOrderDesk(data: Data) {
     createdBy = creatorName;
     note = "";
     noteFiles = [];
-    products = [{ name: "", quantity: 1, unit: "项", unit_price: 0, cost_unit: 0, subtotal: 0, specification: "" }];
-    costs = [];
+    products = [{ name: "", quantity: 1, unit: "项", unit_price: 0, cost_unit: 0, vendor: "", subtotal: 0, specification: "" }];
     advances = [{ id: crypto.randomUUID(), employee: createdBy, item: "", amount: 0, date: orderDate, invoice: "", status: "已提交待审核", invoiceFile: null as File | null }];
     view = "entry";
     orderFormDirty = false;
@@ -1568,7 +1598,6 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "status", { get: () => status, set: (value) => { status = value; } });
   Object.defineProperty(desk, "editingOrderId", { get: () => editingOrderId });
   Object.defineProperty(desk, "products", { get: () => products, set: (value) => { products = value; } });
-  Object.defineProperty(desk, "costs", { get: () => costs, set: (value) => { costs = value; } });
   Object.defineProperty(desk, "advances", { get: () => advances, set: (value) => { advances = value; } });
   Object.defineProperty(desk, "detailOrder", { get: () => detailOrder, set: (value) => { detailOrder = value; } });
   Object.defineProperty(desk, "detailAttachments", { get: () => detailAttachments });
@@ -1741,10 +1770,6 @@ export function createOrderDesk(data: Data) {
   desk.updateProduct = updateProduct;
   desk.applyProductCatalog = applyProductCatalog;
   desk.matchProductCatalog = matchProductCatalog;
-  desk.addCost = addCost;
-  desk.removeCost = removeCost;
-  desk.updateCost = updateCost;
-  desk.applyCostCatalog = applyCostCatalog;
   desk.addAdvance = addAdvance;
   desk.removeAdvance = removeAdvance;
   desk.updateAdvance = updateAdvance;
