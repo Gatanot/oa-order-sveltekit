@@ -1,3 +1,5 @@
+import { dev } from '$app/environment';
+import { env } from '$env/dynamic/private';
 import { json, type Handle, type HandleServerError } from '@sveltejs/kit';
 import { getArtifactVisitor } from '$lib/server/artifact-visitor';
 import { ADMIN_UID, getAdminExtraIdentity, orderExportRoles, reimbursementActionRoles, resolveActingIdentity, resolveIdentity, hasAnyRole } from '$lib/server/identity';
@@ -5,7 +7,7 @@ import type { CurrentIdentity } from '$lib/server/identity';
 
 // 仅供 smoke test 使用：在测试环境下可指定一个固定的 Catsco UID，以便验证非管理员员工的权限。
 function testBypassIdentity(): CurrentIdentity | null {
-  const uid = Number(process.env.OA_TEST_UID || String(ADMIN_UID));
+  const uid = Number(env.OA_TEST_UID || String(ADMIN_UID));
   if (uid === ADMIN_UID) return { uid, username: 'catsco', displayName: 'catsco', role: 'admin', department: '', active: true };
   return resolveIdentity({
     status: 'authenticated',
@@ -16,6 +18,7 @@ function testBypassIdentity(): CurrentIdentity | null {
 }
 
 export const handle: Handle = async ({ event, resolve }) => {
+  const useTestIdentity = env.OA_TEST_AUTH_BYPASS === '1' && (dev || process.env.NODE_ENV === 'test');
   let visitor: ReturnType<typeof getArtifactVisitor> | undefined;
   event.locals.getArtifactVisitor = () => {
     visitor ??= getArtifactVisitor({
@@ -28,7 +31,7 @@ export const handle: Handle = async ({ event, resolve }) => {
   let adminIdentity: ReturnType<typeof resolveIdentity> | undefined;
   event.locals.getAdminIdentity = async () => {
     if (adminIdentity === undefined) {
-      adminIdentity = process.env.NODE_ENV === 'test' && process.env.OA_TEST_AUTH_BYPASS === '1'
+      adminIdentity = useTestIdentity
         ? testBypassIdentity()
         : resolveIdentity(await event.locals.getArtifactVisitor());
     }
@@ -38,7 +41,7 @@ export const handle: Handle = async ({ event, resolve }) => {
   let identity: ReturnType<typeof resolveActingIdentity> | undefined;
   event.locals.getCurrentIdentity = async () => {
     if (identity === undefined) {
-      if (process.env.NODE_ENV === 'test' && process.env.OA_TEST_AUTH_BYPASS === '1') {
+      if (useTestIdentity) {
         const base = testBypassIdentity();
         const extra = base?.role === 'admin' ? getAdminExtraIdentity() : null;
         identity = base && extra ? { ...base, role: extra.role, displayName: `${base.displayName}（${extra.role}）` } : base;
@@ -59,7 +62,6 @@ export const handle: Handle = async ({ event, resolve }) => {
     const method = event.request.method;
     const isOrderExport = routeId === '/api/orders/export' && !hasAnyRole(current, orderExportRoles);
     const isReimbursementAction = routeId.startsWith('/api/reimbursements') && (
-      ['PATCH', 'DELETE'].includes(method) ||
       (method === 'POST' && (routeId.includes('/batch') || routeId.includes('/archive') || routeId.includes('/voucher'))) ||
       (method === 'GET' && routeId.endsWith('/export'))
     );

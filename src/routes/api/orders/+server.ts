@@ -15,7 +15,7 @@ export const GET: RequestHandler = async ({ locals }) => {
 export const POST: RequestHandler = async (event) => {
   const data = await body(event);
   const identity = await event.locals.getCurrentIdentity();
-  if (!identity || identity.role === 'pending' || identity.role === 'finance') return json({ error: { code: 'FORBIDDEN', message: '没有创建订单权限' } }, { status: 403 });
+  if (!identity || identity.role === 'pending' || !['admin', 'manager', 'owner', 'executor'].includes(identity.role)) return json({ error: { code: 'FORBIDDEN', message: '没有创建订单权限' } }, { status: 403 });
   data.created_by = identity.displayName;
   // 结款状态由管理/财务控制，普通员工新建订单只能为未结款，避免录入时自行标记已收款。
   if (!hasAnyRole(identity, orderManageRoles)) data.payment_status = '未结款';

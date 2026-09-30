@@ -65,7 +65,7 @@ export function moneyToCents(value: unknown): number {
 function migrate(db: Database.Database) {
   db.exec('CREATE TABLE IF NOT EXISTS schema_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)');
   const version = db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").get() as { value: string } | undefined;
-  if (version?.value === '24' || version?.value === '23' || version?.value === '22') return;
+  if (version?.value === '25' || version?.value === '24' || version?.value === '23' || version?.value === '22') return;
   if (version?.value === '21') {
     db.exec(`ALTER TABLE orders_simple ADD COLUMN execution_company TEXT NOT NULL DEFAULT ''; UPDATE schema_meta SET value='22' WHERE key='order_app_version';`);
     return;
@@ -320,7 +320,28 @@ export function getOrderDb() {
     if (!reimbursementColumns.has('employee_uid')) instance.exec('ALTER TABLE reimbursements_simple ADD COLUMN employee_uid INTEGER');
     const auditColumns = new Set((instance.pragma('table_info(audit_logs)') as Array<{ name: string }>).map((column) => column.name));
     if (!auditColumns.has('actor_uid')) instance.exec('ALTER TABLE audit_logs ADD COLUMN actor_uid INTEGER');
-    instance.prepare("UPDATE schema_meta SET value='24' WHERE key='order_app_version'").run();
+    if ((instance.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get() as string) !== '25') {
+      instance.transaction(() => {
+        instance!.exec(`
+          CREATE TABLE reimbursements_next (
+            id TEXT PRIMARY KEY, employee TEXT NOT NULL, item TEXT NOT NULL, amount INTEGER NOT NULL DEFAULT 0,
+            advance_date TEXT NOT NULL, order_id TEXT, invoice TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending_review' CHECK(status IN ('pending_review','pending_recheck','pending_confirmation','pending_payment','paid','rejected')),
+            reject_reason TEXT NOT NULL DEFAULT '', reviewed_by TEXT NOT NULL DEFAULT '', reviewed_at TEXT,
+            reimbursed_by TEXT NOT NULL DEFAULT '', reimbursed_at TEXT, voucher_no TEXT NOT NULL DEFAULT '',
+            voucher_created_at TEXT, voucher_archived_at TEXT, created_at TEXT NOT NULL, employee_uid INTEGER,
+            FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE
+          );
+          INSERT INTO reimbursements_next SELECT * FROM reimbursements_simple;
+          DROP TABLE reimbursements_simple;
+          ALTER TABLE reimbursements_next RENAME TO reimbursements_simple;
+          CREATE INDEX idx_simple_reimbursements_date ON reimbursements_simple(advance_date DESC);
+          CREATE INDEX idx_simple_reimbursements_order ON reimbursements_simple(order_id);
+          CREATE UNIQUE INDEX idx_reimbursements_voucher_no ON reimbursements_simple(voucher_no) WHERE voucher_no <> '';
+          UPDATE schema_meta SET value='25' WHERE key='order_app_version';
+        `);
+      })();
+    }
     importBundledExcel(instance);
   }
   return instance;
@@ -456,22 +477,24 @@ function parseList(value: unknown): Array<Record<string, unknown>> {
 }
 
 
-type ReimbursementStatus = 'pending_review' | 'rejected' | 'pending_payment' | 'paid';
+type ReimbursementStatus = 'pending_review' | 'pending_recheck' | 'pending_confirmation' | 'rejected' | 'pending_payment' | 'paid';
 const reimbursementStatusLabels: Record<ReimbursementStatus, string> = {
-  pending_review: '待审核', rejected: '已打回', pending_payment: '待打款', paid: '已报销'
+  pending_review: '已提交待审核', pending_recheck: '已审核待复核', pending_confirmation: '已复核待确认', rejected: '已打回', pending_payment: '已确认待执行', paid: '已执行'
 };
 function reimbursementStatusCode(value: unknown): ReimbursementStatus {
   const status = text(value);
-  const aliases: Record<string, ReimbursementStatus> = { '待核验': 'pending_review', '待审核': 'pending_review', '已打回': 'rejected', '待报销': 'pending_payment', '待打款': 'pending_payment', '已报销': 'paid' };
+  const aliases: Record<string, ReimbursementStatus> = { '待核验': 'pending_review', '待审核': 'pending_review', '已提交待审核': 'pending_review', '已审核待复核': 'pending_recheck', '已审核待符合': 'pending_recheck', '已复核待确认': 'pending_confirmation', '已打回': 'rejected', '待报销': 'pending_payment', '待打款': 'pending_payment', '已确认待执行': 'pending_payment', '已报销': 'paid', '已执行': 'paid' };
   return aliases[status] || (status in reimbursementStatusLabels ? status as ReimbursementStatus : 'pending_review');
 }
 function reimbursementStatusLabel(value: unknown): string { return reimbursementStatusLabels[reimbursementStatusCode(value)]; }
 function reimbursementStatusFor(advances: Array<Record<string, unknown>>): string {
   if (!advances.length) return '无需报销';
-  if (advances.some((item) => reimbursementStatusCode(item.status) === 'pending_review')) return '待审核';
+  if (advances.some((item) => reimbursementStatusCode(item.status) === 'pending_review')) return '已提交待审核';
   if (advances.some((item) => reimbursementStatusCode(item.status) === 'rejected')) return '已打回';
-  if (advances.some((item) => reimbursementStatusCode(item.status) === 'pending_payment')) return '待打款';
-  return '已报销';
+  if (advances.some((item) => reimbursementStatusCode(item.status) === 'pending_recheck')) return '已审核待复核';
+  if (advances.some((item) => reimbursementStatusCode(item.status) === 'pending_confirmation')) return '已复核待确认';
+  if (advances.some((item) => reimbursementStatusCode(item.status) === 'pending_payment')) return '已确认待执行';
+  return '已执行';
 }
 
 function normalizedReimbursementStatus(value: unknown): ReimbursementStatus {
@@ -1036,7 +1059,7 @@ export function listReimbursementOrders(filters: Record<string, string> = {}) {
     (!filters.from || item.advance_date >= filters.from) &&
     (!filters.to || item.advance_date <= filters.to) &&
     (!filters.status || (filters.status === '未报销'
-      ? item.reimbursement_status !== '已报销'
+      ? item.reimbursement_status !== '已执行'
       : reimbursementStatusCode(item.reimbursement_status) === reimbursementStatusCode(filters.status)))
   );
 }
@@ -1071,7 +1094,20 @@ export function createReimbursement(data: Record<string, unknown>, actorUid: num
     db.prepare('INSERT INTO reimbursements_simple(id,employee,item,amount,advance_date,order_id,invoice,note,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run(id, employee, item, amount, advanceDate, orderId || null, text(data.invoice), text(data.note), now());
     recordAudit(db, { actorName: employee, actorUid, action: 'create', entityType: 'reimbursement', entityId: id, detail: { amount, order_id: orderId } });
   })();
-  return { id, employee, item, amount, advance_date: advanceDate, order_id: orderId, reimbursement_status: '待审核' };
+  return { id, employee, item, amount, advance_date: advanceDate, order_id: orderId, reimbursement_status: '已提交待审核' };
+}
+
+const reimbursementTransitions: Record<ReimbursementStatus, ReimbursementStatus[]> = {
+  pending_review: ['pending_recheck', 'rejected'], pending_recheck: ['pending_confirmation', 'rejected'],
+  pending_confirmation: ['pending_payment', 'rejected'], pending_payment: ['paid'], rejected: [], paid: []
+};
+export function canAdvanceReimbursement(status: string, target: string, role: string): boolean {
+  const from = reimbursementStatusCode(status);
+  const to = reimbursementStatusCode(target);
+  if (!reimbursementTransitions[from].includes(to)) return false;
+  return (from === 'pending_review' && role === 'manager') ||
+    ((from === 'pending_recheck' || from === 'pending_payment') && role === 'finance') ||
+    (from === 'pending_confirmation' && role === 'owner');
 }
 
 export function updateReimbursement(id: string, status: string, actor: string, rejectReason = '', actorUid: number | null = null) {
@@ -1079,10 +1115,7 @@ export function updateReimbursement(id: string, status: string, actor: string, r
   const db = getOrderDb();
   const reimbursement = db.prepare('SELECT * FROM reimbursements_simple WHERE id=?').get(id) as Record<string, any> | undefined;
   if (!reimbursement) throw new Error('REIMBURSEMENT_NOT_FOUND');
-  const transitions: Record<ReimbursementStatus, ReimbursementStatus[]> = {
-    pending_review: ['pending_payment', 'rejected'], rejected: [], pending_payment: ['paid'], paid: []
-  };
-  if (reimbursement.status !== target && !transitions[reimbursement.status as ReimbursementStatus]?.includes(target)) throw new Error('INVALID_REIMBURSEMENT_TRANSITION');
+  if (!reimbursementTransitions[reimbursement.status as ReimbursementStatus]?.includes(target)) throw new Error('INVALID_REIMBURSEMENT_TRANSITION');
   if (target === 'rejected' && !text(rejectReason)) throw new Error('请填写打回原因');
   const changedAt = now();
   db.transaction(() => {
@@ -1100,10 +1133,9 @@ export function updateReimbursementsBatch(ids: string[], status: string, actor: 
   if (!uniqueIds.length) throw new Error('请选择报销记录');
   if (target === 'rejected' && !text(rejectReason)) throw new Error('请填写打回原因');
   const db = getOrderDb();
-  const transitions: Record<ReimbursementStatus, ReimbursementStatus[]> = { pending_review: ['pending_payment', 'rejected'], rejected: [], pending_payment: ['paid'], paid: [] };
   const rows = uniqueIds.map((id) => db.prepare('SELECT * FROM reimbursements_simple WHERE id=?').get(id) as Record<string, any> | undefined);
   if (rows.some((row) => !row)) throw new Error('REIMBURSEMENT_NOT_FOUND');
-  for (const row of rows as Array<Record<string, any>>) if (row.status !== target && !transitions[row.status as ReimbursementStatus]?.includes(target)) throw new Error('INVALID_REIMBURSEMENT_TRANSITION');
+  for (const row of rows as Array<Record<string, any>>) if (!reimbursementTransitions[row.status as ReimbursementStatus]?.includes(target)) throw new Error('INVALID_REIMBURSEMENT_TRANSITION');
   const changedAt = now();
   db.transaction(() => {
     const update = db.prepare(`UPDATE reimbursements_simple SET status=?, reject_reason=CASE WHEN ?='rejected' THEN ? WHEN ?='pending_review' THEN '' ELSE reject_reason END, reviewed_by=CASE WHEN ? IN ('pending_payment','rejected') THEN ? ELSE reviewed_by END, reviewed_at=CASE WHEN ? IN ('pending_payment','rejected') THEN ? ELSE reviewed_at END, reimbursed_by=CASE WHEN ?='paid' THEN ? ELSE reimbursed_by END, reimbursed_at=CASE WHEN ?='paid' THEN ? ELSE reimbursed_at END WHERE id=?`);
@@ -1394,12 +1426,27 @@ export function seedDemoOrdersAndReimbursements(requestedCount = 36, actorUid: n
     ['桌面亚克力台卡', '个', 58, 'A5 亚克力双面台卡'],
     ['宣传手提袋', '个', 8.6, '250g 白卡纸覆膜穿绳'],
   ];
-  const employees = ['张琳', '王杰', '李倩', '陈晨', '林晓', '周敏'];
+  const activeEmployees = db.prepare('SELECT catsco_uid,display_name FROM employees WHERE active=1 ORDER BY catsco_uid').all() as Array<{ catsco_uid: number; display_name: string }>;
+  const employees = activeEmployees.length ? activeEmployees.map((row) => row.display_name) : ['张琳', '王杰', '李倩', '陈晨', '林晓', '周敏'];
   const designers = ['刘设计', '赵设计', '何设计', '孙设计'];
   const advanceItems = ['现场打车费', '临时材料采购', '加急快递费', '活动停车费', '安装辅料费', '客户现场餐费'];
   const today = new Date();
   let reimbursementCount = 0;
-  const statusCounts: Record<string, number> = { pending_review: 0, rejected: 0, pending_payment: 0, paid: 0 };
+  const statusCounts: Record<string, number> = { pending_review: 0, pending_recheck: 0, pending_confirmation: 0, pending_payment: 0, paid: 0, rejected: 0 };
+  const stages = ['pending_review', 'pending_recheck', 'pending_confirmation', 'pending_payment', 'paid', 'rejected'] as const;
+  function advanceDemoReimbursement(id: string, index: number) {
+    const stage = stages[index % stages.length];
+    if (stage === 'rejected') {
+      updateReimbursement(id, '已打回', '模拟管理人', '模拟数据：请补充清晰发票');
+    } else {
+      if (stage !== 'pending_review') updateReimbursement(id, '已审核待复核', '模拟管理人');
+      if (['pending_confirmation', 'pending_payment', 'paid'].includes(stage)) updateReimbursement(id, '已复核待确认', '模拟财务');
+      if (['pending_payment', 'paid'].includes(stage)) updateReimbursement(id, '已确认待执行', '模拟老板');
+      if (stage === 'paid') updateReimbursement(id, '已执行', '模拟财务');
+    }
+    statusCounts[stage]++;
+    return stage;
+  }
 
   for (let index = 0; index < orderCount; index++) {
     const project = projects[index % projects.length];
@@ -1451,49 +1498,25 @@ export function seedDemoOrdersAndReimbursements(requestedCount = 36, actorUid: n
     const reimbursement = order.advances?.[0];
     if (reimbursement) {
       reimbursementCount++;
-      const mode = index % 4;
-      if (mode === 1) {
-        updateReimbursement(reimbursement.id, '已打回', '模拟财务', '模拟数据：请补充清晰发票');
-        statusCounts.rejected++;
-      } else if (mode === 2) {
-        updateReimbursement(reimbursement.id, '待打款', '模拟财务');
-        statusCounts.pending_payment++;
-      } else if (mode === 3) {
-        updateReimbursement(reimbursement.id, '待打款', '模拟财务');
-        updateReimbursement(reimbursement.id, '已报销', '模拟财务');
-        if (index % 8 === 3) archiveReimbursementVoucher(reimbursement.id, '模拟财务');
-        statusCounts.paid++;
-      } else {
-        statusCounts.pending_review++;
-      }
+      const stage = advanceDemoReimbursement(reimbursement.id, index);
+      if (stage === 'paid' && index % 2 === 0) archiveReimbursementVoucher(reimbursement.id, '模拟财务');
     }
   }
 
   const standaloneCount = Math.max(6, Math.round(orderCount / 5));
   for (let index = 0; index < standaloneCount; index++) {
+    const employee = employees[(index + 2) % employees.length];
     const created = createReimbursement({
-      employee: employees[(index + 2) % employees.length],
+      employee,
       item: ['办公用品采购', '团队交通费', '会议茶歇', '样品快递费'][index % 4],
       amount: 48 + index * 23.5,
       advance_date: dateOffset(today, -(index * 5 % 90)),
       note: `后台模拟内务报销 · 批次 ${batch}`,
       invoice: index % 2 === 0 ? '模拟报销凭证.pdf' : '',
     });
+    if (activeEmployees.length) db.prepare('UPDATE reimbursements_simple SET employee_uid=? WHERE id=?').run(resolveEmployeeUidByName(db, employee), created.id);
     reimbursementCount++;
-    const mode = (index + 1) % 4;
-    if (mode === 1) {
-      updateReimbursement(created.id, '已打回', '模拟财务', '模拟数据：票据信息不完整');
-      statusCounts.rejected++;
-    } else if (mode === 2) {
-      updateReimbursement(created.id, '待打款', '模拟财务');
-      statusCounts.pending_payment++;
-    } else if (mode === 3) {
-      updateReimbursement(created.id, '待打款', '模拟财务');
-      updateReimbursement(created.id, '已报销', '模拟财务');
-      statusCounts.paid++;
-    } else {
-      statusCounts.pending_review++;
-    }
+    advanceDemoReimbursement(created.id, index + 1);
   }
 
   addAuditLog({ actorName: '后台模拟数据工具', actorUid, action: 'seed_demo_operations', entityType: 'admin_demo', entityId: batch, detail: { orders: orderCount, reimbursements: reimbursementCount, statuses: statusCounts } });

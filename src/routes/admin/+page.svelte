@@ -91,7 +91,7 @@
         <div class="admin-card-copy">
           <p class="section-kicker">订单与报销</p>
           <h2>订单与报销模拟数据</h2>
-          <p>生成多个模拟客户项目、订单产品、订单成本及报销记录，并覆盖待审核、已打回、待打款和已报销状态。</p>
+          <p>生成多个模拟客户项目、订单产品、订单成本及报销记录，并覆盖五步审批流程、已打回和已执行状态。</p>
         </div>
         <form method="POST" action="?/operations">
           <label>生成订单数量

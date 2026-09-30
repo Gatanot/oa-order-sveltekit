@@ -210,7 +210,14 @@ try {
   result = await request('/api/reimbursements', { method: 'POST', json: { employee: '填写人甲', item: '交通费', amount: '12.34', advance_date: '2026-09-16', order_id: orderId } });
   assert.equal(result.response.status, 201, JSON.stringify(result.data));
   const reimbursementId = result.data.data.id;
-  result = await request('/api/reimbursements?status=未报销');
+  async function setAdminWorkflowRole(role) {
+    const form = new FormData();
+    form.append('role', role);
+    const response = await request('/admin?/saveExtraIdentity', { method: 'POST', body: form });
+    assert.equal(response.response.status, 200, `管理员切换为${role}身份应成功`);
+  }
+  await setAdminWorkflowRole('manager');
+  result = await request('/api/reimbursements?scope=mine&status=未报销');
   assert.ok(result.data.data.some((item) => item.id === reimbursementId), '未报销筛选应包含待审核记录');
   result = await request(`/api/reimbursements/${reimbursementId}`, { method: 'PATCH', json: { status: '已打回', reject_reason: '请补充发票', actor: '财务甲' } });
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
@@ -219,16 +226,28 @@ try {
   invoice.append('file', new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], { type: 'image/png' }), 'invoice.png');
   result = await request(`/api/reimbursements/${reimbursementId}/attachments`, { method: 'POST', body: invoice });
   assert.equal(result.response.status, 201, JSON.stringify(result.data));
-  result = await request('/api/reimbursements?person=catsco');
-  assert.equal(result.data.data.find((item) => item.id === reimbursementId).reimbursement_status, '待审核', '补传发票后应回到待审核');
-  result = await request('/api/reimbursements/batch', { method: 'POST', json: { ids: [reimbursementId], status: '待打款', actor: '财务甲' } });
+  result = await request('/api/reimbursements?scope=mine&person=catsco');
+  assert.equal(result.data.data.find((item) => item.id === reimbursementId).reimbursement_status, '已提交待审核', '补传发票后应回到管理人审核');
+  result = await request('/api/reimbursements/batch', { method: 'POST', json: { ids: [reimbursementId], status: '已确认待执行' } });
+  assert.notEqual(result.response.status, 200, '不允许跳过审核、复核和确认');
+  result = await request('/api/reimbursements/batch', { method: 'POST', json: { ids: [reimbursementId], status: '已审核待复核' } });
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  await setAdminWorkflowRole('finance');
+  result = await request('/api/reimbursements/batch', { method: 'POST', json: { ids: [reimbursementId], status: '已复核待确认' } });
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  await setAdminWorkflowRole('owner');
+  result = await request('/api/reimbursements/batch', { method: 'POST', json: { ids: [reimbursementId], status: '已确认待执行' } });
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  await setAdminWorkflowRole('finance');
   const automaticVoucherNo = result.data.data[0].voucher_no;
-  assert.ok(automaticVoucherNo, '审核通过进入待打款时应自动生成单据');
-  result = await request('/api/reimbursements/batch', { method: 'POST', json: { ids: [reimbursementId], status: '已报销', actor: '财务甲' } });
+  assert.ok(automaticVoucherNo, '老板确认后应自动生成单据');
+  result = await request('/api/reimbursements/batch', { method: 'POST', json: { ids: [reimbursementId], status: '已执行' } });
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
-  result = await request('/api/reimbursements?status=未报销');
+  result = await request('/api/reimbursements?scope=mine&status=未报销');
   assert.ok(!result.data.data.some((item) => item.id === reimbursementId), '未报销筛选不应包含已付款记录');
+  const clearWorkflowRole = new FormData();
+  result = await request('/admin?/clearExtraIdentity', { method: 'POST', body: clearWorkflowRole });
+  assert.equal(result.response.status, 200, '流程测试后应清除管理员额外身份');
   result = await request(`/api/orders/${orderId}`,  { method: 'PATCH', json: { project_id: projectId, order_date: '2026-09-16', delivery_date: '2026-09-21', designer: '设计师乙', created_by: '填写人乙', payment_status: '已结款', status: '已完成', products: [{ name: '测试产品', unit: '项', quantity: 1, unit_price: '20.00' }], costs: [], advances: [] } });
   assert.equal(result.response.status, 400, '已进入报销流程的垫付不能通过订单接口删除');
   assert.match(result.data.error?.message || '', /不可删除或修改/);
@@ -245,7 +264,7 @@ try {
   assert.match(result.response.headers.get('content-type') || '', /spreadsheet/);
 
   const db = new Database(databasePath, { readonly: true });
-  assert.equal(db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '24');
+  assert.equal(db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '25');
   assert.ok(db.prepare("SELECT COUNT(*) FROM pragma_table_info('audit_logs') WHERE name='actor_uid'").pluck().get(), '审计表应包含操作者 UID');
   assert.ok(db.prepare('SELECT COUNT(*) FROM audit_logs WHERE actor_uid=826').pluck().get() >= 1, '审计应记录操作者 UID');
   assert.equal(db.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='system_admin_identity'").pluck().get(), 1, '系统管理员额外身份应持久化保存');
@@ -259,7 +278,7 @@ try {
   db.close();
 
   await withMigratedFixture('oa-v23.db', '23', () => {}, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '24');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '25');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('audit_logs') WHERE name='actor_uid'").pluck().get(), 'v23 数据库迁移后应补齐审计 actor_uid');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v23 数据库重启后应保留订单');
   });
@@ -279,7 +298,7 @@ try {
       ALTER TABLE audit_logs ADD COLUMN actor_user_id TEXT;
     `);
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '24');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '25');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='idempotency_key'").pluck().get(), 'v18 数据库应补齐幂等字段');
     assert.equal(migrated.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('users','sessions')").pluck().get(), 0, '迁移后不应保留登录表');
     for (const [table, column] of [['orders_simple', 'created_by_user_id'], ['reimbursements_simple', 'employee_user_id'], ['reimbursements_simple', 'voucher_archived_by_user_id'], ['order_attachments', 'uploaded_by_user_id'], ['reimbursement_attachments', 'uploaded_by_user_id'], ['catalog_sources', 'maintained_by_user_id'], ['audit_logs', 'actor_user_id']]) {
@@ -292,7 +311,7 @@ try {
   await withMigratedFixture('oa-v20.db', '20', (legacy) => {
     legacy.exec('ALTER TABLE orders_simple DROP COLUMN planner; ALTER TABLE orders_simple DROP COLUMN execution_company;');
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '24');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '25');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='planner'").pluck().get(), 'v20 数据库应补齐策划人字段');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='execution_company'").pluck().get(), 'v20 数据库应补齐执行公司字段');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v20 迁移不应丢失订单');
@@ -302,7 +321,7 @@ try {
   await withMigratedFixture('oa-v21.db', '21', (legacy) => {
     legacy.exec('ALTER TABLE orders_simple DROP COLUMN execution_company;');
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '24');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '25');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='execution_company'").pluck().get(), 'v21 数据库应补齐执行公司字段');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v21 迁移不应丢失订单');
     assert.deepEqual(migrated.prepare('PRAGMA foreign_key_check').all(), []);
@@ -319,8 +338,25 @@ try {
   insertEmployee.run(1005, 'test1005', '孙执行', '执行', 'executor', 1, seededAt, seededAt);
   identityDb.close();
 
+  // 审核队列按角色裁剪，且不包含本人提交的报销；本人报销只在“我的报销”可见。
+  result = await request('/api/reimbursements', { method: 'POST', json: { item: '管理人审核测试', amount: '6.00', advance_date: '2026-09-19' } });
+  assert.equal(result.response.status, 201, JSON.stringify(result.data));
+  const managerReviewId = result.data.data.id;
+
   await withIdentityServer(1001, async (base) => {
-    let result = await requestOn(base, '/api/employees');
+    let result = await requestOn(base, '/api/reimbursements?scope=review');
+    assert.ok(result.data.data.some((item) => item.id === managerReviewId), '管理人应看到他人待审核报销');
+    assert.ok(result.data.data.every((item) => item.reimbursement_status === '已提交待审核'), '管理人只能看到待审核报销');
+    const own = await requestOn(base, '/api/reimbursements', { method: 'POST', json: { item: '管理人自报', amount: '5.00', advance_date: '2026-09-19' } });
+    assert.equal(own.response.status, 201, JSON.stringify(own.data));
+    const ownId = own.data.data.id;
+    const mine = await requestOn(base, '/api/reimbursements?scope=mine');
+    assert.ok(mine.data.data.some((item) => item.id === ownId), '我的报销应包含本人记录');
+    const reviewQueue = await requestOn(base, '/api/reimbursements?scope=review');
+    assert.ok(!reviewQueue.data.data.some((item) => item.id === ownId), '审核队列不应包含本人报销');
+    const selfReview = await requestOn(base, `/api/reimbursements/${ownId}`, { method: 'PATCH', json: { status: '已审核待复核' } });
+    assert.equal(selfReview.response.status, 403, '审核者不能处理本人提交的报销');
+    result = await requestOn(base, '/api/employees');
     assert.equal(result.response.status, 200, '管理人员可访问员工列表');
     result = await requestOn(base, '/api/employees', { method: 'PATCH', json: { uid: 1001, display_name: '王管理', department: '商务', role: 'owner', active: true } });
     assert.equal(result.response.status, 403, '管理人员不能把自己提升为老板');
@@ -341,7 +377,9 @@ try {
   });
 
   await withIdentityServer(1002, async (base) => {
-    let result = await requestOn(base, '/api/employees', { method: 'PATCH', json: { uid: 1002, display_name: '李老板', department: '商务', role: 'manager', active: true } });
+    let result = await requestOn(base, '/api/reimbursements?scope=review');
+    assert.ok(result.data.data.every((item) => item.reimbursement_status === '已复核待确认'), '老板只能看到待确认报销');
+    result = await requestOn(base, '/api/employees', { method: 'PATCH', json: { uid: 1002, display_name: '李老板', department: '商务', role: 'manager', active: true } });
     assert.equal(result.response.status, 403, '老板不能改变自己的身份');
     result = await requestOn(base, '/api/employees', { method: 'PATCH', json: { uid: 1002, display_name: '李老板', department: '商务', role: 'owner', active: false } });
     assert.equal(result.response.status, 403, '老板不能停用自己');
@@ -356,6 +394,8 @@ try {
   assert.equal(result.response.status, 201, JSON.stringify(result.data));
   const financeUploadReimbursementId = result.data.data.id;
   await withIdentityServer(1004, async (base) => {
+    const queue = await requestOn(base, '/api/reimbursements?scope=review');
+    assert.ok(queue.data.data.every((item) => ['已审核待复核', '已确认待执行'].includes(item.reimbursement_status)), '财务只能看到待复核和待执行报销');
     const invoiceForm = new FormData();
     invoiceForm.append('file', new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], { type: 'image/png' }), 'finance-invoice.png');
     const uploaded = await requestOn(base, `/api/reimbursements/${financeUploadReimbursementId}/attachments`, { method: 'POST', body: invoiceForm });
@@ -376,6 +416,8 @@ try {
   await withIdentityServer(1003, async (base) => {
     let result = await requestOn(base, '/api/employees');
     assert.equal(result.response.status, 403, '普通员工不能访问员工管理接口');
+    result = await requestOn(base, '/api/reimbursements?scope=review');
+    assert.equal(result.response.status, 403, '普通员工不能访问报销审核队列');
     const previewForm = new FormData();
     previewForm.append('mode', 'preview');
     previewForm.append('file', new Blob(['name,unit,cost_unit\nprint,sqm,10.50'], { type: 'text/csv' }), 'cost.csv');

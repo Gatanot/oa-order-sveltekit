@@ -5,18 +5,6 @@ import type { PublicArtifactVisitor } from "$lib/artifact-visitor";
 import { api, appPath, currentAppPath } from "$lib/api";
 import { hasAnyRole, orderCreateRoles, orderExportRoles, orderManageRoles, orderViewAllRoles, reimbursementActionRoles, reimbursementViewAllRoles, catalogManageRoles } from "$lib/permissions";
 
-function readSavedName() {
-  try { return localStorage.getItem("oa-creator-name") || ""; }
-  catch { return ""; }
-}
-function persistName(name: string) {
-  try {
-    if (name) localStorage.setItem("oa-creator-name", name);
-    else localStorage.removeItem("oa-creator-name");
-    return true;
-  } catch { return false; }
-}
-
 const apiFetch = (input: RequestInfo | URL, init?: RequestInit) =>
   fetch(typeof input === "string" ? appPath(input) : input, init);
 
@@ -97,15 +85,15 @@ export type Data = {
     employees: Array<{ catsco_uid: number; display_name: string; department: string; role: string }>;
     orders: Order[];
     reimbursements: Reimbursement[];
+    reviewReimbursements: Reimbursement[];
     visitor: PublicArtifactVisitor;
     identity: { uid: number; username: string; displayName: string; role: string; department: string; active: boolean };
   };
 
 
 export function createOrderDesk(data: Data) {
-  let view = $state<"overview" | "entry" | "catalog" | "finance">("overview");
+  let view = $state<"overview" | "entry" | "catalog" | "reimbursements" | "review">("overview");
   let workMode = $state<"view" | "entry" | "finance">(hasAnyRole(data.identity, reimbursementActionRoles) ? "finance" : "entry");
-  let sidebarCollapsed = $state(false);
   let isEmbedded = $state(false);
   let onArtifactGateway = $state(false);
   let customers = $state(data.customers);
@@ -115,6 +103,8 @@ export function createOrderDesk(data: Data) {
   let catalogSources = $state(data.catalogSources);
   let orders = $state(data.orders);
   let reimbursements = $state(data.reimbursements);
+  let reviewReimbursements = $state(data.reviewReimbursements);
+  let reimbursementRefreshVersion = $state(0);
   let customerId = $state("");
   let projectId = $state("");
   let orderDate = $state(new Date().toISOString().slice(0, 10));
@@ -149,8 +139,6 @@ export function createOrderDesk(data: Data) {
   let attachmentPreviewRequest = 0;
   let uploadingFiles = $state(false);
   let creatorName = $state("");
-  let creatorNameDraft = $state("");
-  let settingsOpen = $state(false);
   let newCustomer = $state("");
   let newProject = $state("");
   let newOwner = $state("");
@@ -158,7 +146,6 @@ export function createOrderDesk(data: Data) {
   let busy = $state(false);
   let message = $state("");
   let error = $state("");
-  let reimbursementRole = $state<"employee" | "finance">(hasAnyRole(data.identity, reimbursementViewAllRoles) ? "finance" : "employee");
   let reimbursementProject = $state("");
   let reimbursementPerson = $state("");
   let reimbursementType = $state<"" | "order" | "internal">("");
@@ -415,35 +402,36 @@ export function createOrderDesk(data: Data) {
   const designers = $derived([
     ...new Set(orders.map((o) => o.designer).filter(Boolean)),
   ]);
+  const canReviewReimbursements = $derived(hasAnyRole(data.identity, reimbursementActionRoles));
+  function matchesReimbursementFilters(item: any) {
+    return (
+      (!reimbursementProject || item.project_id === reimbursementProject) &&
+      (!reimbursementType || (reimbursementType === "order" ? !!item.order_id : !item.order_id)) &&
+      reimbursementStatusMatches(item, reimbursementStatus) &&
+      (!reimbursementFrom || item.advance_date >= reimbursementFrom) &&
+      (!reimbursementTo || item.advance_date <= reimbursementTo)
+    );
+  }
   const reimbursementPeople = $derived([
-    ...new Set(reimbursements.map((item: any) => item.employee).filter(Boolean)),
+    ...new Set(reviewReimbursements.map((item: any) => item.employee).filter(Boolean)),
   ]);
-  const reimbursementRowsForRole = $derived(
-    reimbursements.filter((item: any) =>
-      reimbursementRole === "finance" || (creatorName !== "" && item.employee === creatorName),
-    ),
-  );
-  const reimbursementSummaryRows = $derived(
-    reimbursementRowsForRole.filter((item: any) =>
-      (reimbursementRole !== "finance" || !reimbursementProject || item.project_id === reimbursementProject) &&
-      (reimbursementRole !== "finance" || !reimbursementType || (reimbursementType === "order" ? !!item.order_id : !item.order_id)) &&
-      (reimbursementRole !== "finance" || !reimbursementFrom || item.advance_date >= reimbursementFrom) &&
-      (reimbursementRole !== "finance" || !reimbursementTo || item.advance_date <= reimbursementTo),
-    ),
-  );
+  // “我的报销”只包含本人记录；“报销审核”由服务端按角色裁剪。
+  const myReimbursementRows = $derived(reimbursements.filter(matchesReimbursementFilters));
+  const reviewReimbursementRows = $derived(reviewReimbursements.filter(matchesReimbursementFilters));
+  const reimbursementSummaryRows = $derived(reviewReimbursementRows);
   const reimbursementStats = $derived({
-    total: reimbursementSummaryRows.length,
-    pendingReview: reimbursementSummaryRows.filter((item: any) => item.reimbursement_status === "待审核").length,
-    pendingReviewAmount: reimbursementSummaryRows.filter((item: any) => item.reimbursement_status === "待审核").reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
-    pendingPay: reimbursementSummaryRows.filter((item: any) => item.reimbursement_status === "待打款").length,
-    paid: reimbursementSummaryRows.filter((item: any) => item.reimbursement_status === "已报销").length,
-    rejected: reimbursementSummaryRows.filter((item: any) => item.reimbursement_status === "已打回").length,
-    amount: reimbursementSummaryRows.reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
-    pendingPayAmount: reimbursementSummaryRows.filter((item: any) => item.reimbursement_status === "待打款").reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
+    total: myReimbursementRows.length,
+    pendingReview: myReimbursementRows.filter((item: any) => item.reimbursement_status === "已提交待审核").length,
+    pendingReviewAmount: myReimbursementRows.filter((item: any) => item.reimbursement_status === "已提交待审核").reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
+    pendingPay: myReimbursementRows.filter((item: any) => item.reimbursement_status === "已确认待执行").length,
+    paid: myReimbursementRows.filter((item: any) => item.reimbursement_status === "已执行").length,
+    rejected: myReimbursementRows.filter((item: any) => item.reimbursement_status === "已打回").length,
+    amount: myReimbursementRows.reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
+    pendingPayAmount: myReimbursementRows.filter((item: any) => item.reimbursement_status === "已确认待执行").reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
   });
   const reimbursementPaymentSummary = $derived(
     reimbursementSummaryRows
-      .filter((item: any) => item.reimbursement_status === "待打款")
+      .filter((item: any) => item.reimbursement_status === "已确认待执行")
       .reduce((groups: Array<any>, item: any) => {
         const employee = item.employee || "未填写";
         const existing = groups.find((group) => group.employee === employee);
@@ -459,15 +447,15 @@ export function createOrderDesk(data: Data) {
       .sort((a, b) => b.amount - a.amount),
   );
   const reimbursementVouchers = $derived(
-    reimbursements
+    reviewReimbursements
       .filter((item: any) => item.voucher_no)
       .map((item: any) => ({ ...item, voucherNo: item.voucher_no })),
   );
   const selectedPendingReviewCount = $derived(
-    reimbursements.filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "待审核").length,
+    reviewReimbursementRows.filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "已提交待审核").length,
   );
   const selectedPendingPaymentCount = $derived(
-    reimbursements.filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "待打款").length,
+    reviewReimbursementRows.filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "已确认待执行").length,
   );
   const creators = $derived([
     ...new Set(orders.map((o) => o.created_by).filter(Boolean)),
@@ -509,16 +497,12 @@ export function createOrderDesk(data: Data) {
       }
     }
 
-    const savedName = readSavedName();
-    const visitorName = data.visitor.status === "authenticated" ? data.visitor.username : "";
-    const initialName = savedName || visitorName;
-    const role = data.identity?.role;
-    creatorName = initialName;
-    creatorNameDraft = initialName;
-    createdBy = initialName;
+    // 填写人直接取 Catsco 登录用户名，不再允许在浏览器中自行设置。
+    const catscoUsername = data.identity?.username || (data.visitor.status === "authenticated" ? data.visitor.username : "");
+    creatorName = catscoUsername;
+    createdBy = catscoUsername;
     // 工作权限由服务端核验的身份决定，不再由浏览器工作模式或用户手动切换。
     workMode = hasAnyRole(data.identity, reimbursementActionRoles) ? "finance" : "entry";
-    reimbursementRole = ["admin", "manager", "owner", "finance"].includes(role) ? "finance" : "employee";
     let restoringHistory = false;
     const escape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -530,7 +514,6 @@ export function createOrderDesk(data: Data) {
       showOrderFilters = false;
       showStandaloneReimbursement = false;
       showProjectForm = false;
-      settingsOpen = false;
       catalogSourceOpen = false;
       reimbursementRejectOpen = false;
       confirmOpen = false;
@@ -610,37 +593,17 @@ export function createOrderDesk(data: Data) {
     attachmentPreviewMime = file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "application/octet-stream");
     attachmentPreviewUrl = URL.createObjectURL(file);
   }
-  function saveCreatorName() {
-    creatorName = creatorNameDraft.trim();
-    createdBy = creatorName;
-    const persisted = persistName(creatorName);
-    settingsOpen = false;
-    notify(persisted ? "填写人名字已保存，将在订单录入时自动填入" : "填写人已设置，当前浏览器不允许持久保存，仅本次有效");
-  }
-  function removeCreatorName() {
-    creatorName = "";
-    creatorNameDraft = "";
-    createdBy = "";
-    persistName("");
-    settingsOpen = false;
-    notify("已删除填写人名字");
-  }
   function setWorkMode(mode: "view" | "entry" | "finance") {
     if (mode !== workMode && view === "entry" && orderFormDirty) {
       if (!window.confirm("订单尚未保存，确定切换工作模式吗？")) return false;
       orderFormDirty = false;
     }
     workMode = mode;
-    reimbursementRole = ["admin", "manager", "owner", "finance"].includes(data.identity?.role) ? "finance" : "employee";
 
     resetReimbursementFilters();
     if (mode !== "entry" && view === "entry") navigate("/orders");
     notify(`已切换到${mode === "finance" ? "财务" : mode === "entry" ? "填写" : "查看"}模式`);
     return true;
-  }
-  function openSettings() {
-    creatorNameDraft = creatorName;
-    settingsOpen = true;
   }
   function onCustomerChange() {
     projectId = "";
@@ -673,17 +636,23 @@ export function createOrderDesk(data: Data) {
     detailOrder = null;
     editingOrderId = "";
     orderFormDirty = false;
-    if (path === "/reimbursements") view = "finance";
+    const previousView = view;
+    if (path === "/reimbursements") view = "reimbursements";
+    else if (path === "/reimbursements/review") view = "review";
     else if (path === "/catalog") view = "catalog";
     else view = "overview";
+    if (view !== previousView && (view === "reimbursements" || view === "review")) resetReimbursementFilters();
   }
   async function refresh() {
-    const [o, c, p, k, r] = await Promise.all([
+    const [o, c, p, k, r, review] = await Promise.all([
       api.get<{ data: Order[] }>("/api/orders"),
       api.get<{ data: Customer[] }>("/api/customers"),
       api.get<{ data: Project[] }>("/api/projects"),
       api.get<{ data: Catalog[] }>("/api/catalog"),
-      api.get<{ data: Reimbursement[] }>("/api/reimbursements"),
+      api.get<{ data: Reimbursement[] }>("/api/reimbursements?scope=mine"),
+      canReviewReimbursements
+        ? api.get<{ data: Reimbursement[] }>("/api/reimbursements?scope=review")
+        : Promise.resolve({ data: [] as Reimbursement[] }),
     ]);
     orders = o.data;
     customers = c.data;
@@ -692,14 +661,11 @@ export function createOrderDesk(data: Data) {
     const sources = await api.get<{ data: Array<Record<string, any>> }>("/api/catalog/sources");
     catalogSources = sources.data;
     reimbursements = r.data;
+    reviewReimbursements = review.data;
+    reimbursementRefreshVersion += 1;
   }
   function openStandaloneReimbursement() {
-    if (workMode !== "finance" && !creatorName) {
-      notify("请先设置填写人，再提交本人报销", true);
-      openSettings();
-      return;
-    }
-    standaloneEmployee = workMode === "finance" ? "" : creatorName;
+    standaloneEmployee = creatorName;
     standaloneItem = "";
     standaloneAmount = "";
     standaloneDate = new Date().toISOString().slice(0, 10);
@@ -727,12 +693,6 @@ export function createOrderDesk(data: Data) {
       }
       await refresh();
       showStandaloneReimbursement = false;
-      if (workMode === "entry" && !creatorName) {
-        creatorName = standaloneEmployee.trim();
-        creatorNameDraft = creatorName;
-        createdBy = creatorName;
-        persistName(creatorName);
-      }
       notify("报销记录已保存，等待审核");
     } catch (e) {
       if (createdId) await api.delete(`/api/reimbursements/${encodeURIComponent(createdId)}`).catch(() => undefined);
@@ -748,26 +708,16 @@ export function createOrderDesk(data: Data) {
     standaloneInvoiceFile = file;
   }
   function reimbursementStatusMatches(item: any, statusFilter: string, defaultPending = false) {
-    if (statusFilter === "未报销") return item.reimbursement_status !== "已报销";
+    if (statusFilter === "未报销") return item.reimbursement_status !== "已执行";
     if (statusFilter) return item.reimbursement_status === statusFilter;
-    return !defaultPending || item.reimbursement_status === "待审核" || item.reimbursement_status === "已打回";
-  }
-  function filteredReimbursementRows(requireFinancePerson: boolean, defaultPending: boolean) {
-    if (requireFinancePerson && reimbursementRole === "finance" && !reimbursementPerson) return [];
-    return reimbursementRowsForRole.filter((item: any) =>
-      (reimbursementRole !== "finance" || !reimbursementPerson || item.employee === reimbursementPerson) &&
-      (!reimbursementProject || item.project_id === reimbursementProject) &&
-      (!reimbursementType || (reimbursementType === "order" ? !!item.order_id : !item.order_id)) &&
-      reimbursementStatusMatches(item, reimbursementStatus, defaultPending && reimbursementRole === "finance") &&
-      (!reimbursementFrom || item.advance_date >= reimbursementFrom) &&
-      (!reimbursementTo || item.advance_date <= reimbursementTo),
-    );
+    return true;
   }
   function reimbursementRows() {
-    return filteredReimbursementRows(false, true);
+    const rows = view === "review" ? reviewReimbursementRows : myReimbursementRows;
+    return rows.filter((item: any) => !reimbursementPerson || item.employee === reimbursementPerson);
   }
   function reimbursementExportRows() {
-    return filteredReimbursementRows(false, false);
+    return reimbursementRows();
   }
   function resetReimbursementFilters() {
     reimbursementProject = "";
@@ -791,14 +741,14 @@ export function createOrderDesk(data: Data) {
     return (await response.json()).data as Array<any>;
   }
   async function batchReviewReimbursements() {
-    const targets = reimbursementRows().filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "待审核");
+    const targets = reimbursementRows().filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "已提交待审核");
     if (!targets.length) { notify("请选择待审核记录", true); return; }
     busy = true;
     try {
-      await batchUpdateReimbursements(targets.map((item) => item.id), "待打款");
+      await batchUpdateReimbursements(targets.map((item) => item.id), "已审核待复核");
       selectedReimbursementIds = selectedReimbursementIds.filter((id) => !targets.some((item) => item.id === id));
       await refresh();
-      notify(`已审核通过 ${targets.length} 条报销，进入待打款队列`);
+      notify(`已审核通过 ${targets.length} 条报销，等待财务复核`);
     } catch (e) { notify(e instanceof Error ? e.message : "批量审核失败", true); }
     finally { busy = false; }
   }
@@ -817,13 +767,13 @@ export function createOrderDesk(data: Data) {
     notify(`正在导出 ${rows.length} 条报销记录`);
   }
   function batchMarkReimbursed() {
-    const targets = reimbursements.filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "待打款");
+    const targets = reviewReimbursements.filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "已确认待执行");
     if (!targets.length) { notify("请选择待打款记录", true); return; }
     const total = targets.reduce((sum, item: any) => sum + Number(item.advance_amount || 0), 0);
     askConfirm("确认批量打款", `确认将 ${targets.length} 笔、合计 ${money(total)} 标记为已报销？此状态不能直接撤回。`, async () => {
       busy = true;
       try {
-        await batchUpdateReimbursements(targets.map((item) => item.id), "已报销");
+        await batchUpdateReimbursements(targets.map((item) => item.id), "已执行");
         selectedReimbursementIds = selectedReimbursementIds.filter((id) => !targets.some((item) => item.id === id));
         await refresh();
         notify(`已标记 ${targets.length} 条报销记录为已报销`);
@@ -832,7 +782,7 @@ export function createOrderDesk(data: Data) {
     });
   }
   async function exportPaymentSummary() {
-    const rows = reimbursementSummaryRows.filter((item: any) => item.reimbursement_status === "待打款");
+    const rows = reimbursementSummaryRows.filter((item: any) => item.reimbursement_status === "已确认待执行");
     if (!rows.length) { notify("当前筛选暂无待付款记录", true); return; }
     const params = new URLSearchParams({ mode: "payment", actor: creatorName || "财务人员" });
     if (reimbursementProject) params.set("project", reimbursementProject);
@@ -844,7 +794,7 @@ export function createOrderDesk(data: Data) {
   }
   function selectEmployeePayments(employee: string) {
     const targets = reimbursementSummaryRows
-      .filter((item: any) => item.employee === employee && item.reimbursement_status === "待打款")
+      .filter((item: any) => item.employee === employee && item.reimbursement_status === "已确认待执行")
       .map((item: any) => item.id);
     const allSelected = targets.length > 0 && targets.every((id: string) => selectedReimbursementIds.includes(id));
     selectedReimbursementIds = allSelected
@@ -852,13 +802,13 @@ export function createOrderDesk(data: Data) {
       : [...new Set([...selectedReimbursementIds, ...targets])];
   }
   function markEmployeeReimbursed(employee: string) {
-    const targets = reimbursementSummaryRows.filter((item: any) => item.employee === employee && item.reimbursement_status === "待打款");
+    const targets = reimbursementSummaryRows.filter((item: any) => item.employee === employee && item.reimbursement_status === "已确认待执行");
     if (!targets.length) { notify("该员工暂无待付款报销", true); return; }
     const total = targets.reduce((sum, item: any) => sum + Number(item.advance_amount || 0), 0);
     askConfirm("确认已打款", `确认已向 ${employee} 支付 ${targets.length} 笔、合计 ${money(total)}？此状态不能直接撤回。`, async () => {
       busy = true;
       try {
-        await batchUpdateReimbursements(targets.map((item) => item.id), "已报销");
+        await batchUpdateReimbursements(targets.map((item) => item.id), "已执行");
         selectedReimbursementIds = selectedReimbursementIds.filter((id) => !targets.some((item) => item.id === id));
         await refresh();
         notify(`${employee} 已确认打款`);
@@ -896,7 +846,7 @@ export function createOrderDesk(data: Data) {
     reimbursementRejectOpen = true;
   }
   function batchRejectReimbursements() {
-    const targets = reimbursementRows().filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "待审核");
+    const targets = reimbursementRows().filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "已提交待审核");
     if (!targets.length) { notify("请选择待审核记录", true); return; }
     reimbursementRejectIds = targets.map((item: any) => item.id);
     reimbursementRejectReason = "附件不清晰，请重新上传";
@@ -965,7 +915,7 @@ export function createOrderDesk(data: Data) {
         throw new Error(payload.error?.message || payload.message || "状态更新失败");
       }
       await refresh();
-      notify(status === "已报销" ? "已标记为已报销" : status === "待打款" ? "报销已审核通过，进入待打款队列" : "已更新报销状态");
+      notify(`报销状态已更新：${status}`);
     } catch (e) {
       notify(e instanceof Error ? e.message : "状态更新失败", true);
     } finally {
@@ -973,7 +923,7 @@ export function createOrderDesk(data: Data) {
     }
   }
   function markReimbursement(item: Reimbursement, status: string) {
-    if (status !== "已报销") {
+    if (status !== "已执行") {
       void updateReimbursementStatus(item, status);
       return;
     }
@@ -1389,7 +1339,7 @@ export function createOrderDesk(data: Data) {
       orderFormDirty = true;
     } else updateCost(index, "name", value);
   }
-  function addAdvance() { advances = [...advances, { id: crypto.randomUUID(), employee: designer || createdBy, item: "", amount: 0, date: orderDate, invoice: "", status: "待审核", invoiceFile: null as File | null }]; orderFormDirty = true; }
+  function addAdvance() { advances = [...advances, { id: crypto.randomUUID(), employee: designer || createdBy, item: "", amount: 0, date: orderDate, invoice: "", status: "已提交待审核", invoiceFile: null as File | null }]; orderFormDirty = true; }
   function removeAdvance(index: number) { advances = advances.filter((_, i) => i !== index); orderFormDirty = true; }
   function updateAdvance(index: number, key: string, value: unknown) { advances[index] = { ...advances[index], [key]: value }; advances = [...advances]; orderFormDirty = true; }
   function startNewOrder() {
@@ -1414,12 +1364,12 @@ export function createOrderDesk(data: Data) {
     noteFiles = [];
     products = [{ name: "", quantity: 1, unit: "项", unit_price: 0, cost_unit: 0, subtotal: 0, specification: "" }];
     costs = [];
-    advances = [{ id: crypto.randomUUID(), employee: createdBy, item: "", amount: 0, date: orderDate, invoice: "", status: "待审核", invoiceFile: null as File | null }];
+    advances = [{ id: crypto.randomUUID(), employee: createdBy, item: "", amount: 0, date: orderDate, invoice: "", status: "已提交待审核", invoiceFile: null as File | null }];
     view = "entry";
     orderFormDirty = false;
   }
   function canEditAdvance(advance: Record<string, unknown>) {
-    return !advance.status || advance.status === "待审核";
+    return !advance.status || advance.status === "已提交待审核";
   }
   function markOrderDirty() { orderFormDirty = true; }
   function toggleOrder(id: string) {
@@ -1590,7 +1540,6 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "canManageReimbursements", { get: () => hasAnyRole(data.identity, reimbursementActionRoles) });
   Object.defineProperty(desk, "canDeleteOrders", { get: () => hasAnyRole(data.identity, orderManageRoles) });
   Object.defineProperty(desk, "canManageCatalog", { get: () => hasAnyRole(data.identity, catalogManageRoles) });
-  Object.defineProperty(desk, "sidebarCollapsed", { get: () => sidebarCollapsed, set: (value) => { sidebarCollapsed = value; } });
   Object.defineProperty(desk, "visitor", { get: () => data.visitor });
   Object.defineProperty(desk, "identity", { get: () => data.identity });
   Object.defineProperty(desk, "isEmbedded", { get: () => isEmbedded });
@@ -1631,9 +1580,7 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "attachmentPreviewName", { get: () => attachmentPreviewName });
   Object.defineProperty(desk, "attachmentPreviewMime", { get: () => attachmentPreviewMime });
   Object.defineProperty(desk, "uploadingFiles", { get: () => uploadingFiles, set: (value) => { uploadingFiles = value; } });
-  Object.defineProperty(desk, "creatorName", { get: () => creatorName, set: (value) => { creatorName = value; } });
-  Object.defineProperty(desk, "creatorNameDraft", { get: () => creatorNameDraft, set: (value) => { creatorNameDraft = value; } });
-  Object.defineProperty(desk, "settingsOpen", { get: () => settingsOpen, set: (value) => { settingsOpen = value; } });
+  Object.defineProperty(desk, "creatorName", { get: () => creatorName });
   Object.defineProperty(desk, "newCustomer", { get: () => newCustomer, set: (value) => { newCustomer = value; } });
   Object.defineProperty(desk, "newProject", { get: () => newProject, set: (value) => { newProject = value; } });
   Object.defineProperty(desk, "newOwner", { get: () => newOwner, set: (value) => { newOwner = value; } });
@@ -1641,7 +1588,9 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "busy", { get: () => busy, set: (value) => { busy = value; } });
   Object.defineProperty(desk, "message", { get: () => message, set: (value) => { message = value; } });
   Object.defineProperty(desk, "error", { get: () => error, set: (value) => { error = value; } });
-  Object.defineProperty(desk, "reimbursementRole", { get: () => reimbursementRole });
+  Object.defineProperty(desk, "reimbursements", { get: () => reimbursements });
+  Object.defineProperty(desk, "reviewReimbursements", { get: () => reviewReimbursements });
+  Object.defineProperty(desk, "canReviewReimbursements", { get: () => canReviewReimbursements });
   Object.defineProperty(desk, "reimbursementProject", { get: () => reimbursementProject, set: (value) => { reimbursementProject = value; selectedReimbursementIds = []; } });
   Object.defineProperty(desk, "reimbursementPerson", { get: () => reimbursementPerson, set: (value) => { reimbursementPerson = value; selectedReimbursementIds = []; } });
   Object.defineProperty(desk, "reimbursementType", { get: () => reimbursementType, set: (value) => { reimbursementType = value; selectedReimbursementIds = []; } });
@@ -1724,8 +1673,8 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "designers", { get: () => designers });
   Object.defineProperty(desk, "reimbursementPeople", { get: () => reimbursementPeople });
   Object.defineProperty(desk, "reimbursementStats", { get: () => reimbursementStats });
-  Object.defineProperty(desk, "reimbursementRowsForRole", { get: () => reimbursementRowsForRole });
   Object.defineProperty(desk, "reimbursementRows", { get: () => reimbursementRows });
+  Object.defineProperty(desk, "reimbursementRefreshVersion", { get: () => reimbursementRefreshVersion });
   Object.defineProperty(desk, "reimbursementPaymentSummary", { get: () => reimbursementPaymentSummary });
   Object.defineProperty(desk, "selectedPendingReviewCount", { get: () => selectedPendingReviewCount });
   Object.defineProperty(desk, "selectedPendingPaymentCount", { get: () => selectedPendingPaymentCount });
@@ -1802,9 +1751,6 @@ export function createOrderDesk(data: Data) {
   desk.canEditAdvance = canEditAdvance;
   desk.markOrderDirty = markOrderDirty;
   desk.onCustomerChange = onCustomerChange;
-  desk.saveCreatorName = saveCreatorName;
-  desk.removeCreatorName = removeCreatorName;
-  desk.openSettings = openSettings;
   desk.exportColumns = exportColumns;
   return desk;
 }

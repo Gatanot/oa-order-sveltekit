@@ -49,7 +49,7 @@
       <label>指定设计师<select value={desk.designerUid ?? ""} onchange={(event) => { const uid = Number(event.currentTarget.value) || null; desk.designerUid = uid; desk.designer = desk.employees.find((employee: any) => employee.catsco_uid === uid)?.display_name || ""; }}><option value="">暂不指定</option>{#each desk.employees.filter((employee: any) => employee.role === 'designer') as employee}<option value={employee.catsco_uid}>{employee.display_name} · 编号 {employee.catsco_uid}{employee.department ? ` · ${employee.department}` : ''}</option>{/each}</select></label>
       <label>策划人<select value={desk.plannerUid ?? ""} onchange={(event) => { const uid = Number(event.currentTarget.value) || null; desk.plannerUid = uid; desk.planner = desk.employees.find((employee: any) => employee.catsco_uid === uid)?.display_name || ""; }}><option value="">暂不指定</option>{#each desk.employees.filter((employee: any) => employee.role === 'planner') as employee}<option value={employee.catsco_uid}>{employee.display_name} · 编号 {employee.catsco_uid}{employee.department ? ` · ${employee.department}` : ''}</option>{/each}</select></label>
       <label class="compact-field">订单状态<select bind:value={desk.status}><option>制作中</option><option>待确认</option><option>已完成</option></select></label>
-      <label class="compact-field">录入人<input bind:value={desk.createdBy} placeholder="请设置填写人" /></label>
+      <label class="compact-field">录入人<input value={desk.createdBy} readonly title="录入人取自 Catsco 登录用户名，不可修改" /></label>
       <label class="compact-field">结款状态<select bind:value={desk.paymentStatus}><option>未结款</option><option>已结款</option></select></label>
     </div>
 

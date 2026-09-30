@@ -10,10 +10,10 @@
 
 {#if desk.showStandaloneReimbursement}<div class="project-modal-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) desk.showStandaloneReimbursement = false; }}>
   <div class="project-modal reimbursement-modal" role="dialog" aria-modal="true" aria-labelledby="reimbursement-modal-title">
-    <div class="project-modal-head"><div><p class="section-kicker">新增报销</p><h2 id="reimbursement-modal-title">{desk.canFinance ? "代员工录入报销" : "新建报销"}</h2><span>{desk.canFinance ? "财务可填写员工姓名并代为录入纸质或线下报销。" : "报销人固定为当前填写人，可关联订单或作为内务报销提交。"}</span></div><button class="icon-control" aria-label="关闭新建报销窗口" onclick={() => desk.showStandaloneReimbursement = false}><X size={18} /></button></div>
+    <div class="project-modal-head"><div><p class="section-kicker">新增报销</p><h2 id="reimbursement-modal-title">新建报销</h2><span>报销人固定为当前登录用户，可关联订单或作为内务报销提交。</span></div><button class="icon-control" aria-label="关闭新建报销窗口" onclick={() => desk.showStandaloneReimbursement = false}><X size={18} /></button></div>
     <form onsubmit={(event) => { event.preventDefault(); desk.submitStandaloneReimbursement(); }}>
       <div class="project-modal-body reimbursement-form-body">
-        <label>报销人 <em>*</em><input bind:value={desk.standaloneEmployee} placeholder="例如：张三" readonly={!desk.canFinance} required /></label>
+        <label>报销人 <em>*</em><input bind:value={desk.standaloneEmployee} readonly required /></label>
         <label>报销物品 <em>*</em><input bind:value={desk.standaloneItem} placeholder="例如：客户现场打车" required /></label>
         <label>报销金额（元） <em>*</em><input type="number" inputmode="decimal" min="0.01" step="0.01" bind:value={desk.standaloneAmount} placeholder="0.00" required /></label>
         <label>垫付日期 <em>*</em><input class="date-input" type="date" bind:value={desk.standaloneDate} required /></label>
@@ -87,57 +87,6 @@
           >
         </div>
       </form>
-    </div>
-  </div>{/if}
-{#if desk.settingsOpen}<div
-    class="drawer-backdrop"
-    role="presentation"
-    onclick={(event) => {
-      if (event.target === event.currentTarget) desk.settingsOpen = false;
-    }}
-  >
-    <div
-      class="export-drawer settings-drawer"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="creator-settings-title"
-    >
-      <div class="drawer-head">
-        <div>
-          <p class="section-kicker">个人设置</p>
-          <h2 id="creator-settings-title">设置填写人</h2>
-          <span>名字会保存在当前浏览器中，不会自动过期。</span>
-        </div>
-        <button
-          class="icon-control"
-          aria-label="关闭设置"
-          onclick={() => (desk.settingsOpen = false)}><X size={17} /></button
-        >
-      </div>
-      <div class="drawer-body">
-        <label class="settings-name-field"
-          >常用名字<input
-            bind:value={desk.creatorNameDraft}
-            maxlength="40"
-            placeholder="例如：张三"
-            onkeydown={(event) => {
-              if (event.key === "Enter") desk.saveCreatorName();
-            }}
-          /></label
-        >
-        <p class="settings-hint">
-          保存后，新建订单的“录入人”会自动填入该名字。你仍可以在单笔订单中修改录入人。
-        </p>
-      </div>
-      <div class="drawer-footer">
-        <button
-          class="delete-action"
-          disabled={!desk.creatorName}
-          onclick={desk.removeCreatorName}>删除已保存名字</button
-        ><button class="primary-action" onclick={desk.saveCreatorName}
-          >保存名字</button
-        >
-      </div>
     </div>
   </div>{/if}
 {#if desk.showOrderFilters}<div class="drawer-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) desk.showOrderFilters = false; }}>
