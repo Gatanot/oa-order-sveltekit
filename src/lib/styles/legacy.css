@@ -27,8 +27,6 @@
     display: grid;
     gap: 7px
 }
-
-.confirm-modal { width: min(460px, calc(100vw - 32px)); }
 .confirm-message { margin: 0; color: var(--ink); line-height: 1.65; }
 
 .order-main {
@@ -62,11 +60,6 @@
     border: 1px solid #edc3c3
 }
 
-.section-heading span {
-    color: var(--muted);
-    font-size: 12px
-}
-
 .field-hint {
     display: block;
     color: var(--muted);
@@ -76,7 +69,6 @@
 
 .export-mode-picker { margin-bottom: 16px; padding: 13px; border: 1px solid var(--line); background: #f7faf9; }
 .export-mode-picker > label { display: grid; max-width: 280px; gap: 6px; font-size: 12px; font-weight: 600; }
-.export-mode-picker select { width: 100%; }
 .export-template-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
 .export-template-grid label { display: grid; gap: 5px; color: var(--muted); font-size: 11px; font-weight: 500; }
 .export-options { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 12px; color: var(--muted); font-size: 11px; }
@@ -117,18 +109,6 @@
     margin-left: 4px
 }
 
-.summary-row>div {
-    background: #fff;
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    padding: 15px 17px
-}
-
-.summary-row span,
-.summary-row b {
-    display: block
-}
-
 .filter-result {
     white-space: nowrap;
     margin-right: 2px;
@@ -141,15 +121,6 @@
 }
 @media (max-width: 560px) {
     .filter-drawer .drawer-filter-grid { grid-template-columns: 1fr; }
-}
-
-.order-form input, .order-form select, .order-form textarea {
-    border: 1px solid #cbd8da;
-    border-radius: 5px;
-    background: #fff;
-    color: var(--ink);
-    padding: 10px 11px;
-    outline: none
 }
 
 .column-settings {
@@ -174,13 +145,7 @@
 .link-action {
     text-align: left;
 }
-.reimbursement-modal { width: min(560px, 94vw); }
-.reimbursement-summary {
-    grid-template-columns: repeat(4, 1fr);
-    margin: 0 0 19px;
-}
 .reimbursement-summary b small { font-size: 11px; font-weight: 400; color: var(--muted); }
-.reimbursement-summary .negative { color: var(--red); }
 .reimbursement-callout {
     display: flex;
     align-items: baseline;
@@ -213,7 +178,6 @@
 .voucher-grid b { overflow-wrap: anywhere; }
 .voucher-full { grid-column: 1 / -1; }
 .voucher-grid > .voucher-full:nth-child(odd) { border-right: 0; }
-.reimbursement-detail { width: min(560px, 92vw); }
 .reimbursement-progress { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; padding: 0 0 20px; margin: 0; list-style: none; }
 .reimbursement-progress li { display: grid; gap: 6px; justify-items: center; text-align: center; font-size: 11px; color: var(--muted); }
 .reimbursement-progress li span { display: grid; place-items: center; width: 25px; height: 25px; border: 1px solid #bbb; border-radius: 50%; }
@@ -231,8 +195,6 @@
     justify-content: space-between;
     align-items: center;
 }
-.editor-row { grid-template-columns: 2fr 1fr 90px 110px 110px 38px; }
-.advance-editor-row { grid-template-columns: minmax(110px, .8fr) minmax(180px, 1.5fr) 95px 135px minmax(170px, 1.3fr) 70px 38px; }
 .editor-row textarea { grid-column: 1 / -1; min-height: 54px; }
 .repeat-header {
     display: grid;
@@ -246,10 +208,6 @@
 .repeat-header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .repeat-header textarea { display: none; }
 .repeat-header.advance-editor-row { grid-template-columns: minmax(110px, .8fr) minmax(180px, 1.5fr) 95px 135px minmax(170px, 1.3fr) 70px 38px; }
-
-.table-scroll {
-    overflow: auto;
-}
 
 td b,
 td small {
@@ -333,14 +291,6 @@ td small {
     font-size: 11px
 }
 
-.project-modal-close {
-    padding: 0;
-    color: #718187;
-    border-color: transparent;
-    background: #f2f6f6;
-    flex: 0 0 34px
-}
-
 .project-modal-close:hover {
     color: var(--red);
     border-color: #f0cccc;
@@ -359,12 +309,6 @@ td small {
 .project-modal-body label {
     display: grid;
     gap: 6px
-}
-
-.project-modal-body em {
-    color: var(--teal);
-    font-style: normal;
-    display: inline
 }
 
 .project-modal-footer {
@@ -580,10 +524,6 @@ td small {
     font-size: 12px
 }
 
-.column-list input {
-    accent-color: var(--teal)
-}
-
 .drawer-footer {
     margin-top: auto;
     border-top: 1px solid var(--line);
@@ -640,10 +580,6 @@ td small {
     min-width: 0;
     outline: none;
 }
-.repeat-row textarea {
-    grid-column: 1 / -1;
-    resize: vertical;
-}
 
 /* Keep the cost and advance action columns on the same row as their fields. */
 .repeat-row.advance-editor-row { grid-template-columns: minmax(110px, .8fr) minmax(180px, 1.5fr) 95px 135px minmax(170px, 1.3fr) 70px 38px; }
@@ -653,8 +589,6 @@ td small {
     .entry-layout {
         gap: 30px
     }
-    .repeat-row { grid-template-columns: minmax(210px, 2fr) repeat(4, minmax(75px, 1fr)) 38px; }
-    .advance-editor-row { grid-template-columns: minmax(100px, .8fr) minmax(150px, 1.3fr) minmax(90px, 1fr) minmax(125px, 1.2fr) minmax(145px, 1.3fr) 60px 38px; }
 
     .search-field {
         flex-basis: 100%
@@ -662,13 +596,9 @@ td small {
 }
 
 @media(max-width:700px) {
-    .repeat-row { grid-template-columns: 1fr 1fr; }
-    .repeat-row textarea { grid-column: 1 / -1; }
-    .repeat-header { display: none; }
     .suggestion-menu { min-width: 0; width: min(420px, 90vw); }
     .repeat-row .delete-action { justify-self: start; }
     .advance-editor-row .delete-action { grid-column: auto; grid-row: 1; align-self: center; }
-    .editor-row { grid-template-columns: 1fr 1fr; }
 
     .order-brand {
         justify-content: center
@@ -689,22 +619,9 @@ td small {
     .project-modal-backdrop {
         padding: 10px
     }
-
-    .reimbursement-form-body { grid-template-columns: 1fr; }
-    .reimbursement-summary { grid-template-columns: 1fr 1fr; }
-    .reimbursement-summary > div:last-child { grid-column: auto; }
     .reimbursement-callout { display: grid; gap: 4px; }
     .reimbursement-actions { justify-content: stretch; }
     .reimbursement-actions > button { flex: 1; }
-    .reimbursement-form-body .full-field { grid-column: auto; }
-
-    .full {
-        grid-column: auto
-    }
-
-    .inline-create {
-        grid-column: auto
-    }
 
     .form-footer {
         align-items: flex-end;
@@ -725,9 +642,5 @@ td small {
 
     .drawer-filter-grid {
         grid-template-columns: 1fr
-    }
-
-    .column-list {
-        grid-template-columns: 1fr 1fr
     }
 }

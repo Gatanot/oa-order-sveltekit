@@ -27,6 +27,7 @@
 | `10b6b15` `fix: 补齐缺失样式并消除未定义变量与冗余 !important` | **C 类**：新增 `.muted`、`.catalog-page-status`，给操作按钮共用规则补 `text-decoration:none`；**D 类**：`--radius-sm`→`var(--radius-md)`、`--text`→`var(--ink)`，移除全部 4 处 `!important` |
 | 本分支 | `refactor: 按功能保序拆分 app.css`：将单文件保序切分为 `src/lib/styles/` 下 18 个功能文件（见 3.3 / 附录 A），`app.css` 改为按原顺序的 `@import` 清单，逐文件加功能标题注释；把指纹采集/比对脚本落到 `scripts/` |
 | 本分支 | `refactor(css): 逐条清理 legacy.css`：删除被后续规则覆盖的失效声明（含 shorthand→longhand、无条件覆盖 @media、选择器列表覆盖），并拆掉完全失效的选择器选项。共删 40 个声明 / 27 条整条规则，另 4 条规则移除失效选择器；`legacy.css` 838→733 行（见 3.1） |
+| 本分支 | `feat(css): 增强版交互态指纹 + 惰性规则清理`：新增 `scripts/css-fingerprint-interactive.mjs`（自动打开弹窗/抽屉等交互态）；用它 + CSSOM 反向貪心又删除 30 条运行时惰性规则；`legacy.css` 733→646 行 |
 
 **体积变化**：`app.css` 4139 → **3360 行**；`!important` 14 → **0**；未定义变量 → **0**。拆分后总行数不变（仅把 `app.css` 换成 import 清单，并在每个文件顶部加一行功能注释）。开发 `npm run dev` 与生产 `npm run build` 均通过；全量计算样式指纹 **mismatch = 0**。
 
@@ -57,8 +58,11 @@
 | 2 | 后续**无条件**规则覆盖 `@media` 内的同名选择器 | 合并入上表 | 媒体命中时后写规则总是胜出 |
 | 3 | 后续**选择器列表**（如 `.a, .b`）中含同名选择器 | 15 声明 / 11 规则 | 选择器列表不改变单项特异性，后写胜出 |
 | 4 | 选择器列表中**某个选项的全部声明**被后续同名选择器覆盖 | 4 条规则去选项 | 从列表中拆掉死选项，保留其他选项 |
+| 5 | **增强指纹 + CSSOM 反向貪心**：在基础态与已打开交互态下逐条关闭，逐 combo 反向遍历、仅当关闭后无任何计算样式/邻近布局变化才删；取“在所有匹配该规则的 combo 上都可删”的交集 | 30 规则 | 捕获静态分析测不到的情况，如 `overflow` 被 `overflow-x/overflow-y` 分别覆盖 |
 
-结果：`legacy.css` 838 → **733 行**。删除后均用指纹回归确认 `mismatch=0`，并 `npm run build` + `npm run test:smoke` 通过。
+结果：`legacy.css` 838 → **646 行**（共删 55 声明 / 57 条整条规则，另 4 条规则去掉失效选项）。每轮均用“基础指纹 + 交互指纹”回归确认 `mismatch=0`，并 `npm run build` + `npm run test:smoke` 通过。
+
+> 反向貪心的坑：曾发现一对失效规则（`.filter-drawer` 宽度与 `.drawer-filter-grid` 列数）与后续媒体规则形成“互相保护”的特异性环（高特异性旧规则养着低特异性媒体规则，后者又养着另一个同值规则）——只删其中任一个均无变化，一起删却会变。因此**最终以真实指纹为准**，该对已保守保留。
 
 **仍保留的部分（不删）**：剩余 96 个选择器选项在 9 路由 × 6 宽度下运行时不命中，但经核对均位于**未展开交互态**（弹窗/抽屉/导出导入/凭证/建议菜单/游客登录入口等），且类名在源码中均有引用；按文档建议保留，不做基于“未命中”的删除。
 
@@ -106,7 +110,7 @@
 
 ### 3.4 其他低优先级
 
-- **运行时未命中但静态仍引用的选择器**：第 3 节 A 类只清理了“源码零引用”的高置信部分；`legacy.css` 中仍有 **96 个选择器选项**在 9 条主路由 × 6 个宽度下从未命中，全部属于**未打开的弹窗/抽屉/导入导出/凭证/建议菜单/条件登录入口**等状态，且类名在源码中均可查到。**不做基于“测试态未命中”的删除**；如要清理，需先做“打开所有弹窗/抽屉 + 强制 hover/focus”的增强版指纹。
+- **运行时未命中但静态仍引用的选择器**：已新增**增强版指纹**（`scripts/css-fingerprint-interactive.mjs`），自动打开筛选/导出抽屉、新建项目/确认/报销/新增资料库弹窗、字段选择菜单、报销单据抽屉、资料库明细与导入预览等交互态。在此基础上用 CSSOM 反向貪心找出了 30 条运行时惰性规则并删除。仍有一些状态因开发数据不满足而未覆盖（报销附件、订单附件预览、报价建议菜单、打回弹窗、游客登录入口等），这些状态对应的规则**一概保留**，待有可用数据/角色后再评估。
 - **同一选择器在同代内也有重复**（如 `.order-sidebar`、`.form-grid`、`.repeat-row` 各有 3–4 处定义），与 3.2 同因，暂不动。
 - **CSS 变量**：`app.css` 内定义的变量目前都被引用到；`--radius-sm`/`--text` 已修。注意 `:root` 变量是全局的，拆分后分布在 `base.css` 与 `theme.css`，不要在其它文件重复定义。
 - `+error.svelte` 的样式是组件 scoped，与全局无关，勿并入。
@@ -122,15 +126,22 @@ CSS 层叠对顺序极其敏感，像素截图不够（很多差异在布局尺�
 - 要求：**mismatch = 0** 才能接受。
 
 > 注意：Playwright 不是本项目依赖。本轮用的是环境里已有的 `/root/work/XiaoBa-CLI/node_modules/playwright` 与 `/root/.cache/ms-playwright/chromium-1243`。换机器需另装。
-> 指纹脚本已落到 `scripts/css-fingerprint.mjs` 与 `scripts/css-fingerprint-compare.mjs`（可用环境变量指定 playwright/chromium 路径）。
+> 指纹脚本已落到仓库：
+> - `scripts/css-fingerprint.mjs` + `scripts/css-fingerprint-compare.mjs`：基础态（9 路由 × 6 宽度）；
+> - `scripts/css-fingerprint-interactive.mjs`：增强态（在基础态上自动打开筛选/导出抽屉、弹窗、字段菜单、报销单据、资料库明细/导入预览等），4 个宽度。
+> 两个采集脚本配合同一个比对脚本使用；增强态输出里的 `__reached` 记录每个交互态是否真正打开（marker 命中），未命中的状态不计入。
+> 采集前会把鼠标移到 `(1,1)` 并等足过渡动画，避免 `:hover`/transition 造成的非确定性。
 
-运行方式：先 `npm run dev -- --port 5199`，再分别采集 before/after 并比对：
+运行方式：先 `npm run dev -- --port 5199`，再分别采集 before/after 并比对（基础 + 交互都要为 0）：
 
 ```bash
 node scripts/css-fingerprint.mjs /tmp/fp-before.json
+node scripts/css-fingerprint-interactive.mjs /tmp/fp-int-before.json
 # …改动…
 node scripts/css-fingerprint.mjs /tmp/fp-after.json
-node scripts/css-fingerprint-compare.mjs /tmp/fp-before.json /tmp/fp-after.json   # mismatch=0 才接受
+node scripts/css-fingerprint-interactive.mjs /tmp/fp-int-after.json
+node scripts/css-fingerprint-compare.mjs /tmp/fp-before.json /tmp/fp-after.json
+node scripts/css-fingerprint-compare.mjs /tmp/fp-int-before.json /tmp/fp-int-after.json   # mismatch=0 才接受
 ```
 
 可用环境变量覆盖：`PLAYWRIGHT_PATH`、`CHROMIUM_PATH`、`BASE_URL`、`ORDER_ID`（默认取 `data/oa.db` 中一个真实订单 id）。
@@ -141,8 +152,8 @@ node scripts/css-fingerprint-compare.mjs /tmp/fp-before.json /tmp/fp-after.json 
 
 1. ~~先决定拆分方案并落地~~ → **已完成**（第 3.3 节，保序拆分 + 指纹 0 差异）。
 2. 在拆分后的文件内处理 **3.2 的跨代重复**：虽然完全冗余组为 0，但可逐组人工评估“旧声明是否能搬到新文件而不影响层叠”，每条都必须跑指纹回归。
-3. 消化 **3.1 legacy 层**（`src/lib/styles/legacy.css`）：**静态可证的失效声明已清理完毕**（见 3.1，838→733 行，指纹 0 差异）。剩余只能靠增强版指纹（打开弹窗/抽屉/hover/focus）逐个确认后再删。
-4. **3.4** 用“打开所有弹窗/抽屉 + 强制 hover/focus 状态”的增强版指纹，找出剩余运行时死规则。
+3. 消化 **3.1 legacy 层**（`src/lib/styles/legacy.css`）：**静态可证的失效声明已清理完毕，交互态惰性规则也已清理 30 条**（838→646 行，双指纹 0 差异）。剩余只能靠继续补充增强指纹状态（附件预览、建议菜单、打回弹窗、不同角色）后再评估。
+4. **3.4** 继续给增强指纹补充状态（订单/报销附件预览、报价建议菜单、打回弹窗、不同角色的审核按钮、强制 hover/focus），然后再评估剩余运行时死规则。
 
 ---
 
@@ -166,7 +177,8 @@ node scripts/split-app-css.mjs <原始 app.css> [输出目录]
 
 ## 附录 B：计算样式指纹脚本（已落地）
 
-- 采集：`scripts/css-fingerprint.mjs`
+- 基础采集：`scripts/css-fingerprint.mjs`
+- 增强采集（交互态）：`scripts/css-fingerprint-interactive.mjs`
 - 比对：`scripts/css-fingerprint-compare.mjs`（对同一 key 的 `\u0001` 分隔串逐段比较，任何不一致即回归）
 
 ```bash
