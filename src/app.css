@@ -166,9 +166,6 @@ button {
     margin-bottom: 9px;
 }
 
-.positive {
-    color: var(--teal) !important
-}
 .filter-result {
     white-space: nowrap;
     margin-right: 2px;
@@ -261,7 +258,7 @@ button {
 .voucher-grid small { color: var(--muted); font-size: 11px; margin-bottom: 5px; }
 .voucher-grid b { overflow-wrap: anywhere; }
 .voucher-full { grid-column: 1 / -1; }
-.voucher-full:nth-child(odd) { border-right: 0 !important; }
+.voucher-grid > .voucher-full:nth-child(odd) { border-right: 0; }
 .reimbursement-detail { width: min(560px, 92vw); }
 .reimbursement-progress { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; padding: 0 0 20px; margin: 0; list-style: none; }
 .reimbursement-progress li { display: grid; gap: 6px; justify-items: center; text-align: center; font-size: 11px; color: var(--muted); }
@@ -1300,6 +1297,7 @@ select:disabled {
   font-size: 14px;
   font-weight: 700;
   line-height: 1.2;
+  text-decoration: none;
 }
 
 .primary-action,
@@ -1531,6 +1529,16 @@ select:disabled {
   font-size: 12.5px;
 }
 
+.muted {
+  color: var(--muted);
+}
+
+.catalog-page-status {
+  color: var(--muted);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
 .column-settings {
   position: relative;
 }
@@ -1617,11 +1625,11 @@ input[type="radio"] {
 }
 
 .summary-row .positive {
-  color: var(--teal) !important;
+  color: var(--teal);
 }
 
 .summary-row .negative {
-  color: var(--red) !important;
+  color: var(--red);
 }
 
 .editor-heading h3,
@@ -1983,7 +1991,7 @@ tbody tr:hover,
   margin-bottom: 10px;
   padding: 4px;
   border: 1px solid var(--line-soft);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: #f8fafc;
   scrollbar-width: thin;
 }
@@ -2004,7 +2012,7 @@ tbody tr:hover,
   white-space: nowrap;
 }
 
-.review-person-tabs button:hover { background: #fff; color: var(--text); }
+.review-person-tabs button:hover { background: #fff; color: var(--ink); }
 .review-person-tabs button.active { border-color: var(--line); background: #fff; color: var(--blue); font-weight: 700; box-shadow: 0 1px 2px rgba(30, 50, 80, .06); }
 .review-person-tabs button b { min-width: 18px; color: inherit; font-size: 11px; text-align: center; }
 
