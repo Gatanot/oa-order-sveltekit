@@ -46,10 +46,6 @@
     gap: 7px
 }
 
-.primary-action {
-    border-color: var(--blue);
-}
-
 .primary-action:disabled {
     opacity: .5;
     cursor: not-allowed
@@ -70,10 +66,6 @@
 .section-heading span {
     color: var(--muted);
     font-size: 12px
-}
-
-.summary-row {
-    margin-bottom: 19px
 }
 
 .field-hint {
@@ -138,10 +130,6 @@
     display: block
 }
 
-.summary-row span {
-    margin-bottom: 9px;
-}
-
 .filter-result {
     white-space: nowrap;
     margin-right: 2px;
@@ -179,10 +167,6 @@
 .search-field {
     gap: 8px;
     flex: 1;
-}
-
-.search-field input {
-    padding-left: 0
 }
 
 .date-input {
@@ -226,7 +210,6 @@
     font-size: 12px;
 }
 .reimbursement-actions button:disabled { opacity: .5; cursor: not-allowed; }
-@media(max-width:700px) { .review-queue-layout { display: block; } .review-person-tabs { display: flex; overflow-x: auto; } }
 .voucher-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 1px solid var(--line); }
 .voucher-grid > div { padding: 13px; border-bottom: 1px solid var(--line); }
 .voucher-grid > div:nth-child(odd) { border-right: 1px solid var(--line); }
@@ -244,9 +227,6 @@
 .reimbursement-form-body { grid-template-columns: 1fr 1fr; }
 .reimbursement-form-body .full-field { grid-column: 1 / -1; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-.info-grid {
-    margin-bottom: 18px;
-}
 .info-grid small {
     display: block;
     margin-bottom: 5px;
@@ -405,7 +385,6 @@ td small {
     align-items: center;
     justify-content: space-between;
     gap: 15px;
-    border-bottom: 1px solid var(--line);
 }
 
 .form-title span,
@@ -452,10 +431,6 @@ td small {
     gap: 4px;
     align-items: center;
     font-size: 11px;
-}
-
-.form-footer {
-    border-bottom: 0;
 }
 
 .submit-dropdown {
@@ -679,12 +654,8 @@ td small {
 .repeat-row.advance-editor-row { grid-template-columns: minmax(110px, .8fr) minmax(180px, 1.5fr) 95px 135px minmax(170px, 1.3fr) 70px 38px; }
 
 @media(max-width:1000px) {
-    .form-grid { grid-template-columns: 1fr 1fr; }
-    .form-grid > label,
-    .form-grid > label.compact-field { grid-column: span 1; }
 
     .entry-layout {
-        padding: 28px 24px 55px;
         gap: 30px
     }
     .repeat-row { grid-template-columns: minmax(210px, 2fr) repeat(4, minmax(75px, 1fr)) 38px; }
@@ -696,30 +667,15 @@ td small {
 }
 
 @media(max-width:700px) {
-    .form-grid > label,
-    .form-grid > label.compact-field { grid-column: 1 / -1; }
-
-    .info-grid { grid-template-columns: 1fr 1fr; }
     .repeat-row, .editor-row { grid-template-columns: 1fr 1fr; }
     .repeat-row textarea { grid-column: 1 / -1; }
     .repeat-header { display: none; }
     .suggestion-menu { min-width: 0; width: min(420px, 90vw); }
     .repeat-row .delete-action { justify-self: start; }
     .advance-editor-row .delete-action { grid-column: auto; grid-row: 1; align-self: center; }
-    .detail-editor { margin-left: 0; margin-right: 0; }
-
-    .detail-card { padding: 15px; }
-    .detail-editor { margin: 15px; padding: 12px; }
     .editor-row { grid-template-columns: 1fr 1fr; }
 
-    .order-sidebar {
-        width: 67px;
-        min-width: 67px;
-        padding: 18px 9px
-    }
-
     .order-brand {
-        padding: 0 0 30px;
         justify-content: center
     }
 
@@ -728,60 +684,16 @@ td small {
         display: none
     }
 
-    .top-actions {
-        gap: 5px
-    }
-
-    .outline-action,
-    .primary-action {
-        font-size: 11px;
-        padding: 8px 9px
-    }
-
     .top-actions .icon-control {
         display: none
-    }
-
-    .page-section {
-        padding: 26px 15px 45px
-    }
-
-    .section-heading h2 {
-        font-size: 22px
-    }
-
-    .summary-row,
-    .summary-row-five {
-        grid-template-columns: 1fr 1fr
-    }
-
-    .summary-row b {
-        font-size: 17px
     }
 
     .search-field {
         grid-column: 1/-1
     }
 
-    .entry-layout {
-        display: block;
-        padding: 30px 15px 45px
-    }
-
     .project-modal-backdrop {
         padding: 10px
-    }
-
-    .project-modal-head,
-    .project-modal-body,
-    .project-modal-footer {
-        padding-left: 17px;
-        padding-right: 17px
-    }
-
-    .form-grid {
-        grid-template-columns: 1fr;
-        padding: 17px
     }
 
     .reimbursement-form-body { grid-template-columns: 1fr; }
@@ -800,11 +712,6 @@ td small {
         grid-column: auto
     }
 
-    .form-title,
-    .form-footer {
-        padding: 16px 17px
-    }
-
     .form-footer {
         align-items: flex-end;
         position: sticky;
@@ -820,13 +727,6 @@ td small {
     .form-footer .primary-action {
         min-width: 100px;
         min-height: 40px
-    }
-
-    .drawer-head,
-    .drawer-body,
-    .drawer-footer {
-        padding-left: 18px;
-        padding-right: 18px
     }
 
     .drawer-filter-grid {
