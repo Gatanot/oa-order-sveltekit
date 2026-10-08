@@ -1,0 +1,182 @@
+/* attachment-preview — 附件预览（原 app.css 第 2184–2365 行） */
+/* Attachment preview */
+.attachment-preview-backdrop {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 22px;
+  background: rgba(16, 24, 40, .7);
+  backdrop-filter: blur(3px);
+}
+
+.attachment-preview-modal {
+  display: flex;
+  width: min(1120px, 96vw);
+  height: min(840px, 94vh);
+  min-height: 420px;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(16, 24, 40, .36);
+}
+
+.attachment-preview-head,
+.attachment-preview-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px 20px;
+  background: #fff;
+}
+
+.attachment-preview-head {
+  border-bottom: 1px solid var(--line);
+}
+
+.attachment-preview-head > div {
+  min-width: 0;
+}
+
+.attachment-preview-head h2 {
+  overflow: hidden;
+  margin: 2px 0 2px;
+  color: var(--navy);
+  font-size: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-preview-head span,
+.attachment-preview-footer > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.attachment-preview-body {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  padding: 18px;
+  background: #e9edf3;
+}
+
+.attachment-preview-body.preview-loading {
+  background: #f4f6f9;
+}
+
+.attachment-preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 4px;
+  background: #fff;
+  box-shadow: 0 8px 28px rgba(16, 24, 40, .16);
+}
+
+.attachment-preview-frame {
+  width: 100%;
+  height: 100%;
+  min-height: 520px;
+  border: 0;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.attachment-preview-state {
+  display: flex;
+  max-width: 440px;
+  align-items: center;
+  flex-direction: column;
+  gap: 8px;
+  padding: 34px;
+  color: #536176;
+  text-align: center;
+}
+
+.attachment-preview-state b {
+  color: var(--navy);
+  font-size: 16px;
+}
+
+.attachment-preview-state span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.attachment-preview-state.preview-error {
+  color: var(--red);
+}
+
+.preview-spinner {
+  animation: attachment-preview-spin .8s linear infinite;
+}
+
+@keyframes attachment-preview-spin {
+  to { transform: rotate(360deg); }
+}
+
+.attachment-preview-footer {
+  border-top: 1px solid var(--line);
+  background: #f8fafc;
+}
+
+.attachment-preview-footer > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.attachment-preview-footer a.primary-action {
+  text-decoration: none;
+}
+
+@media (max-width: 700px) {
+  .attachment-preview-backdrop {
+    padding: 0;
+  }
+
+  .attachment-preview-modal {
+    width: 100vw;
+    height: 100dvh;
+    min-height: 0;
+    border-radius: 0;
+  }
+
+  .attachment-preview-head,
+  .attachment-preview-footer {
+    padding: 12px;
+  }
+
+  .attachment-preview-body {
+    padding: 8px;
+  }
+
+  .attachment-preview-frame {
+    min-height: 0;
+  }
+
+  .attachment-preview-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .attachment-preview-footer > div {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .attachment-preview-footer > div > :last-child {
+    grid-column: 1 / -1;
+  }
+}

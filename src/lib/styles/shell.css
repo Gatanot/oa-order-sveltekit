@@ -1,0 +1,117 @@
+/* shell — 应用外壳与侧边栏（原 app.css 第 1096–1212 行） */
+/* Application shell and sidebar */
+.order-app {
+  display: grid;
+  grid-template-columns: 228px minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.order-sidebar {
+  position: sticky;
+  top: 0;
+  width: 228px;
+  min-width: 228px;
+  height: 100vh;
+  padding: 25px 14px 18px;
+  overflow-y: auto;
+  background: var(--navy);
+  color: #c7d2e5;
+}
+
+.order-brand {
+  display: block;
+  padding: 4px 10px 18px;
+}
+
+.order-brand b {
+  color: #fff;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: -.01em;
+}
+
+.order-brand span {
+  margin-top: 3px;
+  color: #a9b8d2;
+  font-size: 11px;
+}
+
+.side-nav {
+  display: grid;
+  gap: 4px;
+}
+
+.side-nav button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 42px;
+  margin: 0;
+  padding: 10px 13px;
+  border: 0;
+  border-left: 3px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #c7d2e5;
+  text-align: left;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.side-nav button:hover {
+  background: #2a3d62;
+  color: #fff;
+}
+
+.side-nav button.active {
+  border-left-color: #8ca7ff;
+  background: var(--navy-2);
+  color: #fff;
+}
+
+.side-nav button:disabled {
+  opacity: .42;
+}
+
+.sidebar-note {
+  display: grid;
+  gap: 4px;
+  margin-top: auto;
+  padding: 18px 10px 12px;
+  border-top: 1px solid #2e4568;
+}
+
+.sidebar-note b {
+  color: #fff;
+  font-size: 12px;
+}
+
+.sidebar-note span {
+  color: #a9b8d2;
+  font-size: 11px;
+}
+
+.settings-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: #a9bbdb;
+  font-size: 11px;
+}
+
+.settings-action {
+  padding: 6px 0 0;
+}
+
+.settings-action:hover {
+  color: #fff;
+}
+
+.order-main {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}

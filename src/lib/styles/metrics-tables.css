@@ -1,0 +1,135 @@
+/* metrics-tables — 指标卡与表格（原 app.css 第 1593–1727 行） */
+/* Metrics and supplemental overview cards */
+.summary-row,
+.summary-row-five {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin: 14px 0 18px;
+}
+
+.summary-row > div {
+  display: flex;
+  min-height: 84px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: #fff;
+}
+
+.summary-row span {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.summary-row b {
+  color: var(--navy);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.summary-row .positive {
+  color: var(--teal);
+}
+
+.summary-row .negative {
+  color: var(--red);
+}
+
+.editor-heading h3,
+.detail-card h3 {
+  color: var(--navy);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+/* Tables */
+.table-panel {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: #fff;
+  box-shadow: none;
+}
+
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+table {
+  width: 100%;
+  min-width: max-content;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+th,
+td {
+  padding: 13px 14px;
+  border-bottom: 1px solid var(--line-soft);
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+th {
+  background: #f6f8fb;
+  color: #536279;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: .02em;
+}
+
+td {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+tbody tr:hover,
+.order-click-row:hover {
+  background: #f8faff;
+}
+
+.status-dot,
+.category-label {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--teal-soft);
+  color: var(--teal);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.status-dot.reimbursement-rejected {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.money {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.cost {
+  color: var(--amber);
+}
+
+.empty-table {
+  padding: 28px;
+  color: var(--muted);
+  text-align: center;
+  white-space: normal;
+}

@@ -1,0 +1,25 @@
+/* base — 基础重置与全局变量（原 app.css 第 1–25 行） */
+:root {
+    --nav2: var(--navy-2);
+    --shadow: 0 8px 24px rgba(23, 36, 61, .07);
+}
+
+* {
+    box-sizing: border-box
+}
+
+body {
+    margin: 0;
+    min-width: 320px;
+}
+
+button,
+input,
+select,
+textarea {
+    font: inherit;
+}
+
+button {
+    cursor: pointer
+}

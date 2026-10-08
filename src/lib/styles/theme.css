@@ -1,0 +1,56 @@
+/* theme — 视觉主题变量与根排版（原 app.css 第 1040–1095 行） */
+/* Visual system aligned with the approved UI reference. */
+:root {
+  --ink: #1b2738;
+  --muted: #5f6e82;
+  --line: #dfe5ee;
+  --line-soft: #edf1f5;
+  --paper: #f3f5f8;
+  --panel: #fff;
+  --navy: #17243d;
+  --navy-2: #24385d;
+  --blue: #315bdc;
+  --blue-strong: #2349bd;
+  --teal: #0f6d57;
+  --teal-soft: #e9f6f1;
+  --amber: #865700;
+  --amber-soft: #fff4d6;
+  --red: #b54949;
+  --red-soft: #fdecec;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  font-family: "Avenir Next", "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  color: var(--ink);
+  font-size: 14px;
+}
+
+html,
+body {
+  min-height: 100%;
+  background: var(--paper);
+}
+
+body {
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+button:disabled,
+input:disabled,
+select:disabled {
+  cursor: not-allowed;
+  opacity: .48;
+}
+
+:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}

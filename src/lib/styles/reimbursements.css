@@ -1,0 +1,75 @@
+/* reimbursements — 报销（原 app.css 第 1949–2023 行） */
+/* Reimbursements */
+.reimbursement-filters {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.reimbursement-filters.finance-filters {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.reimbursement-summary {
+  margin-bottom: 18px;
+}
+
+.reimbursement-callout {
+  border-color: #eec4c1;
+  border-radius: 9px;
+  background: var(--red-soft);
+}
+
+.reimbursement-actions {
+  margin: 0 0 15px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 9px;
+  background: #f8fafc;
+}
+
+.role-context {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.review-queue-layout {
+  display: block;
+}
+
+.review-person-tabs {
+  display: flex;
+  overflow-x: auto;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 4px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  background: #f8fafc;
+  scrollbar-width: thin;
+}
+
+.review-person-tabs button {
+  display: inline-flex;
+  min-height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.review-person-tabs button:hover { background: #fff; color: var(--ink); }
+.review-person-tabs button.active { border-color: var(--line); background: #fff; color: var(--blue); font-weight: 700; box-shadow: 0 1px 2px rgba(30, 50, 80, .06); }
+.review-person-tabs button b { min-width: 18px; color: inherit; font-size: 11px; text-align: center; }
+
+.reimbursement-review-table {
+  min-width: 0;
+  margin-bottom: 0;
+}

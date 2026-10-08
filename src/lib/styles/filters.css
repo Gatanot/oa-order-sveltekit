@@ -1,0 +1,213 @@
+/* filters — 筛选与表格工具（原 app.css 第 1380–1592 行） */
+/* Filters */
+.filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: end;
+  gap: 16px 18px;
+  margin: 16px 0 12px;
+  padding: 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  background: #f8fafc;
+}
+
+.field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.field > span,
+.field > label,
+.form-grid label,
+.drawer-filter-grid label,
+.project-modal-body label,
+.settings-name-field {
+  color: #42536b;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+.field > span,
+.field > label {
+  display: flex;
+  align-items: flex-end;
+  min-height: 20px;
+  margin-bottom: 7px;
+}
+
+.field input,
+.field select,
+.field textarea,
+.filters input,
+.filters select,
+.form-grid input,
+.form-grid select,
+.form-grid textarea,
+.drawer-filter-grid input,
+.drawer-filter-grid select,
+.project-modal-body input,
+.project-modal-body select,
+.project-modal-body textarea,
+.settings-name-field input,
+.catalog-filters select {
+  width: 100%;
+  min-width: 0;
+  height: 46px;
+  margin-top: 6px;
+  padding: 0 13px;
+  border: 1px solid #d6deea;
+  border-radius: 10px;
+  outline: 0;
+  background: #fff;
+  color: #202d40;
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.field input,
+.field select,
+.field textarea,
+.filters input,
+.filters select {
+  margin-top: 0;
+}
+
+.field textarea,
+.form-grid textarea,
+.project-modal-body textarea {
+  height: auto;
+  min-height: 96px;
+  padding: 11px 13px;
+  resize: vertical;
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus,
+.filters input:focus,
+.filters select:focus,
+.form-grid input:focus,
+.form-grid select:focus,
+.form-grid textarea:focus,
+.drawer-filter-grid input:focus,
+.drawer-filter-grid select:focus,
+.project-modal-body input:focus,
+.project-modal-body select:focus,
+.project-modal-body textarea:focus,
+.settings-name-field input:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(49, 91, 220, .16);
+}
+
+.search-field {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  height: 46px;
+  padding: 0 12px;
+  border: 1px solid #d6deea;
+  border-radius: 10px;
+  background: #fff;
+  color: #8090a6;
+}
+
+.search-field:focus-within {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(49, 91, 220, .16);
+}
+
+.search-field input,
+.catalog-filters .search-field input {
+  width: 100%;
+  height: 44px;
+  margin: 0;
+  padding: 0 0 0 8px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 15px;
+}
+
+.search-field input:focus {
+  box-shadow: none;
+}
+
+.table-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 42px;
+  margin: 12px 0 9px;
+}
+
+.filter-result {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.catalog-page-status {
+  color: var(--muted);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.column-settings {
+  position: relative;
+}
+
+.column-settings summary {
+  display: flex;
+  align-items: center;
+  padding: 10px 13px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #42516a;
+  cursor: pointer;
+  list-style: none;
+}
+
+.column-settings summary::-webkit-details-marker {
+  display: none;
+}
+
+.column-menu {
+  position: absolute;
+  z-index: 12;
+  top: calc(100% + 6px);
+  right: 0;
+  display: grid;
+  min-width: 190px;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgba(24, 34, 48, .14);
+}
+
+.column-menu label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  width: 17px;
+  height: 17px;
+  min-width: 17px;
+  accent-color: var(--blue);
+}

@@ -1,0 +1,221 @@
+/* orders — 订单详情与表单（原 app.css 第 1728–1948 行） */
+/* Order detail and order form */
+.detail-card,
+.order-form {
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+  box-shadow: none;
+}
+
+.detail-card {
+  padding: 0;
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  overflow: hidden;
+  margin: 16px 0 20px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+
+.info-grid > div {
+  min-width: 0;
+  padding: 12px;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.info-grid small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.info-grid b {
+  overflow-wrap: anywhere;
+}
+
+.form-title,
+.form-footer {
+  padding: 0 0 20px;
+  border: 0;
+  background: #fff;
+}
+
+.form-title {
+  align-items: flex-start;
+}
+
+.form-title h3 {
+  margin: 3px 0 5px;
+  color: var(--navy);
+  font-size: 21px;
+}
+
+.form-title span {
+  font-size: 12.5px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 15px 16px;
+  padding: 18px;
+  border: 1px solid #dbe3f0;
+  border-radius: var(--radius-lg);
+  background: #f8faff;
+}
+
+.form-grid > label {
+  grid-column: span 2;
+}
+
+.form-grid > label.compact-field {
+  grid-column: span 1;
+}
+
+.form-grid > label.full {
+  grid-column: 1 / -1;
+}
+
+.form-grid label em,
+.project-modal-body label em {
+  color: var(--red);
+  font-style: normal;
+}
+
+.inline-create {
+  margin-top: -3px;
+}
+
+.inline-create button {
+  color: var(--blue);
+  font-weight: 700;
+}
+
+.detail-editor {
+  margin: 20px 0 0;
+  padding: 18px;
+  border: 1px solid #dbe3f0;
+  border-radius: var(--radius-lg);
+  background: #f8faff;
+}
+
+.editor-heading {
+  margin-bottom: 12px;
+}
+
+.editor-heading h3 {
+  margin: 0;
+}
+
+.repeat-header {
+  color: #66758b;
+  font-size: 11.5px;
+}
+
+.repeat-row {
+  gap: 10px;
+  margin: 8px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.repeat-row input,
+.repeat-row select,
+.repeat-row textarea {
+  min-height: 46px;
+  padding: 0 12px;
+  border: 1px solid #d6deea;
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.repeat-row textarea {
+  min-height: 82px;
+  padding-block: 11px;
+}
+
+.repeat-row input:focus,
+.repeat-row select:focus,
+.repeat-row textarea:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(49, 91, 220, .16);
+}
+
+.repeat-row input[readonly] {
+  background: #f3f6f7;
+  color: #536a75;
+}
+
+.form-footer {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.upload-field {
+  border-color: #c4d2ee;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.upload-action {
+  border-color: #cad7fb;
+  border-radius: 10px;
+  background: #eef3ff;
+  color: var(--blue);
+}
+
+.upload-action:hover {
+  border-color: var(--blue);
+  background: #e6edff;
+}
+
+.suggestion-menu {
+  border-color: #cad7fb;
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(24, 34, 48, .14);
+}
+
+.suggestion-menu button:hover,
+.suggestion-menu button:focus-visible {
+  background: #eef3ff;
+}
+
+.autocomplete-field.catalog-matched input {
+  padding-right: 82px;
+  border-color: #8bcbb7;
+  background: #f7fcfa;
+}
+
+.catalog-match-mark {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  right: 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 6px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: #dff5ec;
+  color: #176c58;
+  font-size: 10px;
+  font-weight: 800;
+  pointer-events: none;
+}
+
+.suggestion-menu .suggestion-spec {
+  overflow: hidden;
+  color: #77869a;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
