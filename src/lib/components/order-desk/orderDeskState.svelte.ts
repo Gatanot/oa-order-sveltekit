@@ -122,7 +122,7 @@ export function createOrderDesk(data: Data) {
   let plannerUid = $state<number | null>(null);
   let executionCompany = $state("");
   let paymentStatus = $state("未结款");
-  let status = $state("制作中");
+  let status = $state("已提交");
   let products = $state<Array<Record<string, any>>>([]);
   let editingOrderId = $state("");
   let submissionKey = $state("");
@@ -1325,7 +1325,7 @@ export function createOrderDesk(data: Data) {
     plannerUid = order.planner_uid || null;
     executionCompany = order.execution_company || "";
     paymentStatus = order.payment_status || "未结款";
-    status = order.status === "已完成" ? "已完成" : "制作中";
+    status = order.status === "已完成" ? "已完成" : "已提交";
     createdBy = order.created_by || creatorName;
     note = order.note || "";
     products = mergeCostsIntoProducts(order.products, order.costs);
@@ -1442,7 +1442,7 @@ export function createOrderDesk(data: Data) {
     planner = "";
     plannerUid = null;
     executionCompany = "";
-    status = "制作中";
+    status = "已提交";
     paymentStatus = "未结款";
     createdBy = creatorName;
     note = "";
@@ -1606,7 +1606,7 @@ export function createOrderDesk(data: Data) {
       } finally { busy = false; }
     });
   }
-  // 接单设计师、录入人（执行）或管理角色可将“制作中”的订单标记为已完成。
+  // 接单设计师、录入人（执行）或管理角色可将“已提交”的订单标记为已完成。
   function canCompleteOrder(order: any) {
     if (!order || order.status === "已完成") return false;
     const identity = data.identity;

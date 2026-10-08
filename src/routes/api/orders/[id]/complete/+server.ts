@@ -4,7 +4,7 @@ import { hasAnyRole, orderManageRoles } from '$lib/server/identity';
 import type { RequestHandler } from './$types';
 
 /**
- * 完成订单：接单设计师、录入人或管理角色可将订单从“制作中”标记为“已完成”。
+ * 完成订单：接单设计师、录入人或管理角色可将订单从“已提交”标记为“已完成”。
  * 设计师（订单指定设计师本人）完成时必须上传至少一张设计图。
  */
 export const POST: RequestHandler = async (event) => {
