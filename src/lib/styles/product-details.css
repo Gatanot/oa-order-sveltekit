@@ -4,6 +4,31 @@
 .repeat-header.editor-row {
   grid-template-columns: minmax(200px, 2fr) minmax(64px, .7fr) 76px 100px 100px minmax(110px, 1fr) 100px 38px;
 }
+
+/* 每行产品前方的自动序号 */
+.product-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.product-name-cell > .autocomplete-field {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.row-index {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #eef3fb;
+  color: #42516a;
+  font-size: 12px;
+  font-weight: 700;
+}
 @media (max-width: 1100px) {
   .repeat-row.editor-row,
   .repeat-header.editor-row {

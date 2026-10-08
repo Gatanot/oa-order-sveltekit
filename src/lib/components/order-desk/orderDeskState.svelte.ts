@@ -3,7 +3,7 @@ import { pushState, replaceState } from "$app/navigation";
 import type * as XLSXType from "xlsx";
 import type { PublicArtifactVisitor } from "$lib/artifact-visitor";
 import { api, appPath, currentAppPath } from "$lib/api";
-import { hasAnyRole, orderCreateRoles, orderExportRoles, orderManageRoles, orderViewAllRoles, reimbursementActionRoles, reimbursementViewAllRoles, catalogManageRoles } from "$lib/permissions";
+import { hasAnyRole, orderCreateRoles, orderExportRoles, orderManageRoles, orderViewAllRoles, reimbursementActionRoles, reimbursementViewAllRoles, catalogViewRoles, catalogManageRoles } from "$lib/permissions";
 
 const apiFetch = (input: RequestInfo | URL, init?: RequestInit) =>
   fetch(typeof input === "string" ? appPath(input) : input, init);
@@ -86,13 +86,14 @@ export type Data = {
     orders: Order[];
     reimbursements: Reimbursement[];
     reviewReimbursements: Reimbursement[];
+    historyReimbursements: Reimbursement[];
     visitor: PublicArtifactVisitor;
     identity: { uid: number; username: string; displayName: string; role: string; department: string; active: boolean };
   };
 
 
 export function createOrderDesk(data: Data) {
-  let view = $state<"overview" | "entry" | "catalog" | "reimbursements" | "review">("overview");
+  let view = $state<"overview" | "entry" | "catalog" | "reimbursements" | "review" | "history">("overview");
   let workMode = $state<"view" | "entry" | "finance">(hasAnyRole(data.identity, reimbursementActionRoles) ? "finance" : "entry");
   let isEmbedded = $state(false);
   let onArtifactGateway = $state(false);
@@ -104,6 +105,7 @@ export function createOrderDesk(data: Data) {
   let orders = $state(data.orders);
   let reimbursements = $state(data.reimbursements);
   let reviewReimbursements = $state(data.reviewReimbursements);
+  let historyReimbursements = $state(data.historyReimbursements || []);
   let reimbursementRefreshVersion = $state(0);
   let customerId = $state("");
   let projectId = $state("");
@@ -122,7 +124,6 @@ export function createOrderDesk(data: Data) {
   let paymentStatus = $state("未结款");
   let status = $state("制作中");
   let products = $state<Array<Record<string, any>>>([]);
-  let advances = $state<Array<Record<string, any>>>([]);
   let editingOrderId = $state("");
   let submissionKey = $state("");
   let orderFormDirty = $state(false);
@@ -151,6 +152,13 @@ export function createOrderDesk(data: Data) {
   let reimbursementStatus = $state("");
   let reimbursementFrom = $state("");
   let reimbursementTo = $state("");
+  let historyProject = $state("");
+  let historyPerson = $state("");
+  let historyFrom = $state("");
+  let historyTo = $state("");
+  let historySearch = $state("");
+  let historyPage = $state(1);
+  const historyPageSize = 20;
   let search = $state("");
   let catalogSearch = $state("");
   let catalogKind = $state<"quote" | "cost">("quote");
@@ -161,9 +169,10 @@ export function createOrderDesk(data: Data) {
   let catalogImportPreview = $state<any>(null);
   let catalogImportFile = $state<File | null>(null);
   let catalogImportOwner = $state("");
+  let catalogImportTargetId = $state("");
   let catalogSourceOpen = $state(false);
   let catalogSourceName = $state("");
-  let catalogSourceCopyId = $state("");
+  let catalogSourceFile = $state<File | null>(null);
   let reimbursementRejectOpen = $state(false);
   let reimbursementRejectReason = $state("");
   let reimbursementRejectIds = $state<string[]>([]);
@@ -195,8 +204,10 @@ export function createOrderDesk(data: Data) {
   let exportExpand = $state(true);
   let exportTotal = $state(true);
   let exportSign = $state(true);
-  let showOrderFilters = $state(false);
   let showStandaloneReimbursement = $state(false);
+  let showCompleteOrder = $state(false);
+  let completeOrderTarget = $state<any>(null);
+  let completeOrderFiles = $state<File[]>([]);
   let selectedReimbursementIds = $state<string[]>([]);
   let standaloneEmployee = $state("");
   let standaloneItem = $state("");
@@ -242,7 +253,7 @@ export function createOrderDesk(data: Data) {
     ["unit", "单位"],
     ["quote_amount", "总报价"],
     ["cost_amount", "总成本"],
-    ["advance_amount", "员工垫付"],
+    ["advance_amount", "报销金额"],
     ["profit", "预计毛利"],
     ["product_name", "产品名称"],
     ["product_specification", "制作要求"],
@@ -401,7 +412,9 @@ export function createOrderDesk(data: Data) {
   const designers = $derived([
     ...new Set(orders.map((o) => o.designer).filter(Boolean)),
   ]);
+  const completeOrderNeedsDesign = $derived(Boolean(completeOrderTarget) && data.identity.uid === completeOrderTarget?.designer_uid);
   const canReviewReimbursements = $derived(hasAnyRole(data.identity, reimbursementActionRoles));
+  const canViewAllReimbursements = $derived(hasAnyRole(data.identity, reimbursementViewAllRoles));
   function matchesReimbursementFilters(item: any) {
     return (
       (!reimbursementProject || item.project_id === reimbursementProject) &&
@@ -450,15 +463,64 @@ export function createOrderDesk(data: Data) {
       .filter((item: any) => item.voucher_no)
       .map((item: any) => ({ ...item, voucherNo: item.voucher_no })),
   );
-  const selectedPendingReviewCount = $derived(
-    reviewReimbursementRows.filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "已提交待审核").length,
+  function reimbursementNextStatus(status: string, role: string | undefined): string | null {
+    if (status === "已提交待审核" && role === "manager") return "已审核待复核";
+    if (status === "已审核待复核" && role === "finance") return "已复核待确认";
+    if (status === "已复核待确认" && role === "owner") return "已确认待执行";
+    if (status === "已确认待执行" && role === "finance") return "已执行";
+    return null;
+  }
+  const selectedApprovableRows = $derived(
+    reviewReimbursementRows.filter((item: any) => selectedReimbursementIds.includes(item.id) && reimbursementNextStatus(item.reimbursement_status, data.identity?.role)),
   );
-  const selectedPendingPaymentCount = $derived(
-    reviewReimbursementRows.filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "已确认待执行").length,
+  const selectedApprovableCount = $derived(selectedApprovableRows.length);
+  const selectedApprovableTargets = $derived(
+    [...new Set(selectedApprovableRows.map((item: any) => reimbursementNextStatus(item.reimbursement_status, data.identity?.role)).filter((value): value is string => Boolean(value)))],
+  );
+  const selectedRejectableCount = $derived(
+    reviewReimbursementRows.filter((item: any) => selectedReimbursementIds.includes(item.id) && reimbursementNextStatus(item.reimbursement_status, data.identity?.role) && item.reimbursement_status !== "已确认待执行").length,
   );
   const creators = $derived([
     ...new Set(orders.map((o) => o.created_by).filter(Boolean)),
   ]);
+
+  // ── 历史报销（已完成）────────────────────────────────────────────
+  const historyRows = $derived(historyReimbursements.filter((item: any) =>
+    (!historyProject || item.project_id === historyProject) &&
+    (!historyPerson || item.employee === historyPerson) &&
+    (!historyFrom || item.advance_date >= historyFrom) &&
+    (!historyTo || item.advance_date <= historyTo) &&
+    (!historySearch || `${item.code || ""}${item.customer_name || ""}${item.project_name || ""}${item.employee || ""}${item.advance_item || ""}${item.voucher_no || ""}${item.note || ""}`.toLowerCase().includes(historySearch.toLowerCase()))
+  ));
+  const historyStats = $derived({
+    count: historyRows.length,
+    amount: historyRows.reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
+    archived: historyRows.filter((item: any) => item.voucher_archived_at).length,
+    people: new Set(historyRows.map((item: any) => item.employee).filter(Boolean)).size,
+  });
+  const historyByPerson = $derived.by(() => {
+    const groups = new Map<string, { employee: string; count: number; amount: number }>();
+    for (const item of historyRows as any[]) {
+      const employee = String(item.employee || "未填写");
+      const group = groups.get(employee) || { employee, count: 0, amount: 0 };
+      group.count += 1;
+      group.amount += Number(item.advance_amount || 0);
+      groups.set(employee, group);
+    }
+    return [...groups.values()].sort((a, b) => b.amount - a.amount || a.employee.localeCompare(b.employee, "zh-CN"));
+  });
+  const historyPeople = $derived([...new Set(historyReimbursements.map((item: any) => item.employee).filter(Boolean))]);
+  const historyPageCount = $derived(Math.max(1, Math.ceil(historyRows.length / historyPageSize)));
+  const pagedHistoryRows = $derived(historyRows.slice((historyPage - 1) * historyPageSize, historyPage * historyPageSize));
+  $effect(() => {
+    historyRows.length;
+    historyProject;
+    historyPerson;
+    historyFrom;
+    historyTo;
+    historySearch;
+    historyPage = 1;
+  });
 
   function notify(text: string, isError = false) {
     message = isError ? "" : text;
@@ -510,8 +572,8 @@ export function createOrderDesk(data: Data) {
         return;
       }
       showExport = false;
-      showOrderFilters = false;
       showStandaloneReimbursement = false;
+      showCompleteOrder = false;
       showProjectForm = false;
       catalogSourceOpen = false;
       reimbursementRejectOpen = false;
@@ -638,12 +700,13 @@ export function createOrderDesk(data: Data) {
     const previousView = view;
     if (path === "/reimbursements") view = "reimbursements";
     else if (path === "/reimbursements/review") view = "review";
+    else if (path === "/reimbursements/history") view = "history";
     else if (path === "/catalog") view = "catalog";
     else view = "overview";
     if (view !== previousView && (view === "reimbursements" || view === "review")) resetReimbursementFilters();
   }
   async function refresh() {
-    const [o, c, p, k, r, review] = await Promise.all([
+    const [o, c, p, k, r, review, history] = await Promise.all([
       api.get<{ data: Order[] }>("/api/orders"),
       api.get<{ data: Customer[] }>("/api/customers"),
       api.get<{ data: Project[] }>("/api/projects"),
@@ -651,6 +714,9 @@ export function createOrderDesk(data: Data) {
       api.get<{ data: Reimbursement[] }>("/api/reimbursements?scope=mine"),
       canReviewReimbursements
         ? api.get<{ data: Reimbursement[] }>("/api/reimbursements?scope=review")
+        : Promise.resolve({ data: [] as Reimbursement[] }),
+      canViewAllReimbursements
+        ? api.get<{ data: Reimbursement[] }>("/api/reimbursements?scope=history")
         : Promise.resolve({ data: [] as Reimbursement[] }),
     ]);
     orders = o.data;
@@ -661,6 +727,7 @@ export function createOrderDesk(data: Data) {
     catalogSources = sources.data;
     reimbursements = r.data;
     reviewReimbursements = review.data;
+    historyReimbursements = history.data;
     reimbursementRefreshVersion += 1;
   }
   function openStandaloneReimbursement() {
@@ -727,6 +794,29 @@ export function createOrderDesk(data: Data) {
     reimbursementTo = "";
     selectedReimbursementIds = [];
   }
+  function resetHistoryFilters() {
+    historyProject = "";
+    historyPerson = "";
+    historyFrom = "";
+    historyTo = "";
+    historySearch = "";
+    historyPage = 1;
+  }
+  function setHistoryPage(page: number) {
+    historyPage = Math.min(Math.max(page, 1), historyPageCount);
+  }
+  function exportHistory() {
+    const rows = historyRows;
+    if (!rows.length) { notify("当前筛选没有可导出的历史报销", true); return; }
+    const params = new URLSearchParams({ mode: "detail", status: "已执行" });
+    if (historyProject) params.set("project", historyProject);
+    if (historyPerson) params.set("person", historyPerson);
+    if (historyFrom) params.set("from", historyFrom);
+    if (historyTo) params.set("to", historyTo);
+    params.set("actor", creatorName || "财务人员");
+    window.location.href = appPath(`/api/reimbursements/export?${params}`);
+    notify(`正在导出 ${rows.length} 条历史报销`);
+  }
   async function batchUpdateReimbursements(ids: string[], status: string, rejectReason = "") {
     const response = await apiFetch("/api/reimbursements/batch", {
       method: "POST",
@@ -739,17 +829,32 @@ export function createOrderDesk(data: Data) {
     }
     return (await response.json()).data as Array<any>;
   }
-  async function batchReviewReimbursements() {
-    const targets = reimbursementRows().filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "已提交待审核");
-    if (!targets.length) { notify("请选择待审核记录", true); return; }
-    busy = true;
-    try {
-      await batchUpdateReimbursements(targets.map((item) => item.id), "已审核待复核");
-      selectedReimbursementIds = selectedReimbursementIds.filter((id) => !targets.some((item) => item.id === id));
-      await refresh();
-      notify(`已审核通过 ${targets.length} 条报销，等待财务复核`);
-    } catch (e) { notify(e instanceof Error ? e.message : "批量审核失败", true); }
-    finally { busy = false; }
+  function batchAdvanceReimbursements() {
+    const role = data.identity?.role;
+    const targets = reimbursementRows().filter((item: any) => selectedReimbursementIds.includes(item.id) && reimbursementNextStatus(item.reimbursement_status, role));
+    if (!targets.length) { notify("请选择待处理记录", true); return; }
+    const groups = new Map<string, Array<any>>();
+    for (const item of targets) {
+      const target = reimbursementNextStatus(item.reimbursement_status, role) as string;
+      groups.set(target, [...(groups.get(target) || []), item]);
+    }
+    const run = async () => {
+      busy = true;
+      try {
+        for (const [target, items] of groups) await batchUpdateReimbursements(items.map((item) => item.id), target);
+        selectedReimbursementIds = selectedReimbursementIds.filter((id) => !targets.some((item) => item.id === id));
+        await refresh();
+        notify(`已处理 ${targets.length} 条报销`);
+      } catch (e) { notify(e instanceof Error ? e.message : "批量处理失败", true); }
+      finally { busy = false; }
+    };
+    const paymentItems = groups.get("已执行") || [];
+    if (paymentItems.length) {
+      const total = paymentItems.reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0);
+      askConfirm("确认批量报销", `确认将 ${paymentItems.length} 笔、合计 ${money(total)} 标记为已报销？此状态不能直接撤回。`, run);
+      return;
+    }
+    void run();
   }
   async function exportReimbursements() {
     const rows = reimbursementExportRows();
@@ -845,8 +950,9 @@ export function createOrderDesk(data: Data) {
     reimbursementRejectOpen = true;
   }
   function batchRejectReimbursements() {
-    const targets = reimbursementRows().filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "已提交待审核");
-    if (!targets.length) { notify("请选择待审核记录", true); return; }
+    const role = data.identity?.role;
+    const targets = reimbursementRows().filter((item: any) => selectedReimbursementIds.includes(item.id) && reimbursementNextStatus(item.reimbursement_status, role) && item.reimbursement_status !== "已确认待执行");
+    if (!targets.length) { notify("请选择可打回的记录", true); return; }
     reimbursementRejectIds = targets.map((item: any) => item.id);
     reimbursementRejectReason = "附件不清晰，请重新上传";
     reimbursementRejectOpen = true;
@@ -956,40 +1062,8 @@ export function createOrderDesk(data: Data) {
     noteFiles = noteFiles.filter((_, i) => i !== index);
     orderFormDirty = true;
   }
-  function onAdvanceInvoiceChange(event: Event, index: number) {
-    const input = event.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
-    input.value = "";
-    if (!file) return;
-    const isAllowed =
-      /^image\/(png|jpe?g|gif|webp)$/i.test(file.type) ||
-      file.type === "application/pdf";
-    if (!isAllowed) {
-      notify("发票仅支持图片或 PDF 文件", true);
-      return;
-    }
-    if (file.size > 10 * 1024 * 1024) {
-      notify("发票文件不能超过 10MB", true);
-      return;
-    }
-    advances[index] = { ...advances[index], invoice: file.name, invoiceFile: file };
-    advances = [...advances];
-    orderFormDirty = true;
-    notify("发票已选择，保存订单时上传");
-  }
-  function removeAdvanceInvoice(index: number) {
-    advances[index] = { ...advances[index], invoice: "", invoiceFile: null };
-    advances = [...advances];
-    orderFormDirty = true;
-  }
-  async function uploadAttachments(orderId: string, savedAdvances: Array<Record<string, any>>, submittedAdvances: Array<Record<string, any>>) {
-    const savedById = new Map(savedAdvances.map((advance) => [String(advance.id), advance]));
-    const invoices = submittedAdvances.map((advance, index) => ({
-      file: advance.invoiceFile as File | null,
-      submittedId: String(advance.id || ""),
-      reimbursementId: savedById.get(String(advance.id))?.id || savedAdvances[index]?.id,
-    })).filter((item): item is { file: File; submittedId: string; reimbursementId: string } => item.file instanceof File && Boolean(item.reimbursementId));
-    if (!noteFiles.length && !invoices.length) return;
+  async function uploadAttachments(orderId: string) {
+    if (!noteFiles.length) return;
     uploadingFiles = true;
     const failures: string[] = [];
     try {
@@ -1001,28 +1075,10 @@ export function createOrderDesk(data: Data) {
           failures.push(`${file.name}：${reason instanceof Error ? reason.message : "上传失败"}`);
         }
       }
-      for (const invoice of invoices) {
-        try {
-          await postReimbursementAttachment(invoice.reimbursementId, invoice.file);
-          const index = advances.findIndex((advance) => String(advance.id || "") === invoice.submittedId);
-          if (index >= 0) {
-            advances[index] = { ...advances[index], invoiceFile: null };
-            advances = [...advances];
-          }
-        } catch (reason) {
-          failures.push(`${invoice.file.name}：${reason instanceof Error ? reason.message : "上传失败"}`);
-        }
-      }
       if (failures.length) throw new Error(`订单已保存，但以下附件上传失败：${failures.join("；")}`);
     } finally {
       uploadingFiles = false;
     }
-  }
-  async function postReimbursementAttachment(reimbursementId: string, file: File) {
-    const form = new FormData();
-    form.append("file", file, file.name);
-    const response = await apiFetch(`/api/reimbursements/${encodeURIComponent(reimbursementId)}/attachments`, { method: "POST", body: form });
-    if (!response.ok) throw new Error((await response.json()).message || "发票上传失败");
   }
   async function postOrderAttachment(orderId: string, file: File) {
     const form = new FormData();
@@ -1061,8 +1117,7 @@ export function createOrderDesk(data: Data) {
   async function submitOrder(event: SubmitEvent) {
     event.preventDefault();
     const hasName = (value: string) => String(value || '').trim().length > 0;
-    // 部门、联系人和垫付均是业务补充信息；和 demo 一致，订单的最小可保存单位是产品明细。
-    // 空白的动态行会被忽略，但不能用成本或垫付行替代产品行。
+    // 成本和产品明细是订单的最小可保存单位；员工垫付改由报销页面发起并关联订单。
     const validProducts = products.filter((item) => hasName(item.name));
     // 成本随产品明细自动匹配，提交时展开为订单成本行。
     const validCosts = validProducts
@@ -1076,35 +1131,29 @@ export function createOrderDesk(data: Data) {
         subtotal: (Number(item.quantity || 0) * Number(item.cost_unit || 0)).toFixed(2),
         catalog_id: item.cost_catalog_id,
       }));
-    const validAdvances = advances.filter((item) => hasName(item.item) || Number(item.amount) > 0);
     if (!validProducts.length) {
       notify("请至少添加一项产品", true);
       return;
     }
     busy = true;
     try {
-      const payload = { project_id: projectId, order_date: orderDate, delivery_date: deliveryDate, contact, customer_department: customerDepartment, designer, designer_uid: designerUid, planner, planner_uid: plannerUid, execution_company: executionCompany, payment_status: paymentStatus, status, created_by: createdBy.trim() || creatorName || "未填写", note, products: validProducts, costs: validCosts, advances: validAdvances, idempotency_key: editingOrderId ? "" : (submissionKey ||= crypto.randomUUID()) };
+      const payload = { project_id: projectId, order_date: orderDate, delivery_date: deliveryDate, contact, customer_department: customerDepartment, designer, designer_uid: designerUid, planner, planner_uid: plannerUid, execution_company: executionCompany, payment_status: paymentStatus, status, created_by: createdBy.trim() || creatorName || "未填写", note, products: validProducts, costs: validCosts, idempotency_key: editingOrderId ? "" : (submissionKey ||= crypto.randomUUID()) };
       const result = editingOrderId
         ? await api.patch<{ data: Order }>(`/api/orders/${editingOrderId}`, payload)
         : await api.post<{ data: Order }>("/api/orders", payload);
       await refresh();
       try {
-        await uploadAttachments(result.data.id, result.data.advances || [], validAdvances);
+        await uploadAttachments(result.data.id);
       } finally {
         await refresh();
       }
       replaceState(appPath("/orders"), {});
-      notify(
-        validAdvances.length
-          ? "订单已提交报销，已进入报销核验"
-          : editingOrderId ? "订单已更新" : "订单已保存",
-      );
+      notify(editingOrderId ? "订单已更新" : "订单已保存");
       view = "overview";
       editingOrderId = "";
       submissionKey = crypto.randomUUID();
       detailOrder = null;
       products = [];
-      advances = [];
       note = "";
       noteFiles = [];
       createdBy = creatorName;
@@ -1148,16 +1197,14 @@ export function createOrderDesk(data: Data) {
     }
   }
   function requireCatalogManager() {
-    if (["admin", "manager", "owner", "finance"].includes(data.identity?.role)) return true;
-    notify("报价成本库对所有成员开放查看，仅财务可以新增或导入资料", true);
+    if (hasAnyRole(data.identity, catalogManageRoles)) return true;
+    notify("报价成本库仅老板和管理人员可以新增或导入资料", true);
     return false;
   }
-  async function importFile(event: Event) {
-    const input = event.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
-    input.value = "";
-    if (!file || !requireCatalogManager()) return;
+  async function previewCatalogFile(file: File, targetId = "") {
+    if (!requireCatalogManager()) return;
     busy = true;
+    catalogImportPreview = null;
     try {
       const form = new FormData();
       form.append("file", file, file.name);
@@ -1167,65 +1214,75 @@ export function createOrderDesk(data: Data) {
       if (!response.ok) throw new Error(result.error?.message || result.message || "文件解析失败");
       catalogImportFile = file;
       catalogImportOwner = "";
+      catalogImportTargetId = targetId;
       catalogImportPreview = result.data;
     } catch (e) {
       notify(e instanceof Error ? e.message : "文件解析失败", true);
     } finally { busy = false; }
   }
+  function onCatalogSourceFileChange(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    catalogSourceFile = input.files?.[0] || null;
+  }
   function cancelCatalogImport() {
     catalogImportFile = null;
     catalogImportOwner = "";
+    catalogImportTargetId = "";
     catalogImportPreview = null;
   }
   function openCatalogSourceForm() {
     if (!requireCatalogManager()) return;
     catalogSourceName = "";
-    catalogSourceCopyId = "";
+    catalogSourceFile = null;
     catalogSourceOpen = true;
   }
-  async function createCatalogSourceFromForm() {
+  async function submitCatalogSourceForm() {
     if (!requireCatalogManager()) return;
     const owner = catalogSourceName.trim();
     if (!owner) {
       notify(`请填写${catalogKind === "quote" ? "客户公司" : "厂商"}名称`, true);
       return;
     }
-    busy = true;
-    try {
-      const result = await api.post<{ data: Record<string, any> }>("/api/catalog/sources", {
-        kind: catalogKind,
-        owner_name: owner,
-        copy_from_id: catalogSourceCopyId,
-        source_method: catalogSourceCopyId ? "copy" : "manual",
-        actor: creatorName || "财务人员",
-      });
-      await refresh();
-      catalogSourceId = String(result.data.id);
-      catalogSourceOpen = false;
-      notify(catalogSourceCopyId ? `已新增“${owner}”并沿用现有资料库` : `已新增“${owner}”，可继续上传配置文件`);
-    } catch (e) {
-      notify(e instanceof Error ? e.message : "资料库来源创建失败", true);
-    } finally {
-      busy = false;
+    if (!catalogSourceFile) {
+      notify("请上传配置文件，新增公司会以文件内容作为资料数据", true);
+      return;
     }
+    const file = catalogSourceFile;
+    await previewCatalogFile(file);
+    if (!catalogImportPreview) return;
+    catalogImportOwner = owner;
+    catalogSourceOpen = false;
+    catalogSourceName = "";
+    catalogSourceFile = null;
+  }
+  function beginCatalogReupload(sourceId: string) {
+    if (!requireCatalogManager()) return false;
+    catalogImportTargetId = sourceId;
+    return true;
+  }
+  async function onCatalogReuploadChange(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
+    await previewCatalogFile(file, catalogImportTargetId);
   }
   async function confirmCatalogImport() {
     if (!requireCatalogManager() || !catalogImportFile || !catalogImportPreview?.valid_rows) return;
-    if (catalogSourceId) {
-      const source = catalogSources.find((item) => item.id === catalogSourceId);
+    if (catalogImportTargetId) {
+      const source = catalogSources.find((item) => item.id === catalogImportTargetId);
       if (!window.confirm(`将用新文件替换“${source?.owner_name || "当前资料库"}”的全部有效条目，历史订单不受影响。确定继续吗？`)) return;
     }
-    if (!catalogSourceId && !catalogImportOwner.trim()) {
+    if (!catalogImportTargetId && !catalogImportOwner.trim()) {
       notify(`请填写${catalogKind === "quote" ? "客户公司" : "厂商"}名称`, true);
       return;
     }
     busy = true;
     try {
-      let sourceId = catalogSourceId;
+      let sourceId = catalogImportTargetId;
       if (!sourceId) {
         const source = await api.post<{ data: Record<string, any> }>("/api/catalog/sources", { kind: catalogKind, owner_name: catalogImportOwner.trim(), source_file: catalogImportFile.name, source_method: "upload", actor: creatorName || "财务人员" });
         sourceId = String(source.data.id);
-        catalogSourceId = sourceId;
       }
       const form = new FormData();
       form.append("file", catalogImportFile, catalogImportFile.name);
@@ -1237,6 +1294,7 @@ export function createOrderDesk(data: Data) {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error?.message || result.message || "文件导入失败");
       cancelCatalogImport();
+      catalogSourceId = sourceId;
       await refresh();
       notify(`已导入 ${result.data.imported} 条报价成本记录${result.data.ignored ? `，忽略 ${result.data.ignored} 条` : ""}`);
     } catch (e) { notify(e instanceof Error ? e.message : "文件导入失败", true); }
@@ -1267,11 +1325,10 @@ export function createOrderDesk(data: Data) {
     plannerUid = order.planner_uid || null;
     executionCompany = order.execution_company || "";
     paymentStatus = order.payment_status || "未结款";
-    status = order.status || "制作中";
+    status = order.status === "已完成" ? "已完成" : "制作中";
     createdBy = order.created_by || creatorName;
     note = order.note || "";
     products = mergeCostsIntoProducts(order.products, order.costs);
-    advances = order.advances;
     detailOrder = null;
     view = "entry";
     orderFormDirty = false;
@@ -1370,9 +1427,6 @@ export function createOrderDesk(data: Data) {
     if (item && item.name.trim().toLowerCase() === String(product.name).trim().toLowerCase()) applyProductCatalog(index, item.id);
     else applyProductCost(index);
   }
-  function addAdvance() { advances = [...advances, { id: crypto.randomUUID(), employee: designer || createdBy, item: "", amount: 0, date: orderDate, invoice: "", status: "已提交待审核", invoiceFile: null as File | null }]; orderFormDirty = true; }
-  function removeAdvance(index: number) { advances = advances.filter((_, i) => i !== index); orderFormDirty = true; }
-  function updateAdvance(index: number, key: string, value: unknown) { advances[index] = { ...advances[index], [key]: value }; advances = [...advances]; orderFormDirty = true; }
   function startNewOrder() {
     editingOrderId = "";
     submissionKey = crypto.randomUUID();
@@ -1394,12 +1448,8 @@ export function createOrderDesk(data: Data) {
     note = "";
     noteFiles = [];
     products = [{ name: "", quantity: 1, unit: "项", unit_price: 0, cost_unit: 0, vendor: "", subtotal: 0, specification: "" }];
-    advances = [{ id: crypto.randomUUID(), employee: createdBy, item: "", amount: 0, date: orderDate, invoice: "", status: "已提交待审核", invoiceFile: null as File | null }];
     view = "entry";
     orderFormDirty = false;
-  }
-  function canEditAdvance(advance: Record<string, unknown>) {
-    return !advance.status || advance.status === "已提交待审核";
   }
   function markOrderDirty() { orderFormDirty = true; }
   function toggleOrder(id: string) {
@@ -1556,6 +1606,62 @@ export function createOrderDesk(data: Data) {
       } finally { busy = false; }
     });
   }
+  // 接单设计师、录入人（执行）或管理角色可将“制作中”的订单标记为已完成。
+  function canCompleteOrder(order: any) {
+    if (!order || order.status === "已完成") return false;
+    const identity = data.identity;
+    return identity.uid === order.designer_uid || identity.uid === order.created_by_uid || hasAnyRole(identity, orderManageRoles);
+  }
+  function openCompleteOrder(order: any) {
+    if (!canCompleteOrder(order)) { notify("没有完成该订单的权限", true); return; }
+    completeOrderTarget = order;
+    completeOrderFiles = [];
+    showCompleteOrder = true;
+  }
+  function onCompleteOrderFilesChange(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const files = Array.from(input.files || []);
+    input.value = "";
+    const isAllowed = (file: File) => /^image\/(png|jpe?g|gif|webp)$/i.test(file.type) || file.type === "application/pdf";
+    const rejected = files.filter((file) => !isAllowed(file));
+    const oversized = files.filter((file) => isAllowed(file) && file.size > 10 * 1024 * 1024);
+    const kept = files.filter((file) => isAllowed(file) && file.size <= 10 * 1024 * 1024);
+    completeOrderFiles = [...completeOrderFiles, ...kept].slice(0, 20);
+    const messages: string[] = [];
+    if (rejected.length) messages.push(`${rejected.length} 个文件不是图片或 PDF，已忽略`);
+    if (oversized.length) messages.push(`${oversized.length} 个文件超过 10MB，已忽略`);
+    if (messages.length) notify(messages.join("；"), true);
+  }
+  function removeCompleteOrderFile(index: number) {
+    completeOrderFiles = completeOrderFiles.filter((_, i) => i !== index);
+  }
+  async function submitCompleteOrder() {
+    const target = completeOrderTarget;
+    if (!target) return;
+    if (data.identity.uid === target.designer_uid && !completeOrderFiles.length) {
+      notify("设计师完成订单前必须上传设计图", true);
+      return;
+    }
+    busy = true;
+    try {
+      const form = new FormData();
+      for (const file of completeOrderFiles) form.append("files", file, file.name);
+      const response = await apiFetch(`/api/orders/${encodeURIComponent(target.id)}/complete`, { method: "POST", body: form });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error?.message || payload.message || "完成订单失败");
+      }
+      showCompleteOrder = false;
+      completeOrderTarget = null;
+      completeOrderFiles = [];
+      await refresh();
+      notify("订单已标记为已完成");
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "完成订单失败", true);
+    } finally {
+      busy = false;
+    }
+  }
 
 
   const desk = {} as Record<string, any>;
@@ -1566,10 +1672,11 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "canManageOrders", { get: () => hasAnyRole(data.identity, orderManageRoles) });
   Object.defineProperty(desk, "canFinance", { get: () => hasAnyRole(data.identity, reimbursementActionRoles) });
   Object.defineProperty(desk, "canViewAllOrders", { get: () => hasAnyRole(data.identity, orderViewAllRoles) });
-  Object.defineProperty(desk, "canViewAllReimbursements", { get: () => hasAnyRole(data.identity, reimbursementViewAllRoles) });
+  Object.defineProperty(desk, "canViewAllReimbursements", { get: () => canViewAllReimbursements });
   Object.defineProperty(desk, "canManageReimbursements", { get: () => hasAnyRole(data.identity, reimbursementActionRoles) });
   Object.defineProperty(desk, "canDeleteOrders", { get: () => hasAnyRole(data.identity, orderManageRoles) });
   Object.defineProperty(desk, "canManageCatalog", { get: () => hasAnyRole(data.identity, catalogManageRoles) });
+  Object.defineProperty(desk, "canViewCatalog", { get: () => hasAnyRole(data.identity, catalogViewRoles) });
   Object.defineProperty(desk, "visitor", { get: () => data.visitor });
   Object.defineProperty(desk, "identity", { get: () => data.identity });
   Object.defineProperty(desk, "isEmbedded", { get: () => isEmbedded });
@@ -1598,7 +1705,6 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "status", { get: () => status, set: (value) => { status = value; } });
   Object.defineProperty(desk, "editingOrderId", { get: () => editingOrderId });
   Object.defineProperty(desk, "products", { get: () => products, set: (value) => { products = value; } });
-  Object.defineProperty(desk, "advances", { get: () => advances, set: (value) => { advances = value; } });
   Object.defineProperty(desk, "detailOrder", { get: () => detailOrder, set: (value) => { detailOrder = value; } });
   Object.defineProperty(desk, "detailAttachments", { get: () => detailAttachments });
   Object.defineProperty(desk, "detailAttachmentsLoading", { get: () => detailAttachmentsLoading });
@@ -1619,6 +1725,7 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "error", { get: () => error, set: (value) => { error = value; } });
   Object.defineProperty(desk, "reimbursements", { get: () => reimbursements });
   Object.defineProperty(desk, "reviewReimbursements", { get: () => reviewReimbursements });
+  Object.defineProperty(desk, "historyReimbursements", { get: () => historyReimbursements });
   Object.defineProperty(desk, "canReviewReimbursements", { get: () => canReviewReimbursements });
   Object.defineProperty(desk, "reimbursementProject", { get: () => reimbursementProject, set: (value) => { reimbursementProject = value; selectedReimbursementIds = []; } });
   Object.defineProperty(desk, "reimbursementPerson", { get: () => reimbursementPerson, set: (value) => { reimbursementPerson = value; selectedReimbursementIds = []; } });
@@ -1637,9 +1744,10 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "catalogCategory", { get: () => catalogCategory, set: (value) => { catalogCategory = value; } });
   Object.defineProperty(desk, "catalogImportPreview", { get: () => catalogImportPreview });
   Object.defineProperty(desk, "catalogImportOwner", { get: () => catalogImportOwner, set: (value) => { catalogImportOwner = value; } });
+  Object.defineProperty(desk, "catalogImportTargetId", { get: () => catalogImportTargetId });
   Object.defineProperty(desk, "catalogSourceOpen", { get: () => catalogSourceOpen, set: (value) => { catalogSourceOpen = value; } });
   Object.defineProperty(desk, "catalogSourceName", { get: () => catalogSourceName, set: (value) => { catalogSourceName = value; } });
-  Object.defineProperty(desk, "catalogSourceCopyId", { get: () => catalogSourceCopyId, set: (value) => { catalogSourceCopyId = value; } });
+  Object.defineProperty(desk, "catalogSourceFile", { get: () => catalogSourceFile });
   Object.defineProperty(desk, "reimbursementRejectOpen", { get: () => reimbursementRejectOpen, set: (value) => { reimbursementRejectOpen = value; } });
   Object.defineProperty(desk, "reimbursementRejectReason", { get: () => reimbursementRejectReason, set: (value) => { reimbursementRejectReason = value; } });
   Object.defineProperty(desk, "reimbursementRejectCount", { get: () => reimbursementRejectIds.length });
@@ -1672,8 +1780,11 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "exportExpand", { get: () => exportExpand, set: (value) => { exportExpand = value; } });
   Object.defineProperty(desk, "exportTotal", { get: () => exportTotal, set: (value) => { exportTotal = value; } });
   Object.defineProperty(desk, "exportSign", { get: () => exportSign, set: (value) => { exportSign = value; } });
-  Object.defineProperty(desk, "showOrderFilters", { get: () => showOrderFilters, set: (value) => { showOrderFilters = value; } });
   Object.defineProperty(desk, "showStandaloneReimbursement", { get: () => showStandaloneReimbursement, set: (value) => { showStandaloneReimbursement = value; } });
+  Object.defineProperty(desk, "showCompleteOrder", { get: () => showCompleteOrder, set: (value) => { showCompleteOrder = value; } });
+  Object.defineProperty(desk, "completeOrderTarget", { get: () => completeOrderTarget });
+  Object.defineProperty(desk, "completeOrderFiles", { get: () => completeOrderFiles });
+  Object.defineProperty(desk, "completeOrderNeedsDesign", { get: () => completeOrderNeedsDesign });
   Object.defineProperty(desk, "selectedReimbursementIds", { get: () => selectedReimbursementIds, set: (value) => { selectedReimbursementIds = value; } });
   Object.defineProperty(desk, "standaloneEmployee", { get: () => standaloneEmployee, set: (value) => { standaloneEmployee = value; } });
   Object.defineProperty(desk, "standaloneItem", { get: () => standaloneItem, set: (value) => { standaloneItem = value; } });
@@ -1705,9 +1816,22 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "reimbursementRows", { get: () => reimbursementRows });
   Object.defineProperty(desk, "reimbursementRefreshVersion", { get: () => reimbursementRefreshVersion });
   Object.defineProperty(desk, "reimbursementPaymentSummary", { get: () => reimbursementPaymentSummary });
-  Object.defineProperty(desk, "selectedPendingReviewCount", { get: () => selectedPendingReviewCount });
-  Object.defineProperty(desk, "selectedPendingPaymentCount", { get: () => selectedPendingPaymentCount });
+  Object.defineProperty(desk, "selectedApprovableCount", { get: () => selectedApprovableCount });
+  Object.defineProperty(desk, "selectedApprovableTargets", { get: () => selectedApprovableTargets });
+  Object.defineProperty(desk, "selectedRejectableCount", { get: () => selectedRejectableCount });
   Object.defineProperty(desk, "reimbursementVouchers", { get: () => reimbursementVouchers });
+  Object.defineProperty(desk, "historyRows", { get: () => historyRows });
+  Object.defineProperty(desk, "historyStats", { get: () => historyStats });
+  Object.defineProperty(desk, "historyByPerson", { get: () => historyByPerson });
+  Object.defineProperty(desk, "historyPeople", { get: () => historyPeople });
+  Object.defineProperty(desk, "historyPage", { get: () => historyPage });
+  Object.defineProperty(desk, "historyPageCount", { get: () => historyPageCount });
+  Object.defineProperty(desk, "pagedHistoryRows", { get: () => pagedHistoryRows });
+  Object.defineProperty(desk, "historyProject", { get: () => historyProject, set: (value) => { historyProject = value; } });
+  Object.defineProperty(desk, "historyPerson", { get: () => historyPerson, set: (value) => { historyPerson = value; } });
+  Object.defineProperty(desk, "historyFrom", { get: () => historyFrom, set: (value) => { historyFrom = value; } });
+  Object.defineProperty(desk, "historyTo", { get: () => historyTo, set: (value) => { historyTo = value; } });
+  Object.defineProperty(desk, "historySearch", { get: () => historySearch, set: (value) => { historySearch = value; } });
   Object.defineProperty(desk, "creators", { get: () => creators });
   desk.money = money;
   desk.navigate = navigate;
@@ -1718,11 +1842,14 @@ export function createOrderDesk(data: Data) {
   desk.markReimbursement = markReimbursement;
   desk.openStandaloneReimbursement = openStandaloneReimbursement;
   desk.exportReimbursements = exportReimbursements;
+  desk.resetHistoryFilters = resetHistoryFilters;
+  desk.setHistoryPage = setHistoryPage;
+  desk.exportHistory = exportHistory;
   desk.batchMarkReimbursed = batchMarkReimbursed;
   desk.selectEmployeePayments = selectEmployeePayments;
   desk.markEmployeeReimbursed = markEmployeeReimbursed;
   desk.exportPaymentSummary = exportPaymentSummary;
-  desk.batchReviewReimbursements = batchReviewReimbursements;
+  desk.batchAdvanceReimbursements = batchAdvanceReimbursements;
   desk.batchRejectReimbursements = batchRejectReimbursements;
   desk.rejectReimbursement = rejectReimbursement;
   desk.generateReimbursementVoucher = generateReimbursementVoucher;
@@ -1735,9 +1862,11 @@ export function createOrderDesk(data: Data) {
   desk.onStandaloneInvoiceChange = onStandaloneInvoiceChange;
   desk.submitOrder = submitOrder;
   desk.submitProject = submitProject;
-  desk.importFile = importFile;
+  desk.onCatalogSourceFileChange = onCatalogSourceFileChange;
   desk.openCatalogSourceForm = openCatalogSourceForm;
-  desk.createCatalogSourceFromForm = createCatalogSourceFromForm;
+  desk.submitCatalogSourceForm = submitCatalogSourceForm;
+  desk.beginCatalogReupload = beginCatalogReupload;
+  desk.onCatalogReuploadChange = onCatalogReuploadChange;
   desk.confirmCatalogImport = confirmCatalogImport;
   desk.cancelCatalogImport = cancelCatalogImport;
   desk.confirmRejectReimbursements = confirmRejectReimbursements;
@@ -1752,10 +1881,13 @@ export function createOrderDesk(data: Data) {
   desk.resetOrderFilters = resetOrderFilters;
   desk.onFilterCustomerChange = onFilterCustomerChange;
   desk.deleteOrder = deleteOrder;
+  desk.canCompleteOrder = canCompleteOrder;
+  desk.openCompleteOrder = openCompleteOrder;
+  desk.onCompleteOrderFilesChange = onCompleteOrderFilesChange;
+  desk.removeCompleteOrderFile = removeCompleteOrderFile;
+  desk.submitCompleteOrder = submitCompleteOrder;
   desk.openDetail = openDetail;
   desk.removeNoteFile = removeNoteFile;
-  desk.onAdvanceInvoiceChange = onAdvanceInvoiceChange;
-  desk.removeAdvanceInvoice = removeAdvanceInvoice;
   desk.onNoteFilesChange = onNoteFilesChange;
   desk.attachmentUrl = attachmentUrl;
   desk.reimbursementAttachmentUrl = reimbursementAttachmentUrl;
@@ -1770,10 +1902,6 @@ export function createOrderDesk(data: Data) {
   desk.updateProduct = updateProduct;
   desk.applyProductCatalog = applyProductCatalog;
   desk.matchProductCatalog = matchProductCatalog;
-  desk.addAdvance = addAdvance;
-  desk.removeAdvance = removeAdvance;
-  desk.updateAdvance = updateAdvance;
-  desk.canEditAdvance = canEditAdvance;
   desk.markOrderDirty = markOrderDirty;
   desk.onCustomerChange = onCustomerChange;
   desk.exportColumns = exportColumns;

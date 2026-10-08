@@ -34,6 +34,28 @@
   font-weight: 700;
 }
 
+.catalog-source-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.catalog-file-field {
+  display: grid;
+  gap: 7px;
+}
+
+.catalog-file-field > span {
+  color: #42536b;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+.catalog-file-field em {
+  color: var(--red);
+  font-style: normal;
+}
+
 .catalog-filters {
   display: flex;
   align-items: center;

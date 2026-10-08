@@ -13,8 +13,8 @@ export function reimbursementStatusesForRole(role: string): string[] | null {
   if (role === 'admin') return ['已提交待审核', '已审核待复核', '已复核待确认', '已确认待执行'];
   return null;
 }
-export const catalogViewRoles = ['admin', 'manager', 'owner', 'finance'] as const;
-export const catalogManageRoles = ['admin', 'manager', 'owner', 'finance'] as const;
+export const catalogViewRoles = ['admin', 'manager', 'owner', 'executor'] as const;
+export const catalogManageRoles = ['admin', 'manager', 'owner'] as const;
 export const employeeManageRoles = ['admin', 'manager', 'owner'] as const;
 
 export function hasAnyRole(identity: { role: string } | null | undefined, roles: readonly string[]) {

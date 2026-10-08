@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getContext } from "svelte";
-  import { FileSpreadsheet, LayoutDashboard, LogIn, WalletCards } from "lucide-svelte";
+  import { FileSpreadsheet, History, LayoutDashboard, LogIn, WalletCards } from "lucide-svelte";
   const desk = getContext<any>("order-desk");
   const roleLabels: Record<string, string> = { admin: '系统管理员', executor: '执行', designer: '设计师', planner: '策划', manager: '管理人员', finance: '财务', owner: '老板', pending: '待开通' };
 </script>
@@ -12,7 +12,8 @@
     <button class:active={desk.view === "overview" || desk.view === "entry"} onclick={() => desk.navigate("/orders")}><LayoutDashboard size={17} /><span>订单列表</span></button>
     <button class:active={desk.view === "reimbursements"} onclick={() => desk.navigate("/reimbursements")}><WalletCards size={17} /><span>我的报销</span></button>
     {#if desk.canReviewReimbursements}<button class:active={desk.view === "review"} onclick={() => desk.navigate("/reimbursements/review")}><WalletCards size={17} /><span>报销审核</span></button>{/if}
-    <button class:active={desk.view === "catalog"} onclick={() => desk.navigate("/catalog")}><FileSpreadsheet size={17} /><span>报价库与成本库</span></button>
+    {#if desk.canViewAllReimbursements}<button class:active={desk.view === "history"} onclick={() => desk.navigate("/reimbursements/history")}><History size={17} /><span>历史报销</span></button>{/if}
+    {#if desk.canViewCatalog}<button class:active={desk.view === "catalog"} onclick={() => desk.navigate("/catalog")}><FileSpreadsheet size={17} /><span>报价库与成本库</span></button>{/if}
   </nav>
   <div class="sidebar-note">
     {#if desk.visitor.status === "authenticated"}

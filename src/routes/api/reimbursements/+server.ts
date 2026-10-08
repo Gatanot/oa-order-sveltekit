@@ -9,12 +9,16 @@ export const GET: RequestHandler = async (event) => {
   const identity = await event.locals.getCurrentIdentity();
   if (!identity) return json({ error: { code: 'UNAUTHORIZED' } }, { status: 401 });
   const rows = listReimbursementOrders(Object.fromEntries(event.url.searchParams));
-  const scope = event.url.searchParams.get('scope') === 'review' ? 'review' : 'mine';
+  const requestedScope = event.url.searchParams.get('scope');
+  const scope = requestedScope === 'review' ? 'review' : requestedScope === 'history' ? 'history' : 'mine';
   if (scope === 'mine') {
     return json({ data: rows.filter((item) => item.employee_uid === identity.uid) });
   }
   if (!hasAnyRole(identity, reimbursementViewAllRoles)) {
-    return json({ error: { code: 'FORBIDDEN', message: '没有报销审核权限' } }, { status: 403 });
+    return json({ error: { code: 'FORBIDDEN', message: scope === 'history' ? '没有查看历史报销权限' : '没有报销审核权限' } }, { status: 403 });
+  }
+  if (scope === 'history') {
+    return json({ data: listReimbursementOrders({}).filter((item) => item.reimbursement_status === '已执行') });
   }
   const responsibleStatuses = reimbursementStatusesForRole(identity.role) || [];
   const data = rows.filter((item) =>

@@ -6,11 +6,12 @@
   import OrderOverview from './views/OrderOverview.svelte';
   import OrderEntry from './views/OrderEntry.svelte';
   import Reimbursements from './views/Reimbursements.svelte';
+  import ReimbursementHistory from './views/ReimbursementHistory.svelte';
   import CatalogLibrary from './views/CatalogLibrary.svelte';
   import OrderDeskModals from './OrderDeskModals.svelte';
   import AttachmentPreviewModal from './AttachmentPreviewModal.svelte';
 
-  let { data, initialView = 'overview', orderId = '', edit = false }: { data: Data; initialView?: 'overview' | 'entry' | 'catalog' | 'reimbursements' | 'review'; orderId?: string; edit?: boolean } = $props();
+  let { data, initialView = 'overview', orderId = '', edit = false }: { data: Data; initialView?: 'overview' | 'entry' | 'catalog' | 'reimbursements' | 'review' | 'history'; orderId?: string; edit?: boolean } = $props();
   const desk = createOrderDesk(data);
   desk.view = initialView;
   setContext('order-desk', desk);
@@ -36,6 +37,7 @@
     {:else if desk.view === 'entry'}<OrderEntry />
     {:else if desk.view === 'reimbursements'}<Reimbursements mode="mine" />
     {:else if desk.view === 'review'}<Reimbursements mode="review" />
+    {:else if desk.view === 'history'}<ReimbursementHistory />
     {:else}<CatalogLibrary />{/if}
   </main>
 </div>

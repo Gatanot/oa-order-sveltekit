@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getContext } from "svelte";
-  import { Copy, Download, X } from "lucide-svelte";
+  import { Copy, Download, FileText, X } from "lucide-svelte";
   const desk = getContext<any>("order-desk");
   let rejectReasonInput = $state<HTMLTextAreaElement>();
   $effect(() => {
@@ -22,6 +22,24 @@
         <label class="full-field">备注<textarea bind:value={desk.standaloneNote} placeholder="补充报销说明（选填）"></textarea></label>
       </div>
       <div class="project-modal-footer"><button type="button" class="outline-action" onclick={() => desk.showStandaloneReimbursement = false}>取消</button><button type="submit" class="primary-action" disabled={desk.busy}>{desk.busy ? "保存中..." : "保存报销"}</button></div>
+    </form>
+  </div>
+</div>{/if}
+{#if desk.showCompleteOrder}<div class="project-modal-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) desk.showCompleteOrder = false; }}>
+  <div class="project-modal" role="dialog" aria-modal="true" aria-labelledby="complete-order-modal-title">
+    <div class="project-modal-head"><div><p class="section-kicker">完成订单</p><h2 id="complete-order-modal-title">标记为已完成</h2><span>确认后订单状态将变为“已完成”，并记录本次操作人。</span></div><button class="icon-control" aria-label="关闭完成订单窗口" onclick={() => desk.showCompleteOrder = false}><X size={18} /></button></div>
+    <form onsubmit={(event) => { event.preventDefault(); desk.submitCompleteOrder(); }}>
+      <div class="project-modal-body">
+        <p class="confirm-message">确认将订单 <b>{desk.completeOrderTarget?.code}</b>（{desk.completeOrderTarget?.service_name}）标记为已完成？</p>
+        {#if desk.completeOrderNeedsDesign}
+          <label class="full-field">设计图 <em>*</em><input type="file" multiple accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,.pdf" onchange={desk.onCompleteOrderFilesChange} /></label>
+          <p class="field-hint">设计师完成订单必须上传设计图（图片或 PDF，单个不超过 10MB）。</p>
+          {#if desk.completeOrderFiles.length}
+            <ul class="upload-list">{#each desk.completeOrderFiles as file, i}<li><span class="upload-name"><FileText size={13}/>{file.name}</span><small>{desk.formatFileSize(file.size)}</small><button type="button" class="upload-remove" aria-label={`移除 ${file.name}`} onclick={() => desk.removeCompleteOrderFile(i)}><X size={13}/></button></li>{/each}</ul>
+          {/if}
+        {/if}
+      </div>
+      <div class="project-modal-footer"><button type="button" class="outline-action" onclick={() => desk.showCompleteOrder = false}>取消</button><button type="submit" class="primary-action" disabled={desk.busy}>{desk.busy ? "提交中..." : "确认完成"}</button></div>
     </form>
   </div>
 </div>{/if}
@@ -89,20 +107,6 @@
       </form>
     </div>
   </div>{/if}
-{#if desk.showOrderFilters}<div class="drawer-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) desk.showOrderFilters = false; }}>
-  <div class="export-drawer filter-drawer" role="dialog" aria-modal="true" aria-labelledby="order-filter-title" tabindex="-1">
-    <div class="drawer-head"><div><p class="section-kicker">订单筛选</p><h2 id="order-filter-title">筛选订单</h2><span>筛选结果会同步更新列表与金额汇总</span></div><button class="icon-control" aria-label="关闭筛选" onclick={() => desk.showOrderFilters = false}><X size={17} /></button></div>
-    <div class="drawer-body"><div class="drawer-filter-grid">
-      <label>项目负责人<select bind:value={desk.filterOwner}><option value="">全部负责人</option>{#each desk.owners as owner}<option value={owner}>{owner}</option>{/each}</select></label>
-      <label>设计师<select bind:value={desk.filterDesigner}><option value="">全部设计师</option>{#each desk.designers as designer}<option value={designer}>{designer}</option>{/each}</select></label>
-      <label>结款状态<select bind:value={desk.filterPayment}><option value="">全部结款状态</option><option>未结款</option><option>已结款</option></select></label>
-      <label>录入人<select bind:value={desk.filterCreator}><option value="">全部录入人</option>{#each desk.creators as creator}<option value={creator}>{creator}</option>{/each}</select></label>
-      <label>开始日期<input class="date-input" type="date" bind:value={desk.filterFrom} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} /></label>
-      <label>结束日期<input class="date-input" type="date" bind:value={desk.filterTo} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} /></label>
-    </div></div>
-    <div class="drawer-footer"><button class="outline-action" type="button" onclick={desk.resetOrderFilters}>重置全部</button><button class="primary-action" type="button" onclick={() => desk.showOrderFilters = false}>查看结果</button></div>
-  </div>
-</div>{/if}
 {#if desk.showExport}<div
     class="drawer-backdrop"
     role="presentation"

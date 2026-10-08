@@ -9,6 +9,14 @@
   let detailItem = $state<any>(null);
   let selectedEmployee = $state("");
   const isReviewer = $derived(mode === "review");
+  const canBatchAct = $derived(isReviewer && ["manager", "finance", "owner"].includes(desk.identity?.role));
+  const batchApproveLabel = $derived.by(() => {
+    const byTarget: Record<string, string> = { "已审核待复核": "统一审核", "已复核待确认": "统一复核", "已确认待执行": "统一确认", "已执行": "统一报销" };
+    const targets = desk.selectedApprovableTargets as string[];
+    if (targets.length === 1) return byTarget[targets[0]] || "统一处理";
+    if (targets.length > 1) return "统一处理";
+    return desk.identity?.role === "manager" ? "统一审核" : desk.identity?.role === "owner" ? "统一确认" : "统一报销";
+  });
   // 服务端已按角色裁剪审核队列，这里只用于展示统计。
   const responsibleStatuses = $derived(
     desk.identity?.role === "manager" ? ["已提交待审核"] :
@@ -34,6 +42,8 @@
     isReviewer && selectedEmployee ? rows.filter((item: any) => item.employee === selectedEmployee) : rows,
   );
   const responsibleAmount = $derived(reviewQueue.reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0));
+  const pendingCount = $derived(visibleRows.length);
+  const pendingAmount = $derived(visibleRows.reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0));
   const steps = ["提交报销", "管理人审核", "财务复核", "老板确认", "财务执行"];
   const progress: Record<string, number> = { "已提交待审核": 1, "已审核待复核": 2, "已复核待确认": 3, "已确认待执行": 4, "已执行": 5, "已打回": 1 };
   function nextAction(status: string, role: string) {
@@ -94,7 +104,7 @@
     <label class="field"><span>开始日期</span><input class="date-input" type="date" bind:value={desk.reimbursementFrom} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} /></label>
     <label class="field"><span>结束日期</span><input class="date-input" type="date" bind:value={desk.reimbursementTo} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} /></label>
   </div>
-  <div class="reimbursement-actions"><span class="role-context">当前：{isReviewer ? (selectedEmployee || "全部待处理报销") : `当前账号：${desk.creatorName || "未识别账号"}`}</span>{#if isReviewer && ["finance", "admin"].includes(desk.identity?.role)}<button class="outline-action" type="button" onclick={desk.exportReimbursements}>导出当前筛选</button>{/if}<button class="outline-action" type="button" onclick={() => { selectedEmployee = ""; desk.resetReimbursementFilters(); }}>重置筛选</button>{#if isReviewer && desk.identity?.role === "manager"}<button class="outline-action" type="button" disabled={!desk.selectedPendingReviewCount || desk.busy} onclick={desk.batchReviewReimbursements}>批量审核通过（{desk.selectedPendingReviewCount}）</button><button class="delete-action" type="button" disabled={!desk.selectedPendingReviewCount || desk.busy} onclick={desk.batchRejectReimbursements}>批量打回（{desk.selectedPendingReviewCount}）</button>{/if}</div>
+  <div class="reimbursement-actions"><span class="role-context">{isReviewer ? (selectedEmployee || "全部待处理报销") : (desk.creatorName || "未识别账号")}</span>{#if isReviewer}<span class="role-context">待处理：{pendingCount} 单，总金额 {desk.money(pendingAmount)}</span>{/if}{#if isReviewer && ["finance", "admin"].includes(desk.identity?.role)}<button class="outline-action" type="button" onclick={desk.exportReimbursements}>导出当前筛选</button>{/if}<button class="outline-action" type="button" onclick={() => { selectedEmployee = ""; desk.resetReimbursementFilters(); }}>重置筛选</button>{#if canBatchAct}<button class="outline-action" type="button" disabled={!desk.selectedApprovableCount || desk.busy} onclick={desk.batchAdvanceReimbursements}>{batchApproveLabel}（{desk.selectedApprovableCount}）</button><button class="delete-action" type="button" disabled={!desk.selectedRejectableCount || desk.busy} onclick={desk.batchRejectReimbursements}>统一打回（{desk.selectedRejectableCount}）</button>{/if}</div>
   <div class:review-queue-layout={isReviewer}>
     {#if isReviewer}<aside class="review-person-tabs" aria-label="按报销人筛选"><button class:active={selectedEmployee === ""} type="button" onclick={() => { selectedEmployee = ""; desk.selectedReimbursementIds = []; }}><span>全部</span><b>{rows.length}</b></button>{#each employeeQueues as queue}<button class:active={selectedEmployee === queue.employee} type="button" onclick={() => { selectedEmployee = queue.employee; desk.selectedReimbursementIds = []; }}><span>{queue.employee}</span><b>{queue.count}</b></button>{/each}</aside>{/if}
   <div class="table-panel reimbursement-review-table">

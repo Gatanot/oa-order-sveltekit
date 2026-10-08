@@ -118,7 +118,7 @@ try {
   result = await request('/api/orders/export?mode=detail');
   assert.equal(result.response.status, 200, '财务身份可以导出订单');
   result = await request('/api/catalog/sources', { method: 'POST', json: { kind: 'cost', owner_name: '财务身份验证库', source_file: 'finance-check.csv' } });
-  assert.equal(result.response.status, 201, '财务身份可以维护资料库');
+  assert.equal(result.response.status, 403, '财务不能新增/导入报价成本库');
   const clearExtraIdentity = new FormData();
   result = await request('/admin?/clearExtraIdentity', { method: 'POST', body: clearExtraIdentity });
   assert.equal(result.response.status, 200, '管理员可通过 admin 页面移除额外身份');
@@ -157,14 +157,13 @@ try {
   result = await request('/api/catalog');
   assert.equal(result.data.data.filter((item) => item.source_id === copiedSourceId).length, 1, '沿用后的资料库应可直接用于录单');
 
-  const createPayload = { project_id: projectId, order_date: '2026-09-16', delivery_date: '2026-09-20', designer: '设计师甲', created_by: '填写人甲', idempotency_key: 'smoke-order-1', products: [{ name: '测试产品', unit: '项', quantity: 2, unit_price: '12.34', specification: '测试要求' }], costs: [{ name: '制作成本', vendor: '测试厂商', unit: '项', quantity: 2, unit_price: '3.21' }], advances: [{ employee: '填写人甲', item: '', amount: 0, date: '2026-09-16' }, { employee: '垫付人乙', item: '打样费', amount: '8.50', date: '2026-09-16' }] };
+  const createPayload = { project_id: projectId, order_date: '2026-09-16', delivery_date: '2026-09-20', designer: '设计师甲', created_by: '填写人甲', idempotency_key: 'smoke-order-1', products: [{ name: '测试产品', unit: '项', quantity: 2, unit_price: '12.34', specification: '测试要求' }], costs: [{ name: '制作成本', vendor: '测试厂商', unit: '项', quantity: 2, unit_price: '3.21' }] };
   result = await request('/api/orders', { method: 'POST', json: createPayload });
   assert.equal(result.response.status, 201, JSON.stringify(result.data));
   assert.equal(result.data.data.created_by, 'catsco', '录入人必须取自可信的登录身份，而非客户端提交值');
   assert.equal(result.data.data.quote_amount, 2468);
   assert.equal(result.data.data.cost_amount, 642);
-  assert.equal(result.data.data.advances.length, 1, '空白垫付行不应创建报销记录');
-  assert.equal(result.data.data.advances[0].employee, '垫付人乙', '每条垫付应保存独立员工姓名');
+  assert.equal((result.data.data.advances || []).length, 0, '订单录入不再直接创建报销，需在报销页面关联订单');
   const orderId = result.data.data.id;
   result = await request('/api/orders', { method: 'POST', json: createPayload });
   assert.equal(result.data.data.id, orderId, '重复提交必须返回原订单');
@@ -177,6 +176,10 @@ try {
   }
   result = await request(`/api/orders/${orderId}/attachments`);
   assert.equal(result.data.data.length, 2, '多附件应按文件独立上传并全部保留');
+
+  result = await request(`/api/orders/${orderId}/complete`, { method: 'POST', body: new FormData() });
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  assert.equal(result.data.data.status, '已完成', '录入人（执行）可将订单标记为已完成');
 
   result = await request(`/api/orders/${orderId}`, { method: 'PATCH', json: { project_id: projectId, order_date: '2026-09-16', delivery_date: '2026-09-21', designer: '设计师乙', created_by: '填写人乙', payment_status: '已结款', status: '已完成', products: [{ name: '测试产品', unit: '项', quantity: 1, unit_price: '20.00' }], costs: [], advances: [] } });
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
@@ -210,6 +213,8 @@ try {
   result = await request('/api/reimbursements', { method: 'POST', json: { employee: '填写人甲', item: '交通费', amount: '12.34', advance_date: '2026-09-16', order_id: orderId } });
   assert.equal(result.response.status, 201, JSON.stringify(result.data));
   const reimbursementId = result.data.data.id;
+  result = await request('/api/orders');
+  assert.ok((result.data.data.find((item) => item.id === orderId).advances || []).some((item) => item.id === reimbursementId), '订单显示时应自动包含关联的报销');
   async function setAdminWorkflowRole(role) {
     const form = new FormData();
     form.append('role', role);
@@ -245,12 +250,15 @@ try {
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
   result = await request('/api/reimbursements?scope=mine&status=未报销');
   assert.ok(!result.data.data.some((item) => item.id === reimbursementId), '未报销筛选不应包含已付款记录');
+  result = await request('/api/reimbursements?scope=history');
+  assert.ok(result.data.data.some((item) => item.id === reimbursementId), '历史报销应包含已执行记录');
+  assert.ok(result.data.data.every((item) => item.reimbursement_status === '已执行'), '历史报销只应包含已完成记录');
   const clearWorkflowRole = new FormData();
   result = await request('/admin?/clearExtraIdentity', { method: 'POST', body: clearWorkflowRole });
   assert.equal(result.response.status, 200, '流程测试后应清除管理员额外身份');
   result = await request(`/api/orders/${orderId}`,  { method: 'PATCH', json: { project_id: projectId, order_date: '2026-09-16', delivery_date: '2026-09-21', designer: '设计师乙', created_by: '填写人乙', payment_status: '已结款', status: '已完成', products: [{ name: '测试产品', unit: '项', quantity: 1, unit_price: '20.00' }], costs: [], advances: [] } });
-  assert.equal(result.response.status, 400, '已进入报销流程的垫付不能通过订单接口删除');
-  assert.match(result.data.error?.message || '', /不可删除或修改/);
+  assert.equal(result.response.status, 200, '订单更新应忽略垫付字段且不影响已关联的报销');
+  assert.ok((result.data.data.advances || []).some((item) => item.id === reimbursementId), '订单更新后仍应显示关联的报销');
   result = await request(`/api/reimbursements/${reimbursementId}/voucher`, { method: 'POST' });
   assert.equal(result.response.status, 201, JSON.stringify(result.data));
   const voucherNo = result.data.data.voucher_no;
@@ -336,6 +344,7 @@ try {
   insertEmployee.run(1003, 'test1003', '赵执行', '执行', 'executor', 1, seededAt, seededAt);
   insertEmployee.run(1004, 'test1004', '钱财务', '内务', 'finance', 1, seededAt, seededAt);
   insertEmployee.run(1005, 'test1005', '孙执行', '执行', 'executor', 1, seededAt, seededAt);
+  insertEmployee.run(1006, 'test1006', '周执行', '执行', 'executor', 1, seededAt, seededAt);
   identityDb.close();
 
   // 审核队列按角色裁剪，且不包含本人提交的报销；本人报销只在“我的报销”可见。
@@ -374,6 +383,21 @@ try {
     assert.equal(result.response.status, 200, '管理人员可管理下级员工');
     result = await requestOn(base, '/api/employees', { method: 'DELETE', json: { uid: 1005 } });
     assert.equal(result.response.status, 200, '管理人员可删除下级员工');
+    const managedSource = await requestOn(base, '/api/catalog/sources', { method: 'POST', json: { kind: 'cost', owner_name: '管理人员资料库', source_file: 'manager-check.csv' } });
+    assert.equal(managedSource.response.status, 201, '管理人员可新增报价成本库');
+  });
+
+  // 报价成本库可见性：执行可查看但不能新增/导入。
+  await withIdentityServer(1006, async (base) => {
+    let result = await requestOn(base, '/api/catalog');
+    assert.equal(result.response.status, 200, '执行可请求资料库接口');
+    assert.ok(result.data.data.length > 0, '执行应能看到报价成本库');
+    result = await requestOn(base, '/api/catalog/sources');
+    assert.ok(result.data.data.length > 0, '执行应能看到报价成本库来源');
+    result = await requestOn(base, '/api/catalog/sources', { method: 'POST', json: { kind: 'cost', owner_name: '执行越权库' } });
+    assert.equal(result.response.status, 403, '执行不能新增/导入报价成本库');
+    result = await requestOn(base, '/api/reimbursements?scope=history');
+    assert.equal(result.response.status, 403, '执行不能查看全部历史报销');
   });
 
   await withIdentityServer(1002, async (base) => {
@@ -400,6 +424,9 @@ try {
     invoiceForm.append('file', new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], { type: 'image/png' }), 'finance-invoice.png');
     const uploaded = await requestOn(base, `/api/reimbursements/${financeUploadReimbursementId}/attachments`, { method: 'POST', body: invoiceForm });
     assert.equal(uploaded.response.status, 201, JSON.stringify(uploaded.data));
+    const financeCatalog = await requestOn(base, '/api/catalog');
+    assert.equal(financeCatalog.response.status, 200, '财务可请求资料库接口');
+    assert.equal(financeCatalog.data.data.length, 0, '财务不应看到报价成本库');
   });
   const auditDb = new Database(databasePath, { readonly: true });
   const financeUploadAudit = auditDb.prepare("SELECT actor_name,actor_uid FROM audit_logs WHERE entity_type='reimbursement' AND entity_id=? AND action IN ('upload_attachment','reupload_attachment') ORDER BY created_at DESC LIMIT 1").get(financeUploadReimbursementId);
@@ -428,9 +455,18 @@ try {
     result = await requestOn(base, '/api/orders');
     const participantOrder = result.data.data.find((order) => order.id === participantOrderId);
     assert.equal(participantOrder.payment_status, '未结款', '订单参与者不能把订单改为已结款');
+    result = await requestOn(base, `/api/orders/${participantOrderId}/complete`, { method: 'POST', body: new FormData() });
+    assert.equal(result.response.status, 400, '设计师未上传设计图不能完成订单');
+    const designForm = new FormData();
+    designForm.append('files', new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], { type: 'image/png' }), 'design.png');
+    result = await requestOn(base, `/api/orders/${participantOrderId}/complete`, { method: 'POST', body: designForm });
+    assert.equal(result.response.status, 200, JSON.stringify(result.data));
+    assert.equal(result.data.data.status, '已完成', '设计师上传设计图后可完成订单');
+    result = await requestOn(base, `/api/orders/${participantOrderId}/attachments`);
+    assert.ok(result.data.data.some((item) => item.attachment_kind === 'design' && item.file_name === 'design.png'), '设计图应以 design 附件保存');
   });
 
-  console.log('Smoke test passed: public workbench, catalog import/copy, creator snapshots, order totals, independent attachments, immutable processed advances, reimbursement filters/state machine, voucher idempotency, aligned exports, employee management authorization, audit and v18/v20/v21/v23 migrations.');
+  console.log('Smoke test passed: public workbench, catalog import/copy, creator snapshots, order totals, independent attachments, order-linked reimbursements, reimbursement filters/state machine, voucher idempotency, aligned exports, employee management authorization, audit and v18/v20/v21/v23 migrations.');
 } finally {
   server.kill('SIGTERM');
   await new Promise((resolve) => { server.once('exit', resolve); setTimeout(resolve, 1000); });

@@ -1,5 +1,5 @@
 import { listCatalog, listCatalogSources, listCustomers, listOrders, listProjects, listReimbursementOrders } from './order-db';
-import { ADMIN_UID, listActiveEmployees, orderViewAllRoles, reimbursementViewAllRoles, hasAnyRole, type CurrentIdentity } from './identity';
+import { ADMIN_UID, listActiveEmployees, orderViewAllRoles, reimbursementViewAllRoles, catalogViewRoles, hasAnyRole, type CurrentIdentity } from './identity';
 import { reimbursementStatusesForRole } from '$lib/permissions';
 
 export function loadWorkbench(identity?: CurrentIdentity) {
@@ -7,6 +7,7 @@ export function loadWorkbench(identity?: CurrentIdentity) {
   const allReimbursements = listReimbursementOrders();
   const canViewAllOrders = !identity || hasAnyRole(identity, orderViewAllRoles);
   const canViewAllReimbursements = !identity || hasAnyRole(identity, reimbursementViewAllRoles);
+  const canViewCatalog = !identity || hasAnyRole(identity, catalogViewRoles);
   const identityUid = identity?.uid;
   const orders = canViewAllOrders ? allOrders : allOrders.filter((order) =>
     order.created_by_uid === identityUid || order.designer_uid === identityUid || order.planner_uid === identityUid
@@ -21,14 +22,19 @@ export function loadWorkbench(identity?: CurrentIdentity) {
         (identityUid === ADMIN_UID || item.employee_uid !== identityUid)
       )
     : [];
+  // “历史报销”是已完成（已执行）的全部报销单，仅对可见全部的审核角色开放。
+  const historyReimbursements = canViewAllReimbursements
+    ? allReimbursements.filter((item) => item.reimbursement_status === '已执行')
+    : [];
   return {
     customers: listCustomers(),
     projects: listProjects(),
-    catalog: listCatalog(),
-    catalogSources: listCatalogSources(),
+    catalog: canViewCatalog ? listCatalog() : [],
+    catalogSources: canViewCatalog ? listCatalogSources() : [],
     employees: listActiveEmployees(),
     orders,
     reimbursements,
-    reviewReimbursements
+    reviewReimbursements,
+    historyReimbursements
   };
 }

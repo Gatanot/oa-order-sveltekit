@@ -1,7 +1,7 @@
 /* reimbursements — 报销（原 app.css 第 1949–2023 行） */
 /* Reimbursements */
 .reimbursement-filters {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .reimbursement-filters.finance-filters {

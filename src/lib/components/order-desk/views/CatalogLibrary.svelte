@@ -4,6 +4,7 @@
   const desk = getContext<any>('order-desk');
   let detailSource = $state<any>(null);
   let detailSearch = $state('');
+  let reuploadInput = $state<HTMLInputElement | null>(null);
   const sources = () => desk.catalogSources.filter((source: any) => source.kind === desk.catalogKind);
   const detailItems = () => {
     const keyword = detailSearch.trim().toLowerCase();
@@ -17,11 +18,12 @@
   }
 </script>
 <svelte:window onkeydown={(event) => { if (event.key === 'Escape') closeTopLayer(); }} />
+<input type="file" accept=".xlsx,.xls,.csv" class="visually-hidden" bind:this={reuploadInput} onchange={desk.onCatalogReuploadChange} />
 
 <section class="page-section">
   <div class="section-heading">
-    <div><p class="section-kicker">基础资料</p><h2>报价库与成本库</h2><span>{desk.canManageCatalog ? '按客户与厂商维护订单录入所需的价格资料。' : '当前为只读浏览；新增和导入资料仅限财务。'}</span></div>
-    {#if desk.canManageCatalog}<div class="top-actions"><button class="outline-action" type="button" onclick={desk.openCatalogSourceForm}><Plus size={16} />新增{desk.catalogKind === 'quote' ? '公司' : '厂商'}</button><label class="upload-action"><Upload size={16} />配置文件<input type="file" accept=".xlsx,.xls,.csv" onchange={desk.importFile} /></label></div>{:else}<span class="readonly-badge">只读</span>{/if}
+    <div><p class="section-kicker">基础资料</p><h2>报价库与成本库</h2><span>{desk.canManageCatalog ? '按客户与厂商维护订单录入所需的价格资料。' : '当前为只读浏览；新增和导入资料仅限老板和管理人员。'}</span></div>
+    {#if desk.canManageCatalog}<div class="top-actions"><button class="outline-action" type="button" onclick={desk.openCatalogSourceForm}><Plus size={16} />新增{desk.catalogKind === 'quote' ? '公司' : '厂商'}</button></div>{:else}<span class="readonly-badge">只读</span>{/if}
   </div>
 
   <div class="catalog-tabs" role="tablist" aria-label="资料库类型">
@@ -33,7 +35,10 @@
     {#each sources() as source}
       <div class:active={desk.catalogSourceId === source.id} class="catalog-source-card">
         <button class="catalog-source-select" onclick={() => desk.catalogSourceId = desk.catalogSourceId === source.id ? '' : source.id}><span>{source.kind === 'quote' ? '客户' : '厂商'}</span><b>{source.owner_name}</b><small>{source.item_count} 个项目 · {source.source_file || '手工配置'}</small></button>
-        <button class="catalog-source-detail" onclick={() => { detailSearch = ''; detailSource = source; }}>查看明细</button>
+        <div class="catalog-source-actions">
+          <button class="catalog-source-detail" onclick={() => { detailSearch = ''; detailSource = source; }}>查看明细</button>
+          {#if desk.canManageCatalog}<button class="catalog-source-detail" onclick={() => { if (desk.beginCatalogReupload(source.id)) reuploadInput?.click(); }}>重新上传配置</button>{/if}
+        </div>
       </div>
     {:else}<div class="catalog-empty-source"><FileSpreadsheet size={20} /><span>暂无{desk.catalogKind === 'quote' ? '客户报价' : '厂商成本'}来源</span></div>{/each}
   </div>
@@ -59,13 +64,17 @@
 {#if desk.catalogSourceOpen}
   <div class="project-modal-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) desk.catalogSourceOpen = false; }}>
     <div class="project-modal" role="dialog" aria-modal="true" aria-labelledby="catalog-source-title">
-      <div class="project-modal-head"><div><p class="section-kicker">新增资料库来源</p><h2 id="catalog-source-title">新增{desk.catalogKind === 'quote' ? '客户公司' : '厂商'}</h2><span>可建立空资料库，也可沿用同类型资料库后再调整。</span></div><button class="icon-control" aria-label="关闭新增资料库" onclick={() => desk.catalogSourceOpen = false}><X size={18} /></button></div>
-      <form onsubmit={(event) => { event.preventDefault(); desk.createCatalogSourceFromForm(); }}>
+      <div class="project-modal-head"><div><p class="section-kicker">新增资料库来源</p><h2 id="catalog-source-title">新增{desk.catalogKind === 'quote' ? '客户公司' : '厂商'}</h2><span>填写名称并上传配置文件，文件内容会自动解析为该公司的资料数据。</span></div><button class="icon-control" aria-label="关闭新增资料库" onclick={() => desk.catalogSourceOpen = false}><X size={18} /></button></div>
+      <form onsubmit={(event) => { event.preventDefault(); desk.submitCatalogSourceForm(); }}>
         <div class="project-modal-body">
           <label>{desk.catalogKind === 'quote' ? '客户公司名称' : '厂商名称'} <em>*</em><input bind:value={desk.catalogSourceName} maxlength="80" placeholder={desk.catalogKind === 'quote' ? '例如：华东科技有限公司' : '例如：硕达'} required /></label>
-          <label>资料库来源<select bind:value={desk.catalogSourceCopyId}><option value="">建立空资料库，稍后上传文件</option>{#each sources() as source}<option value={source.id}>沿用：{source.owner_name}（{source.item_count} 项）</option>{/each}</select></label>
+          <div class="catalog-file-field">
+            <span>{desk.catalogKind === 'quote' ? '客户报价配置文件' : '厂商成本配置文件'} <em>*</em></span>
+            <label class="upload-action"><Upload size={15} />{desk.catalogSourceFile?.name || '选择配置文件'}<input type="file" accept=".xlsx,.xls,.csv" onchange={desk.onCatalogSourceFileChange} /></label>
+            <small class="field-hint">支持 .xlsx / .xls / .csv，上传后自动解析为该公司资料数据</small>
+          </div>
         </div>
-        <div class="project-modal-footer"><button type="button" class="outline-action" onclick={() => desk.catalogSourceOpen = false}>取消</button><button type="submit" class="primary-action" disabled={desk.busy}>{desk.busy ? '创建中...' : '保存并继续配置'}</button></div>
+        <div class="project-modal-footer"><button type="button" class="outline-action" onclick={() => desk.catalogSourceOpen = false}>取消</button><button type="submit" class="primary-action" disabled={desk.busy || !desk.catalogSourceName?.trim() || !desk.catalogSourceFile}>{desk.busy ? '解析中...' : '下一步：预览并导入'}</button></div>
       </form>
     </div>
   </div>
@@ -87,12 +96,12 @@
       <div class="drawer-head"><div><p class="section-kicker">导入预览</p><h2 id="catalog-import-title">导入预览</h2><span>{desk.catalogImportPreview.file_name} · {desk.catalogImportPreview.sheet || '首个工作表'}</span></div><button class="icon-control" aria-label="关闭导入预览" onclick={desk.cancelCatalogImport}><X size={17} /></button></div>
       <div class="drawer-body">
         <div class="import-preview-summary"><div><small>读取行数</small><b>{desk.catalogImportPreview.total_rows}</b></div><div><small>有效行</small><b>{desk.catalogImportPreview.valid_rows}</b></div><div><small>忽略行</small><b>{desk.catalogImportPreview.ignored_rows}</b></div></div>
-        {#if !desk.catalogSourceId}<label class="settings-name-field">{desk.catalogKind === 'quote' ? '客户公司名称' : '厂商名称'}<input bind:value={desk.catalogImportOwner} maxlength="80" placeholder={desk.catalogKind === 'quote' ? '例如：佛山广电' : '例如：硕达'} /></label>{/if}
+        {#if !desk.catalogImportTargetId}<label class="settings-name-field">{desk.catalogKind === 'quote' ? '客户公司名称' : '厂商名称'}<input bind:value={desk.catalogImportOwner} maxlength="80" placeholder={desk.catalogKind === 'quote' ? '例如：佛山广电' : '例如：硕达'} /></label>{/if}
         <div class="import-column-map"><b>识别列</b><span>{previewColumns().join('、') || '未识别到表头'}</span></div>
         <div class="table-panel"><div class="table-scroll"><table><thead><tr>{#each previewColumns() as column}<th>{column}</th>{/each}</tr></thead><tbody>{#each desk.catalogImportPreview.rows.slice(0, 10) as row}<tr>{#each previewColumns() as column}<td>{String(row[column] ?? '')}</td>{/each}</tr>{:else}<tr><td colspan={Math.max(previewColumns().length, 1)}><div class="empty-table">没有可导入的有效行</div></td></tr>{/each}</tbody></table></div></div>
         {#if desk.catalogImportPreview.errors.length}<div class="import-errors"><b>忽略原因</b><ul>{#each desk.catalogImportPreview.errors.slice(0, 8) as issue}<li>{issue}</li>{/each}</ul></div>{/if}
       </div>
-      <div class="drawer-footer"><button class="outline-action" onclick={desk.cancelCatalogImport}>取消</button><button class="primary-action" disabled={desk.busy || !desk.catalogImportPreview.valid_rows} onclick={desk.confirmCatalogImport}>{desk.busy ? '导入中...' : desk.catalogSourceId ? '替换当前资料库' : '选择归属并导入'}</button></div>
+      <div class="drawer-footer"><button class="outline-action" onclick={desk.cancelCatalogImport}>取消</button><button class="primary-action" disabled={desk.busy || !desk.catalogImportPreview.valid_rows} onclick={desk.confirmCatalogImport}>{desk.busy ? '导入中...' : desk.catalogImportTargetId ? '替换该公司资料库' : '导入为公司资料库'}</button></div>
     </div>
   </div>
 {/if}

@@ -37,14 +37,14 @@ function lineTotalYuan(item: Record<string, unknown>): number {
   return Math.round(Number(item.quantity || 0) * Number(item.unit_price || 0) * 100) / 100;
 }
 
+/** 订单状态只保留“制作中/已完成”，历史值（如“待确认”）统一归并为“制作中”。 */
+function normalizeOrderStatus(value: unknown): '制作中' | '已完成' {
+  return text(value) === '已完成' ? '已完成' : '制作中';
+}
+
 /** 过滤掉关键名称为空且金额也为 0/空的行（用户点了“添加”但未填写），再检查是否至少有一行有效。 */
 function sanitizeLines(lines: Array<Record<string, unknown>>, nameKey: string): Array<Record<string, unknown>> {
   return lines.filter((item) => text(item[nameKey]));
-}
-
-/** 垫付行：物品名或金额任一有值即保留。 */
-function sanitizeAdvances(lines: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
-  return lines.filter((item) => text(item.item) || Number(item.amount) > 0);
 }
 
 /** 明细为空时的回退解析：空/缺省金额视为 0，非法值仍然报错。 */
@@ -497,76 +497,12 @@ function reimbursementStatusFor(advances: Array<Record<string, unknown>>): strin
   return '已执行';
 }
 
-function normalizedReimbursementStatus(value: unknown): ReimbursementStatus {
-  return reimbursementStatusCode(value);
-}
-
 /** 订单垫付仍以姓名录入，按姓名唯一匹配在职员工后写回稳定的 UID 关联。 */
 function resolveEmployeeUidByName(db: Database.Database, name: string): number | null {
   const value = text(name);
   if (!value) return null;
   const matches = db.prepare('SELECT catsco_uid FROM employees WHERE active=1 AND (display_name=? OR username=?)').all(value, value) as Array<{ catsco_uid: number }>;
   return matches.length === 1 ? matches[0].catsco_uid : null;
-}
-
-function insertReimbursements(db: Database.Database, orderId: string, advances: Array<Record<string, unknown>>, userName = '') {
-  const insert = db.prepare('INSERT INTO reimbursements_simple(id,employee,employee_uid,item,amount,advance_date,order_id,invoice,note,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)');
-  for (const item of advances) {
-    const amount = Number(item.amount || 0);
-    if (!text(item.item) && !(amount > 0)) continue;
-    const employee = text(item.employee) || userName;
-    insert.run(text(item.id) || uuid(), employee, resolveEmployeeUidByName(db, employee), text(item.item), moneyToCents(String(amount)), text(item.date) || now().slice(0, 10), orderId, text(item.invoice), text(item.note), normalizedReimbursementStatus(item.status), now());
-  }
-}
-
-function syncOrderReimbursements(db: Database.Database, orderId: string, advances: Array<Record<string, unknown>>, userName = '') {
-  const existing = db.prepare('SELECT id,status,employee,item,amount,advance_date,invoice,note FROM reimbursements_simple WHERE order_id=?').all(orderId) as Array<{ id: string; status: string; employee: string; item: string; amount: number; advance_date: string; invoice: string; note: string }>;
-  const byId = new Map(existing.map((item) => [item.id, item]));
-  const keep = new Set<string>();
-  const insert = db.prepare('INSERT INTO reimbursements_simple(id,employee,employee_uid,item,amount,advance_date,order_id,invoice,note,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)');
-  const update = db.prepare("UPDATE reimbursements_simple SET employee=?,employee_uid=?,item=?,amount=?,advance_date=?,invoice=?,note=? WHERE id=? AND order_id=? AND status='pending_review'");
-
-  // Once a reimbursement has been rejected, approved, or paid, its original
-  // claim must remain an immutable accounting record. The editor renders these
-  // rows read-only, but enforce the same rule here for direct API callers too.
-  for (const saved of existing.filter((item) => item.status !== 'pending_review')) {
-    const submitted = advances.find((item) => text(item.id) === saved.id);
-    if (!submitted) throw new Error('已进入报销流程的垫付不可删除或修改');
-    const amount = Number(submitted.amount || 0);
-    const submittedDate = text(submitted.date) || saved.advance_date;
-    const submittedEmployee = text(submitted.employee) || userName;
-    if (
-      submittedEmployee !== saved.employee ||
-      text(submitted.item) !== saved.item ||
-      moneyToCents(String(amount)) !== saved.amount ||
-      submittedDate !== saved.advance_date ||
-      text(submitted.invoice) !== saved.invoice ||
-      text(submitted.note) !== saved.note
-    ) throw new Error('已进入报销流程的垫付不可删除或修改');
-  }
-
-  for (const item of advances) {
-    const amount = Number(item.amount || 0);
-    if (!text(item.item) && !(amount > 0)) continue;
-    const id = text(item.id);
-    if (id && byId.has(id)) {
-      keep.add(id);
-      update.run(text(item.employee) || userName, resolveEmployeeUidByName(db, text(item.employee) || userName), text(item.item), moneyToCents(String(amount)), text(item.date) || now().slice(0, 10), text(item.invoice), text(item.note), id, orderId);
-    } else {
-      // Do not trust a client-provided ID that already belongs to another
-      // reimbursement. Keep locally generated IDs when possible so attachment
-      // uploads can map the new row back to the submitted line.
-      const idTaken = id ? db.prepare('SELECT 1 FROM reimbursements_simple WHERE id=?').get(id) : undefined;
-      const nextId = id && !idTaken ? id : uuid();
-      keep.add(nextId);
-      const employee = text(item.employee) || userName;
-      insert.run(nextId, employee, resolveEmployeeUidByName(db, employee), text(item.item), moneyToCents(String(amount)), text(item.date) || now().slice(0, 10), orderId, text(item.invoice), text(item.note), 'pending_review', now());
-    }
-  }
-  const removable = existing.filter((item) => item.status === 'pending_review' && !keep.has(item.id));
-  const paths = removable.flatMap((item) => db.prepare('SELECT storage_path FROM reimbursement_attachments WHERE reimbursement_id=?').all(item.id) as Array<{ storage_path: string }>);
-  for (const item of removable) db.prepare('DELETE FROM reimbursements_simple WHERE id=?').run(item.id);
-  return paths;
 }
 
 function syncNormalizedOrderLines(db: Database.Database, orderId: string, products: Array<Record<string, unknown>>, costs: Array<Record<string, unknown>>) {
@@ -589,11 +525,23 @@ function hydrateOrder(row: Record<string, unknown>): Record<string, any> {
     (SELECT ra.id FROM reimbursement_attachments ra WHERE ra.reimbursement_id=r.id ORDER BY ra.created_at DESC LIMIT 1) AS attachment_id,
     (SELECT COUNT(*) FROM reimbursement_attachments ra WHERE ra.reimbursement_id=r.id) AS attachment_count
     FROM reimbursements_simple r WHERE r.order_id=? ORDER BY r.advance_date,r.id`).all(row.id) as Array<Record<string, unknown>>).map((item) => ({ ...item, status: reimbursementStatusLabel(item.status) }));
-  return { ...row, products, costs, advances, reimbursement_status: reimbursementStatusFor(advances) };
+  return { ...row, status: normalizeOrderStatus(row.status), products, costs, advances, reimbursement_status: reimbursementStatusFor(advances) };
 }
 
 export function getOrderAccessInfo(id: string) {
   return getOrderDb().prepare('SELECT id,created_by,designer,planner,created_by_uid,designer_uid,planner_uid,status,payment_status FROM orders_simple WHERE id=?').get(id) as { id: string; created_by: string; designer: string; planner: string; created_by_uid: number | null; designer_uid: number | null; planner_uid: number | null; status: string; payment_status: string } | undefined;
+}
+
+/** 将订单标记为已完成并写入审计。重复调用幂等。 */
+export function markOrderCompleted(id: string, actor: { name?: string; uid?: number | null } = {}) {
+  const db = getOrderDb();
+  const order = db.prepare('SELECT id,status FROM orders_simple WHERE id=?').get(id) as { id: string; status: string } | undefined;
+  if (!order) throw new Error('ORDER_NOT_FOUND');
+  const from = normalizeOrderStatus(order.status);
+  if (from === '已完成') return { id, status: '已完成' as const };
+  db.prepare("UPDATE orders_simple SET status='已完成' WHERE id=?").run(id);
+  recordAudit(db, { actorName: actor.name || '', actorUid: actor.uid ?? null, action: 'complete', entityType: 'order', entityId: id, fromValue: from, toValue: '已完成' });
+  return { id, status: '已完成' as const };
 }
 
 /**
@@ -628,7 +576,7 @@ const exportColumnLabels: Record<string, string> = {
   code: '订单编号', order_date: '订单日期', customer_name: '客户', project_name: '项目',
   project_owner: '项目负责人', customer_department: '客户部门', designer: '设计师', planner: '策划人', contact: '联系人',
   delivery_date: '交货日期', payment_status: '结款状态', service_name: '订单内容', quantity: '数量', unit: '单位',
-  quote_amount: '总报价', cost_amount: '制作成本', advance_amount: '员工垫付', profit: '预计毛利', created_by: '录入人',
+  quote_amount: '总报价', cost_amount: '制作成本', advance_amount: '报销金额', profit: '预计毛利', created_by: '录入人',
   status: '制作状态', reimbursement_status: '报销状态', product_name: '产品名称', product_specification: '制作要求',
   product_quantity: '产品数量', product_unit: '产品单位', product_unit_price: '产品单价', product_subtotal: '产品小计', note: '备注',
 };
@@ -942,19 +890,13 @@ export function createOrder(data: Record<string, unknown>) {
   const executionCompany = text(data.execution_company);
   const products = sanitizeLines(Array.isArray(data.products) ? data.products as Array<Record<string, unknown>> : [], 'name');
   const costs = sanitizeLines(Array.isArray(data.costs) ? data.costs as Array<Record<string, unknown>> : [], 'name');
-  const advances = sanitizeAdvances(Array.isArray(data.advances) ? data.advances as Array<Record<string, unknown>> : []);
   if (!products.length) throw new Error('请至少填写一项产品');
-  for (const item of advances) {
-    if (!text(item.item)) throw new Error('请填写垫付物品');
-    if (!(Number(item.amount) > 0)) throw new Error('垫付金额必须大于 0');
-    moneyToCents(item.amount);
-  }
   for (const item of [...products, ...costs]) {
     if (!Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0) throw new Error('产品和成本数量必须大于 0');
     if (!Number.isFinite(Number(item.unit_price)) || Number(item.unit_price) < 0) throw new Error('产品和成本单价不能为负数');
   }
-  const primary = products[0] || costs[0] || advances[0];
-  const serviceName = String(data.service_name || products.map((item) => text(item.name)).filter(Boolean).join('、') || costs.map((item) => text(item.name)).filter(Boolean).join('、') || advances.map((item) => text(item.item) || '员工垫付').filter(Boolean).join('、') || primary.name || primary.item || '员工垫付').trim();
+  const primary = products[0] || costs[0];
+  const serviceName = String(data.service_name || products.map((item) => text(item.name)).filter(Boolean).join('、') || costs.map((item) => text(item.name)).filter(Boolean).join('、') || primary.name || '订单').trim();
   if (!serviceName) throw new Error('请填写订单内容');
   const quantity = Number(data.quantity || products[0]?.quantity || 1);
   if (!Number.isFinite(quantity) || quantity <= 0) throw new Error('数量必须大于 0');
@@ -966,9 +908,8 @@ export function createOrder(data: Record<string, unknown>) {
   const quoteCents = products.length ? products.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0) : optionalMoneyToCents(data.quote_amount);
   const costCents = costs.length ? costs.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0) : optionalMoneyToCents(data.cost_amount);
   db.transaction(() => {
-    db.prepare('INSERT INTO orders_simple(id,code,customer_id,project_id,catalog_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,created_by,status,note,created_at,specification,is_extra,delivery_date,contact,customer_department,designer,planner,payment_status,products_json,costs_json,idempotency_key,execution_company) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id, code, project.customer_id, projectId, catalogId, serviceName, quantity, String(data.unit || products[0]?.unit || '项'), quoteCents, costCents, date, String(data.created_by || '填写人'), String(data.status || '制作中'), String(data.note || '').trim(), created, text(data.specification || products[0]?.specification), data.is_extra ? 1 : 0, deliveryDate, contact, department, designer, planner, text(data.payment_status) || '未结款', JSON.stringify(products), JSON.stringify(costs), idempotencyKey, executionCompany);
+    db.prepare('INSERT INTO orders_simple(id,code,customer_id,project_id,catalog_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,created_by,status,note,created_at,specification,is_extra,delivery_date,contact,customer_department,designer,planner,payment_status,products_json,costs_json,idempotency_key,execution_company) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id, code, project.customer_id, projectId, catalogId, serviceName, quantity, String(data.unit || products[0]?.unit || '项'), quoteCents, costCents, date, String(data.created_by || '填写人'), normalizeOrderStatus(data.status), String(data.note || '').trim(), created, text(data.specification || products[0]?.specification), data.is_extra ? 1 : 0, deliveryDate, contact, department, designer, planner, text(data.payment_status) || '未结款', JSON.stringify(products), JSON.stringify(costs), idempotencyKey, executionCompany);
     syncNormalizedOrderLines(db, id, products, costs);
-    insertReimbursements(db, id, advances, text(data.created_by));
   })();
   return hydrateOrder(db.prepare('SELECT * FROM orders_simple WHERE id=?').get(id) as Record<string, unknown>);
 }
@@ -979,13 +920,7 @@ export function updateOrder(id: string, data: Record<string, unknown>) {
   if (!existing) throw new Error('ORDER_NOT_FOUND');
   const products = sanitizeLines(Array.isArray(data.products) ? data.products as Array<Record<string, unknown>> : parseList(existing.products_json), 'name');
   const costs = sanitizeLines(Array.isArray(data.costs) ? data.costs as Array<Record<string, unknown>> : parseList(existing.costs_json), 'name');
-  const advances = Array.isArray(data.advances) ? sanitizeAdvances(data.advances as Array<Record<string, unknown>>) : [];
   if (!products.length) throw new Error('请至少保留一项产品');
-  for (const item of advances) {
-    if (!text(item.item)) throw new Error('请填写垫付物品');
-    if (!(Number(item.amount) > 0)) throw new Error('垫付金额必须大于 0');
-    moneyToCents(item.amount);
-  }
   const deliveryDate = text(data.delivery_date);
   const designer = text(data.designer);
   const planner = text(data.planner);
@@ -1000,12 +935,10 @@ export function updateOrder(id: string, data: Record<string, unknown>) {
   const targetProject = text(data.project_id || existing.project_id);
   const department = text(data.customer_department);
   const contact = text(data.contact);
-  const staleFiles = db.transaction(() => {
-    db.prepare(`UPDATE orders_simple SET project_id=?,customer_id=(SELECT customer_id FROM projects_simple WHERE id=?),service_name=?,quantity=?,unit=?,quote_amount=?,cost_amount=?,order_date=?,delivery_date=?,contact=?,customer_department=?,designer=?,planner=?,execution_company=?,created_by=?,status=?,payment_status=?,note=?,specification=?,products_json=?,costs_json=? WHERE id=?`).run(targetProject, targetProject, service, Number(products[0]?.quantity || existing.quantity), text(products[0]?.unit || existing.unit), quote, cost, text(data.order_date || existing.order_date), deliveryDate, contact, department, designer, planner, executionCompany, text(data.created_by || existing.created_by), text(data.status || existing.status), text(data.payment_status || existing.payment_status), text(data.note), text(products[0]?.specification || existing.specification), JSON.stringify(products), JSON.stringify(costs), id);
+  db.transaction(() => {
+    db.prepare(`UPDATE orders_simple SET project_id=?,customer_id=(SELECT customer_id FROM projects_simple WHERE id=?),service_name=?,quantity=?,unit=?,quote_amount=?,cost_amount=?,order_date=?,delivery_date=?,contact=?,customer_department=?,designer=?,planner=?,execution_company=?,created_by=?,status=?,payment_status=?,note=?,specification=?,products_json=?,costs_json=? WHERE id=?`).run(targetProject, targetProject, service, Number(products[0]?.quantity || existing.quantity), text(products[0]?.unit || existing.unit), quote, cost, text(data.order_date || existing.order_date), deliveryDate, contact, department, designer, planner, executionCompany, text(data.created_by || existing.created_by), normalizeOrderStatus(data.status || existing.status), text(data.payment_status || existing.payment_status), text(data.note), text(products[0]?.specification || existing.specification), JSON.stringify(products), JSON.stringify(costs), id);
     syncNormalizedOrderLines(db, id, products, costs);
-    return syncOrderReimbursements(db, id, advances, text(data.created_by));
   })();
-  for (const file of staleFiles) removeAttachmentFile(file.storage_path);
   return hydrateOrder(db.prepare(`SELECT o.*,c.name customer_name,p.name project_name,p.owner project_owner FROM orders_simple o JOIN customers_simple c ON c.id=o.customer_id JOIN projects_simple p ON p.id=o.project_id WHERE o.id=?`).get(id) as Record<string, unknown>);
 }
 
@@ -1266,7 +1199,8 @@ export function addOrderAttachment(orderId: string, file: { name: string; data: 
   const storagePath = join(order.id, `${id}${extension}`);
   mkdirSync(join(attachmentDir, order.id), { recursive: true });
   writeFileSync(join(attachmentDir, storagePath), file.data);
-  db.prepare('INSERT INTO order_attachments(id,order_id,file_name,mime_type,file_size,created_at,storage_path,attachment_kind) VALUES(?,?,?,?,?,?,?,?)').run(id, order.id, safeName, mime, file.data.length, now(), storagePath, 'note');
+  const attachmentKind = file.kind === 'design' ? 'design' : 'note';
+  db.prepare('INSERT INTO order_attachments(id,order_id,file_name,mime_type,file_size,created_at,storage_path,attachment_kind) VALUES(?,?,?,?,?,?,?,?)').run(id, order.id, safeName, mime, file.data.length, now(), storagePath, attachmentKind);
   recordAudit(db, { actorName: actor.name || '填写人', actorUid: actor.uid ?? null, action: 'upload_attachment', entityType: 'order', entityId: order.id, detail: { file_name: safeName, file_size: file.data.length } });
   return db.prepare('SELECT id,order_id,file_name,mime_type,file_size,attachment_kind,created_at FROM order_attachments WHERE id=?').get(id);
 }
@@ -1464,14 +1398,6 @@ export function seedDemoOrdersAndReimbursements(requestedCount = 36, actorUid: n
     const cost = matchedCost || fallbackCost;
     const hasAdvance = index % 3 !== 0;
     const employee = employees[index % employees.length];
-    const advances = hasAdvance ? [{
-      employee,
-      item: advanceItems[index % advanceItems.length],
-      amount: 35 + index % 8 * 18.5,
-      date: orderDate,
-      invoice: index % 4 === 0 ? '模拟电子发票.pdf' : '',
-      note: `后台模拟报销 · 批次 ${batch}`,
-    }] : [];
     const order = createOrder({
       project_id: project.id,
       order_date: orderDate,
@@ -1480,7 +1406,7 @@ export function seedDemoOrdersAndReimbursements(requestedCount = 36, actorUid: n
       customer_department: ['市场部', '品牌部', '综合事务部'][index % 3],
       designer: designers[index % designers.length],
       created_by: employee,
-      status: ['制作中', '待确认', '已完成'][index % 3],
+      status: ['制作中', '已完成'][index % 2],
       payment_status: index % 4 === 0 ? '已结款' : '未结款',
       note: `后台模拟订单 · 批次 ${batch}`,
       products,
@@ -1492,11 +1418,19 @@ export function seedDemoOrdersAndReimbursements(requestedCount = 36, actorUid: n
         quantity,
         unit_price: Math.max(0, Number(cost.cost_unit || 0) / 100),
       }],
-      advances,
       idempotency_key: `admin-demo-${batch}-${index}`,
     });
-    const reimbursement = order.advances?.[0];
-    if (reimbursement) {
+    if (hasAdvance) {
+      const reimbursement = createReimbursement({
+        employee,
+        item: advanceItems[index % advanceItems.length],
+        amount: 35 + index % 8 * 18.5,
+        advance_date: orderDate,
+        order_id: order.id,
+        invoice: index % 4 === 0 ? '模拟电子发票.pdf' : '',
+        note: `后台模拟报销 · 批次 ${batch}`,
+      });
+      if (activeEmployees.length) db.prepare('UPDATE reimbursements_simple SET employee_uid=? WHERE id=?').run(resolveEmployeeUidByName(db, employee), reimbursement.id);
       reimbursementCount++;
       const stage = advanceDemoReimbursement(reimbursement.id, index);
       if (stage === 'paid' && index % 2 === 0) archiveReimbursementVoucher(reimbursement.id, '模拟财务');
