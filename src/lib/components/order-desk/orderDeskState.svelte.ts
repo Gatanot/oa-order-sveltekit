@@ -3,7 +3,7 @@ import { pushState, replaceState } from "$app/navigation";
 import type * as XLSXType from "xlsx";
 import type { PublicArtifactVisitor } from "$lib/artifact-visitor";
 import { api, appPath, currentAppPath } from "$lib/api";
-import { hasAnyRole, orderCreateRoles, orderExportRoles, orderManageRoles, orderViewAllRoles, reimbursementActionRoles, reimbursementViewAllRoles, catalogViewRoles, catalogManageRoles } from "$lib/permissions";
+import { hasAnyRole, orderCreateRoles, orderExportRoles, orderManageRoles, orderViewAllRoles, reimbursementActionRoles, reimbursementViewAllRoles, catalogViewRoles, catalogManageRoles, employeeManageRoles } from "$lib/permissions";
 
 const apiFetch = (input: RequestInfo | URL, init?: RequestInit) =>
   fetch(typeof input === "string" ? appPath(input) : input, init);
@@ -1789,6 +1789,7 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "canDeleteOrders", { get: () => hasAnyRole(data.identity, orderManageRoles) });
   Object.defineProperty(desk, "canManageCatalog", { get: () => hasAnyRole(data.identity, catalogManageRoles) });
   Object.defineProperty(desk, "canViewCatalog", { get: () => hasAnyRole(data.identity, catalogViewRoles) });
+  Object.defineProperty(desk, "canManageEmployees", { get: () => hasAnyRole(data.identity, employeeManageRoles) });
   Object.defineProperty(desk, "visitor", { get: () => data.visitor });
   Object.defineProperty(desk, "identity", { get: () => data.identity });
   Object.defineProperty(desk, "isEmbedded", { get: () => isEmbedded });
