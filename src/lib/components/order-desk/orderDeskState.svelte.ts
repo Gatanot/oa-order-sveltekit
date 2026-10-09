@@ -93,7 +93,7 @@ export type Data = {
 
 
 export function createOrderDesk(data: Data) {
-  let view = $state<"overview" | "entry" | "catalog" | "reimbursements" | "review" | "history">("overview");
+  let view = $state<"overview" | "entry" | "catalog" | "reimbursements" | "review" | "history" | "employees">("overview");
   let workMode = $state<"view" | "entry" | "finance">(hasAnyRole(data.identity, reimbursementActionRoles) ? "finance" : "entry");
   let isEmbedded = $state(false);
   let onArtifactGateway = $state(false);
@@ -722,6 +722,7 @@ export function createOrderDesk(data: Data) {
     else if (path === "/reimbursements/review") view = "review";
     else if (path === "/reimbursements/history") view = "history";
     else if (path === "/catalog") view = "catalog";
+    else if (path === "/employees") view = "employees";
     else view = "overview";
     if (view !== previousView && (view === "reimbursements" || view === "review")) resetReimbursementFilters();
   }

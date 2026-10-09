@@ -1,0 +1,84 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { api } from '$lib/api';
+
+  let employees = $state<any[]>([]);
+  let departments = $state<string[]>([]);
+  let roles = $state<string[]>([]);
+  let employeeError = $state('');
+  let employeeSuccess = $state('');
+  let newUid = $state('');
+  let newUsername = $state('');
+  const roleLabels: Record<string, string> = { executor: '执行', designer: '设计师', planner: '策划', manager: '管理人员', finance: '财务', owner: '老板' };
+
+  async function addEmployee() {
+    employeeError = '';
+    employeeSuccess = '';
+    try {
+      const result = await api.post<{ data: any }>('/api/employees', { uid: Number(newUid), username: newUsername });
+      employees = [...employees, result.data]; newUid = ''; newUsername = '';
+    } catch (reason) { employeeError = reason instanceof Error ? reason.message : '员工创建失败'; }
+  }
+  async function deleteEmployee(employee: any) {
+    if (!confirm(`确定删除员工 ${employee.display_name}（${employee.catsco_uid}）？`)) return;
+    employeeError = '';
+    employeeSuccess = '';
+    try {
+      await api.delete('/api/employees', { uid: employee.catsco_uid });
+      employees = employees.filter((item) => item.catsco_uid !== employee.catsco_uid);
+    } catch (reason) { employeeError = reason instanceof Error ? reason.message : '员工删除失败'; }
+  }
+  onMount(async () => {
+    try {
+      const result = await api.get<{ data: any[]; departments: string[]; roles: string[] }>('/api/employees');
+      employees = result.data;
+      departments = result.departments;
+      roles = result.roles;
+    } catch (reason) { employeeError = reason instanceof Error ? reason.message : '员工列表加载失败'; }
+  });
+  async function saveEmployee(employee: any) {
+    employeeError = '';
+    employeeSuccess = '';
+    try {
+      const result = await api.patch<{ data: any }>('/api/employees', {
+        uid: Number(employee.catsco_uid),
+        display_name: employee.display_name,
+        department: employee.department,
+        role: employee.role,
+        active: Boolean(employee.active)
+      });
+      employees = employees.map((item) => item.catsco_uid === result.data.catsco_uid ? result.data : item);
+      employeeSuccess = '员工资料已保存';
+    } catch (reason) { employeeError = reason instanceof Error ? reason.message : '员工保存失败'; }
+  }
+</script>
+
+<section class="page-section">
+  <div class="section-heading">
+    <div><p class="section-kicker">员工权限</p><h2>员工与权限管理</h2><span>管理员工状态、所属部门和业务身份。</span></div>
+  </div>
+  <section class="employee-admin">
+    <form class="employee-create-form" onsubmit={(event) => { event.preventDefault(); addEmployee(); }}>
+      <label>Catsco 用户编号 <input type="number" min="1" bind:value={newUid} required /></label>
+      <label>用户名 <input bind:value={newUsername} required /></label>
+      <button type="submit" class="primary-action">新增员工</button>
+    </form>
+    {#if employeeError}<p class="employee-error" role="alert">{employeeError}</p>{/if}
+    {#if employeeSuccess}<p class="employee-success" role="status">{employeeSuccess}</p>{/if}
+    {#if employees.length}
+      <div class="employee-table-wrap"><table>
+        <thead><tr><th>员工</th><th>用户编号</th><th>部门</th><th>身份</th><th>启用</th><th></th></tr></thead>
+        <tbody>{#each employees as employee (employee.catsco_uid)}
+          <tr class:employee-row-readonly={!employee.canManage && !employee.isSelf}>
+            <td><input aria-label="员工姓名" bind:value={employee.display_name} disabled={!employee.canManage && !employee.isSelf} />{#if employee.isSelf}<span class="employee-self-tag">（我）</span>{/if}</td>
+            <td>{employee.catsco_uid} · {employee.username}</td>
+            <td><select aria-label="所属部门" bind:value={employee.department} disabled={!employee.canManage && !employee.isSelf}><option value="">未设置</option>{#each departments as department}<option value={department}>{department}</option>{/each}</select></td>
+            <td><select aria-label="员工身份" bind:value={employee.role} disabled={!employee.canManage}><option value="pending">待开通</option>{#each roles as role}<option value={role}>{roleLabels[role] || role}</option>{/each}</select></td>
+            <td><input type="checkbox" aria-label="启用员工" bind:checked={employee.active} disabled={!employee.canManage} /></td>
+            <td><div class="employee-row-actions">{#if employee.canManage || employee.isSelf}<button type="button" class="primary-action" onclick={() => saveEmployee(employee)}>保存</button>{/if}{#if employee.canManage}<button type="button" class="employee-delete-action" onclick={() => deleteEmployee(employee)}>删除</button>{/if}{#if !employee.canManage && !employee.isSelf}<span class="employee-locked" title="不能管理同级或更高级别的员工">无权限</span>{/if}</div></td>
+          </tr>
+        {/each}</tbody>
+      </table></div>
+    {:else if !employeeError}<p class="employee-empty">暂无待开通员工。员工首次通过 Catsco 访问后会出现在此处。</p>{/if}
+  </section>
+</section>
