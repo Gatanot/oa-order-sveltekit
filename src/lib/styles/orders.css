@@ -210,6 +210,7 @@
 .repeat-row textarea {
   min-height: 82px;
   padding-block: 11px;
+  resize: vertical;
 }
 
 .repeat-row input:focus,
