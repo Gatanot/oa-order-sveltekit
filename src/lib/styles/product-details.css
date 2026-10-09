@@ -16,6 +16,50 @@
   flex: 1 1 auto;
   min-width: 0;
 }
+
+/* 成本单价：可从成本库中选择 */
+.cost-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cost-field > input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cost-picker-toggle {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid #cbd8f3;
+  border-radius: 7px;
+  background: #f2f6ff;
+  color: var(--blue);
+  cursor: pointer;
+}
+
+.cost-picker-toggle:hover {
+  border-color: var(--blue);
+  background: #e6edff;
+}
+
+/* 成本选择菜单：与产品名建议菜单一致，悬浮在按钮下方 */
+.cost-suggestion-menu {
+  left: auto;
+  right: 0;
+  min-width: 240px;
+}
+
+.cost-suggestion-menu .cost-empty {
+  display: block;
+  padding: 8px 9px;
+  font-size: 11px;
+}
 .row-index {
   display: inline-flex;
   flex: 0 0 auto;

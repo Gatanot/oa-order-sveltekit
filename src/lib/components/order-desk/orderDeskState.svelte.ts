@@ -121,6 +121,10 @@ export function createOrderDesk(data: Data) {
   let planner = $state("");
   let plannerUid = $state<number | null>(null);
   let executionCompany = $state("");
+  let executionCompanies = $state<string[]>(["执行公司一", "执行公司二", "执行公司三"]);
+  let newExecutionCompany = $state("");
+  let showExecutionCompanyForm = $state(false);
+  let costPickerIndex = $state<number | null>(null);
   let paymentStatus = $state("未结款");
   let status = $state("已提交");
   let products = $state<Array<Record<string, any>>>([]);
@@ -412,6 +416,13 @@ export function createOrderDesk(data: Data) {
   const designers = $derived([
     ...new Set(orders.map((o) => o.designer).filter(Boolean)),
   ]);
+  // 执行公司没有独立数据表：默认三项 + 历史订单中出现过的值 + 用户手动新增（本地持久化）。
+  const executionCompanyOptions = $derived([
+    ...new Set([
+      ...executionCompanies,
+      ...orders.map((order: any) => String(order.execution_company || "").trim()).filter(Boolean),
+    ]),
+  ]);
   const completeOrderNeedsDesign = $derived(Boolean(completeOrderTarget) && data.identity.uid === completeOrderTarget?.designer_uid);
   const canReviewReimbursements = $derived(hasAnyRole(data.identity, reimbursementActionRoles));
   const canViewAllReimbursements = $derived(hasAnyRole(data.identity, reimbursementViewAllRoles));
@@ -562,6 +573,15 @@ export function createOrderDesk(data: Data) {
     const catscoUsername = data.identity?.username || (data.visitor.status === "authenticated" ? data.visitor.username : "");
     creatorName = catscoUsername;
     createdBy = catscoUsername;
+    // 恢复用户手动新增的执行公司（无独立数据表，使用浏览器本地存储）。
+    try {
+      const stored = JSON.parse(localStorage.getItem("oa-execution-companies") || "[]");
+      if (Array.isArray(stored) && stored.length) {
+        executionCompanies = [...new Set([...executionCompanies, ...stored.map((item) => String(item).trim()).filter(Boolean)])];
+      }
+    } catch {
+      /* 忽略损坏或不可用的本地存储 */
+    }
     // 工作权限由服务端核验的身份决定，不再由浏览器工作模式或用户手动切换。
     workMode = hasAnyRole(data.identity, reimbursementActionRoles) ? "finance" : "entry";
     let restoringHistory = false;
@@ -1174,24 +1194,115 @@ export function createOrderDesk(data: Data) {
     }
   }
   async function submitProject() {
-    if (!newCustomer.trim() || !newProject.trim()) return;
+    const name = newProject.trim();
+    if (!name) {
+      notify("请填写项目名称", true);
+      return;
+    }
+    if (!customerId && !newCustomer.trim()) {
+      notify("请先选择客户", true);
+      return;
+    }
     busy = true;
     try {
       const result = await api.post<{ data: Project }>("/api/projects", {
-        customer: newCustomer,
-        name: newProject,
+        customer_id: customerId || undefined,
+        customer: customerId ? undefined : newCustomer.trim(),
+        name,
         owner: newOwner,
       });
       await refresh();
       customerId = result.data.customer_id;
       projectId = result.data.id;
-      newCustomer = "";
       newProject = "";
       newOwner = "";
       showProjectForm = false;
       notify("项目已创建");
     } catch (e) {
       notify(e instanceof Error ? e.message : "项目创建失败", true);
+    } finally {
+      busy = false;
+    }
+  }
+  function toggleExecutionCompanyForm() {
+    showExecutionCompanyForm = !showExecutionCompanyForm;
+    if (!showExecutionCompanyForm) newExecutionCompany = "";
+  }
+  function addExecutionCompany() {
+    const name = newExecutionCompany.trim();
+    if (!name) {
+      notify("请填写执行公司名称", true);
+      return;
+    }
+    if (!executionCompanies.includes(name)) {
+      executionCompanies = [...executionCompanies, name];
+      try {
+        localStorage.setItem("oa-execution-companies", JSON.stringify(executionCompanies));
+      } catch {
+        /* 隐私模式下无法写入，仅当前会话生效 */
+      }
+    }
+    executionCompany = name;
+    newExecutionCompany = "";
+    showExecutionCompanyForm = false;
+    notify(`已新增执行公司：${name}`);
+  }
+  function toggleCostPicker(index: number) {
+    costPickerIndex = costPickerIndex === index ? null : index;
+  }
+  // 成本单价可从成本库中选择：优先按产品名匹配，其次结合当前客户/项目上下文排序。
+  function costOptions(index: number) {
+    const product = products[index];
+    const keyword = String(product?.name || "").trim().toLowerCase();
+    return catalog
+      .filter((item) => item.cost_unit > 0)
+      .filter((item) => !keyword || item.name.toLowerCase().includes(keyword) || keyword.includes(item.name.toLowerCase()))
+      .sort((a, b) => {
+        const aExact = a.name.toLowerCase() === keyword ? 1 : 0;
+        const bExact = b.name.toLowerCase() === keyword ? 1 : 0;
+        const aContext = (a.customer_name === selectedCustomer ? 2 : 0) + (a.project_name === selectedProject ? 1 : 0);
+        const bContext = (b.customer_name === selectedCustomer ? 2 : 0) + (b.project_name === selectedProject ? 1 : 0);
+        return bExact - aExact || bContext - aContext;
+      })
+      .slice(0, 8);
+  }
+  function applyCostOption(index: number, item: Catalog) {
+    if (!products[index]) return;
+    products[index] = {
+      ...products[index],
+      name: products[index].name || item.name,
+      unit: products[index].unit && products[index].unit !== "项" ? products[index].unit : (item.unit || "项"),
+      cost_unit: (item.cost_unit / 100).toFixed(2),
+      vendor: costVendorOf(item) || "成本库",
+      cost_catalog_id: item.id,
+      cost_manual: true,
+    };
+    products = [...products];
+    costPickerIndex = null;
+    orderFormDirty = true;
+    notify(`已从成本库选择：${item.name}`);
+  }
+  async function togglePaymentStatus(order: any) {
+    if (!desk.canManageOrders) {
+      notify("没有修改结款状态的权限", true);
+      return;
+    }
+    const next = (order.payment_status || "未结款") === "已结款" ? "未结款" : "已结款";
+    busy = true;
+    try {
+      const response = await apiFetch(`/api/orders/${encodeURIComponent(order.id)}/payment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ payment_status: next }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error?.message || payload.message || "结款状态更新失败");
+      }
+      await refresh();
+      notify(`订单已标记为${next}`);
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "结款状态更新失败", true);
     } finally {
       busy = false;
     }
@@ -1701,6 +1812,10 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "planner", { get: () => planner, set: (value) => { planner = value; } });
   Object.defineProperty(desk, "plannerUid", { get: () => plannerUid, set: (value) => { plannerUid = value ? Number(value) : null; } });
   Object.defineProperty(desk, "executionCompany", { get: () => executionCompany, set: (value) => { executionCompany = value; } });
+  Object.defineProperty(desk, "executionCompanyOptions", { get: () => executionCompanyOptions });
+  Object.defineProperty(desk, "newExecutionCompany", { get: () => newExecutionCompany, set: (value) => { newExecutionCompany = value; } });
+  Object.defineProperty(desk, "showExecutionCompanyForm", { get: () => showExecutionCompanyForm, set: (value) => { showExecutionCompanyForm = value; } });
+  Object.defineProperty(desk, "costPickerIndex", { get: () => costPickerIndex });
   Object.defineProperty(desk, "paymentStatus", { get: () => paymentStatus, set: (value) => { paymentStatus = value; } });
   Object.defineProperty(desk, "status", { get: () => status, set: (value) => { status = value; } });
   Object.defineProperty(desk, "editingOrderId", { get: () => editingOrderId });
@@ -1862,6 +1977,12 @@ export function createOrderDesk(data: Data) {
   desk.onStandaloneInvoiceChange = onStandaloneInvoiceChange;
   desk.submitOrder = submitOrder;
   desk.submitProject = submitProject;
+  desk.toggleExecutionCompanyForm = toggleExecutionCompanyForm;
+  desk.addExecutionCompany = addExecutionCompany;
+  desk.toggleCostPicker = toggleCostPicker;
+  desk.costOptions = costOptions;
+  desk.applyCostOption = applyCostOption;
+  desk.togglePaymentStatus = togglePaymentStatus;
   desk.onCatalogSourceFileChange = onCatalogSourceFileChange;
   desk.openCatalogSourceForm = openCatalogSourceForm;
   desk.submitCatalogSourceForm = submitCatalogSourceForm;

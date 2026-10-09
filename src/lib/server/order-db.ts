@@ -548,6 +548,19 @@ export function markOrderCompleted(id: string, actor: { name?: string; uid?: num
   return { id, status: '已完成' as const };
 }
 
+/** 更新订单结款状态（已结款 / 未结款），仅管理身份可调用。 */
+export function setOrderPaymentStatus(id: string, status: string, actor: { name?: string; uid?: number | null } = {}) {
+  const db = getOrderDb();
+  const order = db.prepare('SELECT id,payment_status FROM orders_simple WHERE id=?').get(id) as { id: string; payment_status: string } | undefined;
+  if (!order) throw new Error('ORDER_NOT_FOUND');
+  const normalized = status === '已结款' ? '已结款' : '未结款';
+  const current = order.payment_status || '未结款';
+  if (current === normalized) return { id, payment_status: normalized };
+  db.prepare('UPDATE orders_simple SET payment_status=? WHERE id=?').run(normalized, id);
+  recordAudit(db, { actorName: actor.name || '', actorUid: actor.uid ?? null, action: 'update_payment', entityType: 'order', entityId: id, fromValue: current, toValue: normalized });
+  return { id, payment_status: normalized };
+}
+
 /**
  * 校验并解析订单设计师/策划人的 UID。调用方应在写入订单之前执行，
  * 这样无效 UID 不会在订单提交后才抛错，造成部分写入。

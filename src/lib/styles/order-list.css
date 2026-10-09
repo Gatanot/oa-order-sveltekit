@@ -62,9 +62,30 @@
     min-width: 58px;
   }
 
-  .desktop-order-table .order-info-column {
+  .desktop-order-table .order-index-column {
     position: sticky;
     left: 0;
+    z-index: 2;
+    width: 52px;
+    min-width: 52px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+    background: #fff;
+  }
+
+  .desktop-order-table th.order-index-column {
+    z-index: 3;
+    background: #f6f8fb;
+  }
+
+  .desktop-order-table tbody tr:hover .order-index-column {
+    background: #f8faff;
+  }
+
+  .desktop-order-table .order-info-column {
+    position: sticky;
+    left: 52px;
     z-index: 2;
     width: 280px;
     min-width: 280px;

@@ -43,70 +43,6 @@
     </form>
   </div>
 </div>{/if}
-{#if desk.showProjectForm}<div
-    class="project-modal-backdrop"
-    role="presentation"
-    onclick={(event) => {
-      if (event.target === event.currentTarget) desk.showProjectForm = false;
-    }}
-  >
-    <div
-      class="project-modal"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="project-modal-title"
-    >
-      <div class="project-modal-head">
-        <div>
-          <p class="section-kicker">新增项目</p>
-          <h2 id="project-modal-title">新建项目</h2>
-          <span>创建成功后将自动选中该项目。</span>
-        </div>
-        <button
-          class="icon-control project-modal-close"
-          aria-label="关闭新建项目窗口"
-          title="关闭"
-          onclick={() => (desk.showProjectForm = false)}><X size={18} /></button
-        >
-      </div>
-      <form
-        onsubmit={(event) => {
-          event.preventDefault();
-          desk.submitProject();
-        }}
-      >
-        <div class="project-modal-body">
-          <label
-            >客户名称 <em>*</em><input
-              bind:value={desk.newCustomer}
-              placeholder="例如：华东科技有限公司"
-              required
-            /></label
-          ><label
-            >项目名称 <em>*</em><input
-              bind:value={desk.newProject}
-              placeholder="例如：办公楼改造项目"
-              required
-            /></label
-          ><label
-            >项目负责人<input
-              bind:value={desk.newOwner}
-              placeholder="例如：张三"
-            /></label
-          >
-        </div>
-        <div class="project-modal-footer">
-          <button
-            type="button"
-            class="outline-action"
-            onclick={() => (desk.showProjectForm = false)}>取消</button
-          ><button type="submit" class="primary-action" disabled={desk.busy}
-            >{desk.busy ? "保存中..." : "保存项目"}</button
-          >
-        </div>
-      </form>
-    </div>
-  </div>{/if}
 {#if desk.showExport}<div
     class="drawer-backdrop"
     role="presentation"
@@ -129,79 +65,11 @@
         <div class="export-mode-picker">
           <label>导出模式<select bind:value={desk.exportMode}><option value="detail">自选字段明细</option><option value="settlement">客户结算单</option></select></label>
           {#if desk.exportMode === "settlement"}
-            <div class="export-template-grid">
-              <label>标题<input bind:value={desk.exportTitle} placeholder="例如：2026年宣传物料结算单" /></label>
-              <label>合同编号<input bind:value={desk.exportContract} placeholder="可留空" /></label>
-              <label>甲方（客户）<input bind:value={desk.exportPartyA} placeholder="客户名称" /></label>
-              <label>乙方（我方）<input bind:value={desk.exportPartyB} placeholder="执行方名称，可留空" /></label>
-              <label>甲方项目跟进人<input bind:value={desk.exportFollowA} placeholder="客户联系人，可留空" /></label>
-              <label>乙方项目跟进人<input bind:value={desk.exportFollowB} placeholder="可留空" /></label>
-              <label>联系电话<input bind:value={desk.exportContactPhone} placeholder="可留空" /></label>
-            </div>
+            <label class="export-contract-field">合同编号<input bind:value={desk.exportContract} placeholder="可留空" /></label>
             <div class="export-options"><label><input type="checkbox" bind:checked={desk.exportRemarkOrder} /> 备注列填写订单编号</label><label><input type="checkbox" bind:checked={desk.exportTotal} /> 附带总计行</label><label><input type="checkbox" bind:checked={desk.exportSign} /> 附带签署栏</label></div>
           {:else}
             <div class="export-options"><label><input type="checkbox" bind:checked={desk.exportExpand} /> 按产品逐行展开</label><label><input type="checkbox" bind:checked={desk.exportTotal} /> 附带金额合计行</label></div>
           {/if}
-        </div>
-        <div class="export-selection">
-          <div class="picker-head">
-            <b>选择导出订单</b><span
-              >已选 {desk.selectedOrderIds.length} 条</span
-            >
-          </div>
-          <label
-            ><input
-              type="checkbox"
-              checked={desk.allFilteredSelected}
-              onchange={desk.toggleFilteredOrders}
-            /> 全选当前筛选结果</label
-          >
-          <div class="selection-list">
-            {#each desk.filteredOrders as order}<label
-                ><input
-                  type="checkbox"
-                  checked={desk.selectedOrderIds.includes(order.id)}
-                  onchange={() => desk.toggleOrder(order.id)}
-                /><span
-                  >{order.service_name} · {order.project_name}
-                  <small>{order.code}</small></span
-                ></label
-              >{:else}<span class="muted">当前筛选无订单</span>{/each}
-          </div>
-        </div>
-        <div class="drawer-filter-grid">
-          <label
-            >开始日期<input class="date-input" type="date" bind:value={desk.filterFrom} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} /></label
-          ><label
-            >结束日期<input class="date-input" type="date" bind:value={desk.filterTo} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} /></label
-          ><label
-            >客户<select bind:value={desk.filterCustomer} onchange={desk.onFilterCustomerChange}
-              ><option value="">全部客户</option
-              >{#each desk.customers as customer}<option value={customer.id}
-                  >{customer.name}</option
-                >{/each}</select
-            ></label
-          ><label
-            >项目<select bind:value={desk.filterProject}
-              ><option value="">全部项目</option
-              >{#each desk.projects.filter((item: any) => !desk.filterCustomer || item.customer_id === desk.filterCustomer) as project}<option
-                  value={project.id}>{project.name}</option
-                >{/each}</select
-            ></label
-          ><label
-            >项目负责人<select bind:value={desk.filterOwner}
-              ><option value="">全部负责人</option
-              >{#each desk.owners as owner}<option value={owner}>{owner}</option
-                >{/each}</select
-            ></label
-          ><label
-            >录入人<select bind:value={desk.filterCreator}
-              ><option value="">全部录入人</option
-              >{#each desk.creators as creator}<option value={creator}
-                  >{creator}</option
-                >{/each}</select
-            ></label
-          >
         </div>
         {#if desk.exportMode === "detail"}<div class="column-picker">
           <div class="picker-head">

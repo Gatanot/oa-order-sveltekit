@@ -64,6 +64,32 @@
   border-radius: 10px;
 }
 
+/* 客户结算单：只需填写合同编号，并把输入框放大到便于查看 */
+.export-mode-picker > label.export-contract-field {
+  max-width: none;
+  width: 100%;
+}
+
+.export-contract-field input {
+  width: 100%;
+  min-width: 0;
+  height: 62px;
+  padding: 0 18px;
+  border: 1px solid #c8d4e6;
+  border-radius: 12px;
+  outline: 0;
+  background: #fff;
+  color: var(--navy);
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+.export-contract-field input:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(49, 91, 220, .16);
+}
+
 .attachment-link,
 .attachment-toggle {
   border-color: #cbd8f3;
