@@ -1,8 +1,13 @@
 /* product-details — 产品明细栅格（原 app.css 第 3342–3360 行） */
 /* 产品明细：固定厂商成本已合并进产品行，成本单价与供应商跟随产品名称自动匹配 */
+/* 首列为独立序号列，避免序号占用产品名称列宽 */
 .repeat-row.editor-row,
 .repeat-header.editor-row {
-  grid-template-columns: minmax(200px, 2fr) minmax(64px, .7fr) 76px 100px 100px minmax(110px, 1fr) 100px 38px;
+  grid-template-columns: 34px minmax(200px, 2fr) minmax(64px, .7fr) 76px 100px 100px minmax(110px, 1fr) 100px 38px;
+}
+
+.repeat-header.editor-row .row-index-head {
+  text-align: center;
 }
 
 /* 每行产品前方的自动序号 */
