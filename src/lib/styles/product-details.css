@@ -1,16 +1,46 @@
 /* product-details — 产品明细栅格（原 app.css 第 3342–3360 行） */
 /* 产品明细：固定厂商成本已合并进产品行，成本单价与供应商跟随产品名称自动匹配 */
-/* 首列为独立序号列，避免序号占用产品名称列宽 */
+/* 序号独立于产品行卡片之外的左侧栏，卡片内只保留输入字段，避免挤占产品名称列宽 */
+.product-row {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  margin: 8px 0;
+}
+
+/* 与卡片首行输入框垂直居中对齐（卡片上内边距 12px + 行高一半） */
+.product-row .row-index {
+  margin-top: 22px;
+}
+
+.product-row .repeat-row.editor-row {
+  margin: 0;
+}
+
 .repeat-row.editor-row,
+.repeat-header-fields {
+  display: grid;
+  grid-template-columns: minmax(200px, 2fr) minmax(64px, .7fr) 76px 100px 100px minmax(110px, 1fr) 100px 38px;
+  gap: 10px;
+  align-items: center;
+}
+
+/* 与产品行卡片的内边距对齐，保证表头标签与输入框上下对齐 */
+.repeat-header-fields {
+  padding: 0 14px;
+}
+
 .repeat-header.editor-row {
-  grid-template-columns: 34px minmax(200px, 2fr) minmax(64px, .7fr) 76px 100px 100px minmax(110px, 1fr) 100px 38px;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 10px;
 }
 
 .repeat-header.editor-row .row-index-head {
   text-align: center;
 }
 
-/* 每行产品前方的自动序号 */
+/* 产品名称单元格：输入框与“已匹配”标记并排 */
 .product-name-cell {
   display: flex;
   align-items: center;
@@ -80,13 +110,13 @@
 }
 @media (max-width: 1100px) {
   .repeat-row.editor-row,
-  .repeat-header.editor-row {
+  .repeat-header-fields {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 @media (max-width: 700px) {
   .repeat-row.editor-row,
-  .repeat-header.editor-row {
+  .repeat-header-fields {
     grid-template-columns: 1fr;
   }
 }
