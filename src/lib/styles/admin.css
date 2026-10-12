@@ -157,11 +157,12 @@
 .employee-admin td input:not([type="checkbox"]),
 .employee-admin td select {
   width: 100%;
-  min-height: 42px;
-  padding: 9px 11px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 11px;
   border: 1px solid #cbd5e1;
-  border-radius: 10px;
-  background: #fff;
+  border-radius: var(--cc-radius-md);
+  background: var(--cc-field-surface);
   color: var(--ink);
   outline: none;
 }
@@ -169,8 +170,8 @@
 .employee-create-form input:focus,
 .employee-admin td input:not([type="checkbox"]):focus,
 .employee-admin td select:focus {
-  border-color: var(--blue);
-  box-shadow: 0 0 0 3px rgba(49, 91, 220, .1);
+  border-color: var(--cc-focus-border);
+  box-shadow: none;
 }
 
 .employee-create-form .primary-action {

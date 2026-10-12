@@ -1,11 +1,19 @@
 <script lang="ts">
   import { getContext } from "svelte";
   import { appPath } from "$lib/api";
-  import { ChevronLeft, ChevronRight, Download, Paperclip, Search, X } from "lucide-svelte";
+  import { ChevronLeft, ChevronRight, Download, Paperclip, X } from "lucide-svelte";
+  import WorkbenchListFilters from '../WorkbenchListFilters.svelte';
   const desk = getContext<any>("order-desk");
   const canExport = $derived(["finance", "admin"].includes(desk.identity?.role));
   let detailItem = $state<any>(null);
   let attachmentsByOrder = $state<Record<string, Array<any>>>({});
+  let peopleExpanded = $state(false);
+  const filterFields = $derived([
+    { key: 'historySearch', label: '搜索', type: 'search' as const, value: desk.historySearch, placeholder: '单据 / 订单 / 物品 / 报销人' },
+    { key: 'historyProject', label: '项目', value: desk.historyProject, options: [{ value: '', label: '全部项目' }, ...desk.projects.map((item: any) => ({ value: item.id, label: item.name }))] },
+    { key: 'historyPerson', label: '报销人', value: desk.historyPerson, options: [{ value: '', label: '全部报销人' }, ...desk.historyPeople.map((value: string) => ({ value, label: value }))] },
+    { key: 'historyFrom', label: '垫付日期', type: 'date-range' as const, value: desk.historyFrom, endKey: 'historyTo', endValue: desk.historyTo },
+  ]);
   async function showAttachments(item: any) {
     const reimbursementId = item.id;
     if (attachmentsByOrder[reimbursementId]) {
@@ -26,34 +34,27 @@
 </script>
 <svelte:window onkeydown={(event) => { if (event.key === 'Escape') detailItem = null; }} />
 
-<section class="page-section">
+<section class="page-section workbench-list-page history-page">
   <div class="section-heading">
     <div>
       <p class="section-kicker">报销归档</p>
       <h2>历史报销</h2>
-      <span>查看全部已完成（已执行）的报销单据与汇总统计。</span>
     </div>
-    <div class="top-actions">{#if canExport}<button class="outline-action" type="button" onclick={desk.exportHistory}><Download size={15} />导出当前筛选</button>{/if}</div>
   </div>
 
+  <WorkbenchListFilters fields={filterFields} onchange={(key, value) => desk[key] = value} onclear={desk.resetHistoryFilters} label="历史报销筛选" />
+  <div class="workbench-statistics"><div class="workbench-statistics-head"><span>当前筛选结果 · {desk.historyRows.length} 笔报销</span></div>
   <div class="summary-row reimbursement-summary">
     <div><span>已完成单数</span><b>{desk.historyStats.count}<small> 单</small></b></div>
     <div><span>已完成金额</span><b>{desk.money(desk.historyStats.amount)}</b></div>
     <div><span>已归档单据</span><b>{desk.historyStats.archived}<small> 单</small></b></div>
     <div><span>涉及报销人</span><b>{desk.historyStats.people}<small> 人</small></b></div>
   </div>
-
-  <div class="filters reimbursement-filters" aria-label="历史报销筛选">
-    <label class="field"><span>项目</span><select bind:value={desk.historyProject}><option value="">全部项目</option>{#each desk.projects as project}<option value={project.id}>{project.name}</option>{/each}</select></label>
-    <label class="field"><span>报销人</span><select bind:value={desk.historyPerson}><option value="">全部报销人</option>{#each desk.historyPeople as person}<option value={person}>{person}</option>{/each}</select></label>
-    <label class="field"><span>开始日期</span><input class="date-input" type="date" bind:value={desk.historyFrom} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} /></label>
-    <label class="field"><span>结束日期</span><input class="date-input" type="date" bind:value={desk.historyTo} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} /></label>
-    <label class="field filter-search"><span>关键词</span><div class="search-field"><Search size={16} /><input bind:value={desk.historySearch} placeholder="单据 / 订单 / 物品 / 报销人" /></div></label>
   </div>
-  <div class="reimbursement-actions"><span class="role-context">已完成：{desk.historyRows.length} 单 · 合计 {desk.money(desk.historyStats.amount)}</span><button class="outline-action" type="button" onclick={desk.resetHistoryFilters}>重置筛选</button></div>
 
-  {#if desk.historyByPerson.length}
-    <h3>按报销人统计</h3>
+  <div class="table-tools workbench-table-tools"><div class="order-table-heading"><h3>报销单据</h3><span class="filter-result">共 {desk.historyRows.length} 笔，第 {desk.historyPage} / {desk.historyPageCount} 页</span></div><div class="table-actions"><button class="outline-action" type="button" aria-expanded={peopleExpanded} aria-controls="history-person-summary" disabled={!desk.historyByPerson.length} onclick={() => peopleExpanded = !peopleExpanded}>按报销人统计</button>{#if canExport}<button class="outline-action" type="button" onclick={desk.exportHistory}><Download size={15} />导出当前筛选</button>{/if}</div></div>
+  {#if peopleExpanded && desk.historyByPerson.length}
+    <div id="history-person-summary" class="history-person-summary"><h3>按报销人统计</h3>
     <div class="table-panel">
       <div class="table-scroll">
         <table>
@@ -71,9 +72,9 @@
         </table>
       </div>
     </div>
+    </div>
   {/if}
 
-  <h3>报销单据</h3>
   <div class="table-panel reimbursement-review-table">
     <div class="table-scroll">
       <table>
@@ -91,7 +92,7 @@
               <td><button class="link-action" type="button" onclick={() => detailItem = item}>查看单据</button></td>
             </tr>
           {:else}
-            <tr><td colspan="8"><div class="empty-table">当前筛选没有已完成的历史报销。</div></td></tr>
+            <tr><td colspan="8"><div class="empty-table">当前筛选没有已完成的历史报销。{#if filterFields.some((field) => field.value || field.endValue)}<button class="outline-action" type="button" onclick={desk.resetHistoryFilters}>清空筛选</button>{/if}</div></td></tr>
           {/each}
         </tbody>
       </table>
@@ -134,7 +135,6 @@
             <div class="voucher-full"><small>备注</small><b>{detailItem.note || "—"}</b></div>
           </div>
         </div>
-        <div class="drawer-footer"><button class="outline-action" type="button" onclick={() => detailItem = null}>关闭</button></div>
       </div>
     </div>
   {/if}

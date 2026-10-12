@@ -1,11 +1,18 @@
 <script lang="ts">
   import { getContext } from 'svelte';
   import { Building2, ChevronLeft, ChevronRight, Factory, FileSpreadsheet, Plus, Search, Upload, X } from 'lucide-svelte';
+  import WorkbenchListFilters from '../WorkbenchListFilters.svelte';
   const desk = getContext<any>('order-desk');
   let detailSource = $state<any>(null);
   let detailSearch = $state('');
   let reuploadInput = $state<HTMLInputElement | null>(null);
   const sources = () => desk.catalogSources.filter((source: any) => source.kind === desk.catalogKind);
+  const filterFields = $derived([
+    { key: 'catalogSearch', label: '搜索', type: 'search' as const, value: desk.catalogSearch, placeholder: '名称 / 分类 / 公司 / 项目' },
+    { key: 'catalogCategory', label: '分类', value: desk.catalogCategory, options: [{ value: '', label: '全部分类' }, ...desk.catalogCategories.map((value: string) => ({ value, label: value }))] },
+    { key: 'catalogSourceId', label: desk.catalogKind === 'quote' ? '客户' : '厂商', value: desk.catalogSourceId, options: [{ value: '', label: desk.catalogKind === 'quote' ? '全部客户' : '全部厂商' }, ...sources().map((item: any) => ({ value: item.id, label: item.owner_name }))] },
+  ]);
+  function clearFilters() { desk.catalogSearch = ''; desk.catalogCategory = ''; desk.catalogSourceId = ''; }
   const detailItems = () => {
     const keyword = detailSearch.trim().toLowerCase();
     return desk.catalog.filter((item: any) => item.source_id === detailSource?.id && (!keyword || `${item.name} ${item.category} ${item.specification || ''} ${item.supplier_remark || ''}`.toLowerCase().includes(keyword)));
@@ -20,17 +27,20 @@
 <svelte:window onkeydown={(event) => { if (event.key === 'Escape') closeTopLayer(); }} />
 <input type="file" accept=".xlsx,.xls,.csv" class="visually-hidden" bind:this={reuploadInput} onchange={desk.onCatalogReuploadChange} />
 
-<section class="page-section">
+<section class="page-section workbench-list-page catalog-page">
   <div class="section-heading">
-    <div><p class="section-kicker">基础资料</p><h2>报价库与成本库</h2><span>{desk.canManageCatalog ? '按客户与厂商维护订单录入所需的价格资料。' : '当前为只读浏览；新增和导入资料仅限老板和管理人员。'}</span></div>
-    {#if desk.canManageCatalog}<div class="top-actions"><button class="outline-action" type="button" onclick={desk.openCatalogSourceForm}><Plus size={16} />新增{desk.catalogKind === 'quote' ? '公司' : '厂商'}</button></div>{:else}<span class="readonly-badge">只读</span>{/if}
+    <div><p class="section-kicker">基础资料</p><h2>报价库与成本库</h2></div>
+    {#if desk.canManageCatalog}<div class="top-actions"><button class="primary-action" type="button" onclick={desk.openCatalogSourceForm}><Plus size={16} />新增{desk.catalogKind === 'quote' ? '公司' : '厂商'}</button></div>{:else}<span class="readonly-badge">只读</span>{/if}
   </div>
 
   <div class="catalog-tabs" role="tablist" aria-label="资料库类型">
-    <button class:active={desk.catalogKind === 'quote'} onclick={() => desk.catalogKind = 'quote'}><Building2 size={16} />客户报价库</button>
-    <button class:active={desk.catalogKind === 'cost'} onclick={() => desk.catalogKind = 'cost'}><Factory size={16} />厂商成本库</button>
+    <button role="tab" aria-selected={desk.catalogKind === 'quote'} tabindex={desk.catalogKind === 'quote' ? 0 : -1} class:active={desk.catalogKind === 'quote'} onclick={() => desk.catalogKind = 'quote'} onkeydown={(event) => { if (['ArrowRight', 'ArrowLeft', 'End'].includes(event.key)) { event.preventDefault(); desk.catalogKind = 'cost'; (event.currentTarget.nextElementSibling as HTMLButtonElement)?.focus(); } }}><Building2 size={16} />客户报价库</button>
+    <button role="tab" aria-selected={desk.catalogKind === 'cost'} tabindex={desk.catalogKind === 'cost' ? 0 : -1} class:active={desk.catalogKind === 'cost'} onclick={() => desk.catalogKind = 'cost'} onkeydown={(event) => { if (['ArrowRight', 'ArrowLeft', 'Home'].includes(event.key)) { event.preventDefault(); desk.catalogKind = 'quote'; (event.currentTarget.previousElementSibling as HTMLButtonElement)?.focus(); } }}><Factory size={16} />厂商成本库</button>
   </div>
-
+  <WorkbenchListFilters fields={filterFields} onchange={(key, value) => desk[key] = value} onclear={clearFilters} label="资料库筛选" />
+  <div class="workbench-statistics"><div class="workbench-statistics-head"><span>当前筛选结果 · {desk.visibleCatalog.length} 条资料</span></div><div class="summary-row"><div><span>资料条目</span><b>{desk.visibleCatalog.length}</b></div><div><span>{desk.catalogKind === 'quote' ? '客户来源' : '厂商来源'}</span><b>{new Set(desk.visibleCatalog.map((item: any) => item.source_id || item.customer_name || '通用')).size}</b></div><div><span>涉及分类</span><b>{new Set(desk.visibleCatalog.map((item: any) => item.category || '未分类')).size}</b></div></div></div>
+  <div class="table-tools workbench-table-tools"><div class="order-table-heading"><h3>{desk.catalogKind === 'quote' ? '客户报价明细' : '厂商成本明细'}</h3><span class="filter-result">共 {desk.visibleCatalog.length} 条，第 {desk.catalogPage} / {desk.catalogPageCount} 页</span></div></div>
+  <details class="catalog-sources-disclosure"><summary>来源配置<span>{sources().length} 个{desk.catalogKind === 'quote' ? '客户' : '厂商'}</span><ChevronRight size={15} /></summary>
   <div class="catalog-source-grid">
     {#each sources() as source}
       <div class:active={desk.catalogSourceId === source.id} class="catalog-source-card">
@@ -42,15 +52,10 @@
       </div>
     {:else}<div class="catalog-empty-source"><FileSpreadsheet size={20} /><span>暂无{desk.catalogKind === 'quote' ? '客户报价' : '厂商成本'}来源</span></div>{/each}
   </div>
-
-  <div class="catalog-filters">
-    <label class="search-field"><Search size={16} /><input bind:value={desk.catalogSearch} placeholder="搜索名称、分类、公司或项目" /></label>
-    <select bind:value={desk.catalogCategory}><option value="">全部分类</option>{#each desk.catalogCategories as category}<option value={category}>{category}</option>{/each}</select>
-    <span>共 {desk.visibleCatalog.length} 条</span>
-  </div>
+  </details>
   <div class="table-panel catalog-table-panel"><div class="table-scroll"><table>
     <thead><tr><th>分类</th><th>项目名称</th><th>{desk.catalogKind === 'quote' ? '客户' : '厂商'}</th><th>制作要求 / 备注</th><th>单位</th><th>{desk.catalogKind === 'quote' ? '报价单价' : '成本单价'}</th></tr></thead>
-    <tbody>{#each desk.pagedCatalog as item}<tr><td><span class="category-label" title={item.category || '未分类'}>{item.category || '未分类'}</span></td><td title={item.name}><b>{item.name}</b></td><td title={item.source_owner || item.customer_name || '通用'}>{item.source_owner || item.customer_name || '通用'}</td><td title={item.specification || item.supplier_remark || '—'}>{item.specification || item.supplier_remark || '—'}</td><td title={item.unit}>{item.unit}</td><td class="money" title={desk.money(desk.catalogKind === 'quote' ? item.quote_unit : item.cost_unit)}>{desk.money(desk.catalogKind === 'quote' ? item.quote_unit : item.cost_unit)}</td></tr>{:else}<tr><td colspan="6"><div class="empty-table">当前资料库没有符合条件的条目。</div></td></tr>{/each}</tbody>
+    <tbody>{#each desk.pagedCatalog as item}<tr><td><span class="category-label" title={item.category || '未分类'}>{item.category || '未分类'}</span></td><td title={item.name}><b>{item.name}</b></td><td title={item.source_owner || item.customer_name || '通用'}>{item.source_owner || item.customer_name || '通用'}</td><td title={item.specification || item.supplier_remark || '—'}>{item.specification || item.supplier_remark || '—'}</td><td title={item.unit}>{item.unit}</td><td class="money" title={desk.money(desk.catalogKind === 'quote' ? item.quote_unit : item.cost_unit)}>{desk.money(desk.catalogKind === 'quote' ? item.quote_unit : item.cost_unit)}</td></tr>{:else}<tr><td colspan="6"><div class="empty-table">当前资料库没有符合条件的条目。{#if filterFields.some((field) => field.value)}<button class="outline-action" type="button" onclick={clearFilters}>清空筛选</button>{/if}</div></td></tr>{/each}</tbody>
   </table></div></div>
   {#if desk.catalogPageCount > 1}
     <nav class="order-pagination catalog-pagination" aria-label="资料库分页">

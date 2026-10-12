@@ -181,8 +181,8 @@
 .reimbursement-progress { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; padding: 0 0 20px; margin: 0; list-style: none; }
 .reimbursement-progress li { display: grid; gap: 6px; justify-items: center; text-align: center; font-size: 11px; color: var(--muted); }
 .reimbursement-progress li span { display: grid; place-items: center; width: 25px; height: 25px; border: 1px solid #bbb; border-radius: 50%; }
-.reimbursement-progress li.completed { color: #137452; font-weight: 600; }
-.reimbursement-progress li.completed span { background: #137452; border-color: #137452; color: white; }
+.reimbursement-progress li.completed { color: var(--blue); font-weight: 600; }
+.reimbursement-progress li.completed span { background: var(--blue); border-color: var(--blue); color: white; }
 .reimbursement-form-body { grid-template-columns: 1fr 1fr; }
 .reimbursement-form-body .full-field { grid-column: 1 / -1; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }

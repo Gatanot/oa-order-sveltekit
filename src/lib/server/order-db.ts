@@ -1055,6 +1055,7 @@ export function canAdvanceReimbursement(status: string, target: string, role: st
   const from = reimbursementStatusCode(status);
   const to = reimbursementStatusCode(target);
   if (!reimbursementTransitions[from].includes(to)) return false;
+  if (role === 'admin') return true;
   return (from === 'pending_review' && role === 'manager') ||
     ((from === 'pending_recheck' || from === 'pending_payment') && role === 'finance') ||
     (from === 'pending_confirmation' && role === 'owner');

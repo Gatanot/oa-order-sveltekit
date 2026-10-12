@@ -2,6 +2,13 @@
   import { getContext } from "svelte";
   import { Copy, Download, FileText, X } from "lucide-svelte";
   const desk = getContext<any>("order-desk");
+  const exportOrders = $derived((desk.orders as any[]).filter((order) => desk.selectedOrderIds.includes(order.id)));
+  function exportModeKey(event: KeyboardEvent) {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    desk.exportMode = event.key === 'Home' ? 'detail' : event.key === 'End' ? 'settlement' : desk.exportMode === 'detail' ? 'settlement' : 'detail';
+    (event.currentTarget as HTMLElement).querySelector<HTMLButtonElement>(`[data-mode="${desk.exportMode}"]`)?.focus();
+  }
   let rejectReasonInput = $state<HTMLTextAreaElement>();
   $effect(() => {
     if (desk.reimbursementRejectOpen) setTimeout(() => rejectReasonInput?.focus());
@@ -50,27 +57,38 @@
       if (event.target === event.currentTarget) desk.showExport = false;
     }}
   >
-    <section class="export-drawer" role="dialog" aria-modal="true">
+    <div class="export-drawer" role="dialog" aria-modal="true" aria-labelledby="export-dialog-title">
       <div class="drawer-head">
         <div>
           <p class="section-kicker">导出数据</p>
-          <h2>导出订单</h2>
-          <span>当前筛选条件会一并应用到导出结果</span>
+          <h2 id="export-dialog-title">导出订单</h2>
+          <span>已选 {exportOrders.length} 笔订单</span>
         </div>
-        <button class="icon-control" onclick={() => (desk.showExport = false)}
+        <button class="icon-control" aria-label="关闭导出订单" title="关闭" onclick={() => (desk.showExport = false)}
           ><X size={17} /></button
         >
       </div>
       <div class="drawer-body">
-        <div class="export-mode-picker">
-          <label>导出模式<select bind:value={desk.exportMode}><option value="detail">自选字段明细</option><option value="settlement">客户结算单</option></select></label>
-          {#if desk.exportMode === "settlement"}
-            <label class="export-contract-field">合同编号<input bind:value={desk.exportContract} placeholder="可留空" /></label>
-            <div class="export-options"><label><input type="checkbox" bind:checked={desk.exportRemarkOrder} /> 备注列填写订单编号</label><label><input type="checkbox" bind:checked={desk.exportTotal} /> 附带总计行</label><label><input type="checkbox" bind:checked={desk.exportSign} /> 附带签署栏</label></div>
-          {:else}
-            <div class="export-options"><label><input type="checkbox" bind:checked={desk.exportExpand} /> 按产品逐行展开</label><label><input type="checkbox" bind:checked={desk.exportTotal} /> 附带金额合计行</label></div>
-          {/if}
+        <div class="export-selection">
+          <ul class="export-order-list" aria-label="选中订单">
+            {#each exportOrders as order}<li><b>{order.service_name}</b><small>{order.code} · {order.customer_name}</small></li>{:else}<li class="empty-table">没有可导出的订单</li>{/each}
+          </ul>
         </div>
+        <div class="export-format">
+          <div class="export-format-head"><b>导出模式</b>
+            <div class="export-mode-tabs" role="tablist" tabindex="-1" aria-label="导出模式" onkeydown={exportModeKey}>
+              <button id="export-detail-tab" data-mode="detail" type="button" role="tab" aria-selected={desk.exportMode === 'detail'} aria-controls="export-format-panel" tabindex={desk.exportMode === 'detail' ? 0 : -1} onclick={() => desk.exportMode = 'detail'}>自选字段明细</button>
+              <button id="export-settlement-tab" data-mode="settlement" type="button" role="tab" aria-selected={desk.exportMode === 'settlement'} aria-controls="export-format-panel" tabindex={desk.exportMode === 'settlement' ? 0 : -1} onclick={() => desk.exportMode = 'settlement'}>客户结算单</button>
+            </div>
+          </div>
+        </div>
+        <div id="export-format-panel" role="tabpanel" aria-labelledby={desk.exportMode === 'detail' ? 'export-detail-tab' : 'export-settlement-tab'}>
+          {#if desk.exportMode === "settlement"}
+            <label class="export-contract-field">合同编号<input bind:value={desk.exportContract} placeholder="选填" /></label>
+            <div class="export-options"><label><input type="checkbox" bind:checked={desk.exportRemarkOrder} /> 备注含订单编号</label><label><input type="checkbox" bind:checked={desk.exportTotal} /> 金额合计</label><label><input type="checkbox" bind:checked={desk.exportSign} /> 签署栏</label></div>
+          {:else}
+            <div class="export-options"><label><input type="checkbox" bind:checked={desk.exportExpand} /> 按产品展开</label><label><input type="checkbox" bind:checked={desk.exportTotal} /> 金额合计</label></div>
+          {/if}
         {#if desk.exportMode === "detail"}<div class="column-picker">
           <div class="picker-head">
             <b>导出列</b><span>已选 {desk.selectedColumns.length} 列</span>
@@ -85,6 +103,7 @@
               >{/each}
           </div>
         </div>{/if}
+        </div>
       </div>
       <div class="drawer-footer">
         <span>预计导出 {desk.selectedOrderIds.length} 条订单</span><button
@@ -97,7 +116,7 @@
           onclick={desk.downloadExport}><Download size={16} />下载 Excel</button
         >
       </div>
-    </section>
+    </div>
   </div>{/if}
 
 {#if desk.reimbursementRejectOpen}<div class="project-modal-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) desk.reimbursementRejectOpen = false; }}>
@@ -114,6 +133,6 @@
   <div class="project-modal confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="confirm-modal-title" aria-describedby="confirm-modal-message">
     <div class="project-modal-head"><div><p class="section-kicker">确认操作</p><h2 id="confirm-modal-title">{desk.confirmTitle}</h2></div><button class="icon-control" aria-label="关闭确认窗口" onclick={() => desk.confirmOpen = false}><X size={18} /></button></div>
     <div class="project-modal-body"><p id="confirm-modal-message" class="confirm-message">{desk.confirmMessage}</p></div>
-    <div class="project-modal-footer"><button type="button" class="outline-action" onclick={() => desk.confirmOpen = false}>取消</button><button type="button" class="delete-action" disabled={desk.busy} onclick={desk.runConfirm}>确认</button></div>
+    <div class="project-modal-footer"><button type="button" class="outline-action" onclick={() => desk.confirmOpen = false}>取消</button><button type="button" class={/删除|打回|替换/.test(desk.confirmTitle) ? 'delete-action' : 'primary-action'} disabled={desk.busy} onclick={desk.runConfirm}>确认</button></div>
   </div>
 </div>{/if}
