@@ -30,6 +30,8 @@
   --color-status-recheck-soft: #f0ecff;
   --amber: #865700;
   --amber-soft: #fff4d6;
+  --color-status-pending: var(--amber);
+  --color-status-pending-soft: var(--amber-soft);
   --color-status-confirm: var(--amber);
   --color-status-confirm-soft: var(--amber-soft);
   --color-status-payment: var(--teal);

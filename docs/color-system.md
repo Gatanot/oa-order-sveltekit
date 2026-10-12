@@ -1,6 +1,6 @@
 # OA 色彩体系规范
 
-这套色彩服务于广告订单、报价、报销和审核工作台。颜色首先表达信息层级和操作结果，其次才承担品牌识别。页面背景保持安静，蓝色负责主要行动，状态色只用于识别流程节点。
+这套色彩服务于广告订单、报价、报销和审核工作台。颜色首先表达信息层级和操作结果，其次才承担品牌识别。页面背景保持安静，蓝色负责主要行动，报销状态色表达完成、未完成或打回。
 
 ## 1. 基础色
 
@@ -18,25 +18,24 @@
 
 | Token | 色值 | 用途 |
 | --- | --- | --- |
-| `--color-brand-50` | `#eef3ff` | 蓝色状态底、选中背景 |
+| `--color-brand-50` | `#eef3ff` | 品牌提示底、选中背景 |
 | `--color-brand-600` | `#315bdc` | 主要按钮、链接、复选框 |
 | `--color-brand-700` | `#2349bd` | hover、按下态、强调文字 |
 | `--color-focus-ring` | `#7b9af2` | 键盘焦点边界 |
 
 主要按钮使用 `--color-brand-600`，hover 使用 `--color-brand-700`。普通次要按钮保持白色或中性灰表面，不把所有控件染成蓝色。
 
-## 3. 审核流程语义色
+## 3. 报销状态语义色
 
-| 流程节点 | 文字 / 按钮 | 浅色背景 | 组件类名 |
+| 报销类别 | 文字颜色 | 浅色背景 | 组件类名 |
 | --- | --- | --- | --- |
-| 待审核 | `--color-status-review` | `--color-status-review-soft` | `.reimbursement-review` |
-| 待复核 | `--color-status-recheck` | `--color-status-recheck-soft` | `.reimbursement-recheck` |
-| 待确认 | `--color-status-confirm` | `--color-status-confirm-soft` | `.reimbursement-confirm` |
-| 待执行 | `--color-status-payment` | `--color-status-payment-soft` | `.reimbursement-payment` |
-| 已执行 | `--color-status-success` | `--color-status-success-soft` | `.reimbursement-paid` |
-| 已打回 / 错误 | `--color-danger` | `--color-danger-soft` | `.reimbursement-rejected` |
+| 未完成（待审核、待复核、待确认、待执行） | 黄色 `--color-status-pending` / `#865700` | `--color-status-pending-soft` / `#fff4d6` | `.reimbursement-pending` |
+| 已完成（已执行） | 绿色 `--color-status-success` / `#2f7a50` | `--color-status-success-soft` / `#e8f5eb` | `.reimbursement-paid` |
+| 已打回 | 红色 `--color-danger` / `#b54949` | `--color-danger-soft` / `#fdecec` | `.reimbursement-rejected` |
 
-状态标签使用“深色文字 + 浅色背景”，行内推进按钮使用同一语义色的实心背景。打回、删除等破坏性操作使用红色描边或浅红背景，不与成功操作共用蓝色。
+状态标签统一使用“深色文字 + 浅色背景”，只有上述三种颜色。所有未完成阶段共用黄色，并保留待审核、待复核等文字区分进度。`ReimbursementStatus.svelte` 统一负责分类和展示，我的报销、报销审核和订单关联报销共用此组件。
+
+操作按钮使用独立的节点 token：审核 `--color-status-review`、复核 `--color-status-recheck`、确认 `--color-status-confirm`、执行 `--color-status-payment`。打回、删除等破坏性操作使用红色描边或浅红背景。
 
 ## 4. 交互层级
 

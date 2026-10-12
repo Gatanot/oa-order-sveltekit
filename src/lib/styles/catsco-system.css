@@ -391,11 +391,9 @@ html body :is(button, [tabindex])[data-cc-pointer-focus="true"]:focus-visible { 
 .reimbursement-page .reimbursement-callout { margin-bottom: 16px; }
 .reimbursement-page .reimbursement-callout span { display: block; margin-top: 4px; }
 .reimbursement-row-status { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
-.reimbursement-row-status .status-dot.reimbursement-review { color: var(--color-status-review); background: var(--color-status-review-soft); }
-.reimbursement-row-status .status-dot.reimbursement-recheck { color: var(--color-status-recheck); background: var(--color-status-recheck-soft); }
-.reimbursement-row-status .status-dot.reimbursement-confirm { color: var(--color-status-confirm); background: var(--color-status-confirm-soft); }
-.reimbursement-row-status .status-dot.reimbursement-payment { color: var(--color-status-payment); background: var(--color-status-payment-soft); }
-.reimbursement-row-status .status-dot.reimbursement-paid { color: var(--color-status-success); background: var(--color-status-success-soft); }
+.status-dot.reimbursement-status.reimbursement-pending { color: var(--color-status-pending); background: var(--color-status-pending-soft); }
+.status-dot.reimbursement-status.reimbursement-paid { color: var(--color-status-success); background: var(--color-status-success-soft); }
+.status-dot.reimbursement-status.reimbursement-rejected { color: var(--color-danger); background: var(--color-danger-soft); }
 .reimbursement-row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .reimbursement-row-actions .icon-control { width: 34px; min-width: 34px; height: 34px; min-height: 34px; flex-basis: 34px; padding: 0; }
 .reimbursement-page .reimbursement-review-table .link-action { max-width: 100%; white-space: normal; overflow-wrap: anywhere; font-size: 12px; }

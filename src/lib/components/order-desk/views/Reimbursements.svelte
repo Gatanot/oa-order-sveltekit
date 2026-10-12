@@ -3,6 +3,7 @@
   import { appPath } from "$lib/api";
   import { Check, Download, Eye, FileText, Paperclip, Plus, Trash2, Wrench, X } from "lucide-svelte";
   import WorkbenchListFilters from '../WorkbenchListFilters.svelte';
+  import ReimbursementStatus from '../ReimbursementStatus.svelte';
   const desk = getContext<any>("order-desk");
   let { mode = "mine" }: { mode?: "mine" | "review" } = $props();
 
@@ -164,7 +165,7 @@
                   >{:else}<span class="muted attachment-none"><Paperclip size={14} /> 未上传</span
                   >{/if}</td
               ><td
-                ><div class="reimbursement-row-status"><span class="status-dot" class:reimbursement-review={item.reimbursement_status === "已提交待审核"} class:reimbursement-recheck={item.reimbursement_status === "已审核待复核"} class:reimbursement-confirm={item.reimbursement_status === "已复核待确认"} class:reimbursement-payment={item.reimbursement_status === "已确认待执行"} class:reimbursement-paid={item.reimbursement_status === "已执行"} class:reimbursement-rejected={item.reimbursement_status === "已打回"} title={item.reimbursement_status}>{statusLabels[item.reimbursement_status] || item.reimbursement_status}</span></div></td
+                ><div class="reimbursement-row-status"><ReimbursementStatus status={item.reimbursement_status} compact /></div></td
               ><td
                 ><div class="reimbursement-row-actions">
                   <button class="icon-control" type="button" title="查看详情" aria-label={`查看报销详情：${item.advance_item || item.item}`} onclick={() => detailItem = item}><Eye size={16} /></button>
