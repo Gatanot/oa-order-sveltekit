@@ -86,6 +86,7 @@
     </div>
   </div>
   <OrderListFilters />
+  {#if desk.showOrderStatistics}
   <section class="order-statistics" aria-label="筛选订单统计">
     <div class="order-statistics-head"><span aria-live="polite">当前筛选结果 · {desk.filteredOrders.length} 笔订单</span><button class="statistics-help" type="button" aria-label="统计说明" aria-expanded={statisticsExpanded} aria-controls="order-statistics-description" onclick={() => statisticsExpanded = !statisticsExpanded} title="统计覆盖当前筛选的全部订单，包含其他分页。预计毛利 = 销售总额 - 制作成本 - 关联报销金额；毛利率按销售总额计算。未结款金额为标记未结款的订单销售总额。">统计说明<Info size={14} /></button></div>
     {#if statisticsExpanded}<p id="order-statistics-description" class="order-statistics-description">统计覆盖当前筛选的全部订单，包含其他分页。预计毛利 = 销售总额 − 制作成本 − 关联报销金额；毛利率按销售总额计算。未结款金额为标记未结款的订单销售总额。</p>{/if}
@@ -97,6 +98,7 @@
     <div><span>未结款金额</span><b>{desk.money(desk.totalUnpaid)}</b></div>
     </div>
   </section>
+  {/if}
   <div class="table-tools">
     <div class="order-table-heading"><h3>订单明细</h3><span class="filter-result" aria-live="polite">共 {desk.filteredOrders.length} 笔，第 {desk.orderPage} / {desk.orderPageCount} 页</span></div>
     <div class="table-actions">

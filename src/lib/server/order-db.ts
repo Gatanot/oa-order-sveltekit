@@ -692,13 +692,16 @@ export function exportOrders(filters: Record<string, string>) {
       for (const product of products as Array<Record<string, any>>) {
         const category = String(product.category || order.catalog_category || '其他类');
         const rows = categories.get(category) || [];
+        const note = text(order.note);
         rows.push({
           name: product.name || order.service_name,
           unit: product.unit || order.unit || '项',
+          // 数量按整数展示：整数时不出现小数点，确有小数时保留小数。
           quantity: Number(product.quantity || 0),
           specification: product.specification || order.specification || '',
           unitPrice: Number(product.unit_price || 0),
-          remark: filters.remarkOrder === 'true' ? order.code : text(order.note),
+          // 备注使用订单填写时的备注；勾选“备注含订单编号”时在备注后附上订单号。
+          remark: filters.remarkOrder === 'true' ? (note ? `${note}（${order.code}）` : order.code) : note,
         });
         categories.set(category, rows);
       }
@@ -711,15 +714,18 @@ export function exportOrders(filters: Record<string, string>) {
     const chineseNumbers = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
     let grandTotal = 0;
     let categoryIndex = 0;
+    // 所有分类的明细共用同一个序号，保证序号连续且为整数。
+    let serialNumber = 0;
     for (const [category, rows] of categories) {
       const categoryRow = detailRows.length;
       detailRows.push([`${chineseNumbers[categoryIndex] || categoryIndex + 1}、${category}`]);
       merges.push({ s: { r: categoryRow, c: 0 }, e: { r: categoryRow, c: 8 } });
       const detailStart = detailRows.length;
-      rows.forEach((item, index) => {
+      rows.forEach((item) => {
         const subtotal = item.quantity * item.unitPrice;
         grandTotal += subtotal;
-        detailRows.push([index + 1, item.name, item.unit, item.quantity, item.specification, item.unitPrice, subtotal, item.remark, '']);
+        serialNumber += 1;
+        detailRows.push([serialNumber, item.name, item.unit, item.quantity, item.specification, item.unitPrice, subtotal, item.remark, '']);
         const row = detailRows.length - 1;
         merges.push({ s: { r: row, c: 7 }, e: { r: row, c: 8 } });
       });
@@ -810,7 +816,9 @@ export function exportOrders(filters: Record<string, string>) {
         const remarkLines = Math.ceil(String(item.remark || '').length / 18);
         const visualLines = Math.max(2, nameLines, specificationLines, remarkLines);
         rowHeights[cursor] = { hpt: Math.min(117, Math.max(91, visualLines * 23)) };
-        ensureCell(cursor, 3).z = '0.##';
+        // 数量列用常规格式，整数直接显示为 3，而不是带小数点的 3.。
+        ensureCell(cursor, 0).z = '0';
+        ensureCell(cursor, 3).z = 'General';
         ensureCell(cursor, 5).z = '0.00;[Red](0.00)';
         ensureCell(cursor, 6).z = '0.00;[Red](0.00)';
         cursor++;

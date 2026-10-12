@@ -208,7 +208,7 @@ export function createOrderDesk(data: Data) {
   let exportFollowA = $state("");
   let exportFollowB = $state("");
   let exportContactPhone = $state("");
-  let exportRemarkOrder = $state(true);
+  let exportRemarkOrder = $state(false);
   let exportExpand = $state(true);
   let exportTotal = $state(true);
   let exportSign = $state(true);
@@ -1596,7 +1596,7 @@ export function createOrderDesk(data: Data) {
     exportFollowA = first?.contact || "";
     exportFollowB = creatorName || "";
     exportContactPhone = "";
-    exportRemarkOrder = true;
+    exportRemarkOrder = false;
     exportExpand = true;
     exportTotal = true;
     exportSign = true;
@@ -1726,7 +1726,7 @@ export function createOrderDesk(data: Data) {
       for (const order of selectedOrders) for (const product of order.products || []) lines.push([
         product.category || "其他", product.name, product.specification || "", product.unit || "项", product.quantity,
         product.unit_price, Number(product.quantity || 0) * Number(product.unit_price || 0), order.code,
-        exportRemarkOrder ? order.code : "",
+        exportRemarkOrder ? (order.note ? `${order.note}（${order.code}）` : order.code) : (order.note || ""),
       ].map(clean));
       if (exportTotal) lines.push(["合计", "", "", "", "", "", selectedOrders.reduce((sum, order) => sum + Number(order.quote_amount || 0) / 100, 0), "", ""].map(clean));
       if (exportSign) lines.push(["甲方（盖章）", "", "", "乙方（盖章）", "", "", "", "", ""]);
@@ -1854,6 +1854,8 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "canManageOrders", { get: () => hasAnyRole(data.identity, orderManageRoles) });
   Object.defineProperty(desk, "canFinance", { get: () => hasAnyRole(data.identity, reimbursementActionRoles) });
   Object.defineProperty(desk, "canViewAllOrders", { get: () => hasAnyRole(data.identity, orderViewAllRoles) });
+  // 设计师、策划人员只需要处理自己的订单，不展示销售/成本/毛利等统计汇总。
+  Object.defineProperty(desk, "showOrderStatistics", { get: () => !["designer", "planner"].includes(data.identity.role) });
   Object.defineProperty(desk, "canViewAllReimbursements", { get: () => canViewAllReimbursements });
   Object.defineProperty(desk, "canManageReimbursements", { get: () => hasAnyRole(data.identity, reimbursementActionRoles) });
   Object.defineProperty(desk, "canDeleteOrders", { get: () => hasAnyRole(data.identity, orderManageRoles) });
