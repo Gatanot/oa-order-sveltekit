@@ -3,6 +3,7 @@ import { pushState, replaceState } from "$app/navigation";
 import type * as XLSXType from "xlsx";
 import type { PublicArtifactVisitor } from "$lib/artifact-visitor";
 import { api, appPath, currentAppPath } from "$lib/api";
+import { reimbursementNextStatus } from "$lib/permissions";
 import { hasAnyRole, orderCreateRoles, orderExportRoles, orderManageRoles, orderViewAllRoles, reimbursementActionRoles, reimbursementViewAllRoles, catalogViewRoles, catalogManageRoles, employeeManageRoles } from "$lib/permissions";
 
 const apiFetch = (input: RequestInfo | URL, init?: RequestInit) =>
@@ -184,6 +185,8 @@ export function createOrderDesk(data: Data) {
   let confirmTitle = $state("");
   let confirmMessage = $state("");
   let confirmAction = $state<null | (() => Promise<void>)>(null);
+  let confirmResult: ((accepted: boolean) => void) | null = null;
+  let notificationTimer: ReturnType<typeof setTimeout>;
   let filterCustomer = $state("");
   let filterProject = $state("");
   let filterOwner = $state("");
@@ -222,6 +225,11 @@ export function createOrderDesk(data: Data) {
   let standaloneInvoiceFile = $state<File | null>(null);
   let standaloneNote = $state("");
   let selectedOrderIds = $state<string[]>([]);
+  let bulkMode = $state(false);
+  let bulkOrderIds = $state<string[]>([]);
+  let bulkRunning = $state(false);
+  let bulkProgress = $state(0);
+  let bulkResult = $state<{ success: number; failed: Array<{ id: string; code: string; message: string }>; refreshError: string } | null>(null);
   let visibleOrderColumns = $state(["owner", "quote", "cost", "date", "payment", "status"]);
   const orderColumnOptions = [
     ["department", "客户部门"], ["contact", "联系人"], ["designer", "设计师"],
@@ -382,6 +390,12 @@ export function createOrderDesk(data: Data) {
   function setOrderPage(page: number) {
     orderPage = Math.min(Math.max(page, 1), orderPageCount);
   }
+  $effect(() => {
+    search; filterCustomer; filterProject; filterOwner; filterDesigner;
+    filterCreator; filterPayment; filterFrom; filterTo; orderSort; view;
+    bulkOrderIds = [];
+    bulkResult = null;
+  });
   const customerStats = $derived(
     customers.map((customer) => {
       const items = filteredOrders.filter((order) => order.customer_id === customer.id);
@@ -474,13 +488,6 @@ export function createOrderDesk(data: Data) {
       .filter((item: any) => item.voucher_no)
       .map((item: any) => ({ ...item, voucherNo: item.voucher_no })),
   );
-  function reimbursementNextStatus(status: string, role: string | undefined): string | null {
-    if (status === "已提交待审核" && role === "manager") return "已审核待复核";
-    if (status === "已审核待复核" && role === "finance") return "已复核待确认";
-    if (status === "已复核待确认" && role === "owner") return "已确认待执行";
-    if (status === "已确认待执行" && role === "finance") return "已执行";
-    return null;
-  }
   const selectedApprovableRows = $derived(
     reviewReimbursementRows.filter((item: any) => selectedReimbursementIds.includes(item.id) && reimbursementNextStatus(item.reimbursement_status, data.identity?.role)),
   );
@@ -534,23 +541,40 @@ export function createOrderDesk(data: Data) {
   });
 
   function notify(text: string, isError = false) {
+    clearTimeout(notificationTimer);
     message = isError ? "" : text;
     error = isError ? text : "";
-    setTimeout(() => {
+    notificationTimer = setTimeout(() => {
       message = "";
       error = "";
     }, 3500);
   }
   function askConfirm(title: string, text: string, action: () => Promise<void>) {
+    cancelConfirm();
     confirmTitle = title;
     confirmMessage = text;
     confirmAction = action;
     confirmOpen = true;
   }
+  function cancelConfirm() {
+    confirmOpen = false;
+    confirmAction = null;
+    confirmResult?.(false);
+    confirmResult = null;
+  }
+  function requestConfirm(title: string, text: string): Promise<boolean> {
+    cancelConfirm();
+    confirmTitle = title;
+    confirmMessage = text;
+    confirmOpen = true;
+    return new Promise((resolve) => { confirmResult = resolve; });
+  }
   async function runConfirm() {
     const action = confirmAction;
     confirmOpen = false;
     confirmAction = null;
+    confirmResult?.(true);
+    confirmResult = null;
     if (action) await action();
   }
   onMount(() => {
@@ -604,15 +628,18 @@ export function createOrderDesk(data: Data) {
       event.preventDefault();
       event.returnValue = "";
     };
-    const popstate = () => {
+    const popstate = async () => {
       if (restoringHistory) {
         restoringHistory = false;
         return;
       }
-      if (view === "entry" && orderFormDirty && !window.confirm("订单尚未保存，确定离开当前页面吗？")) {
-        restoringHistory = true;
-        window.history.go(1);
-        return;
+      if (view === "entry" && orderFormDirty) {
+        const accepted = await requestConfirm("离开订单录入", "订单尚未保存，确定离开当前页面吗？");
+        if (!accepted) {
+          restoringHistory = true;
+          window.history.go(1);
+          return;
+        }
       }
       syncViewFromPath();
     };
@@ -624,6 +651,8 @@ export function createOrderDesk(data: Data) {
       window.removeEventListener("beforeunload", beforeUnload);
       window.removeEventListener("popstate", popstate);
       releaseAttachmentPreviewUrl();
+      clearTimeout(notificationTimer);
+      cancelConfirm();
     };
   });
   function releaseAttachmentPreviewUrl() {
@@ -674,9 +703,9 @@ export function createOrderDesk(data: Data) {
     attachmentPreviewMime = file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "application/octet-stream");
     attachmentPreviewUrl = URL.createObjectURL(file);
   }
-  function setWorkMode(mode: "view" | "entry" | "finance") {
+  async function setWorkMode(mode: "view" | "entry" | "finance") {
     if (mode !== workMode && view === "entry" && orderFormDirty) {
-      if (!window.confirm("订单尚未保存，确定切换工作模式吗？")) return false;
+      if (!await requestConfirm("切换工作模式", "订单尚未保存，确定切换工作模式吗？")) return false;
       orderFormDirty = false;
     }
     workMode = mode;
@@ -689,8 +718,9 @@ export function createOrderDesk(data: Data) {
   function onCustomerChange() {
     projectId = "";
   }
-  function navigate(path: string) {
-    if (view === "entry" && orderFormDirty && !window.confirm("订单尚未保存，确定离开当前页面吗？")) return;
+  async function navigate(path: string) {
+    if (bulkRunning) return;
+    if (view === "entry" && orderFormDirty && !await requestConfirm("离开订单录入", "订单尚未保存，确定离开当前页面吗？")) return;
     orderFormDirty = false;
     if (currentAppPath() !== path) pushState(appPath(path), {});
     syncViewFromPath();
@@ -830,6 +860,7 @@ export function createOrderDesk(data: Data) {
     const rows = historyRows;
     if (!rows.length) { notify("当前筛选没有可导出的历史报销", true); return; }
     const params = new URLSearchParams({ mode: "detail", status: "已执行" });
+    params.set("ids", rows.map((item: any) => item.id).join(","));
     if (historyProject) params.set("project", historyProject);
     if (historyPerson) params.set("person", historyPerson);
     if (historyFrom) params.set("from", historyFrom);
@@ -1383,7 +1414,7 @@ export function createOrderDesk(data: Data) {
     if (!requireCatalogManager() || !catalogImportFile || !catalogImportPreview?.valid_rows) return;
     if (catalogImportTargetId) {
       const source = catalogSources.find((item) => item.id === catalogImportTargetId);
-      if (!window.confirm(`将用新文件替换“${source?.owner_name || "当前资料库"}”的全部有效条目，历史订单不受影响。确定继续吗？`)) return;
+      if (!await requestConfirm("替换资料库", `将用新文件替换“${source?.owner_name || "当前资料库"}”的全部有效条目，历史订单不受影响。确定继续吗？`)) return;
     }
     if (!catalogImportTargetId && !catalogImportOwner.trim()) {
       notify(`请填写${catalogKind === "quote" ? "客户公司" : "厂商"}名称`, true);
@@ -1576,10 +1607,11 @@ export function createOrderDesk(data: Data) {
     else filteredOrders.forEach((order) => ids.add(order.id));
     selectedOrderIds = [...ids];
   }
-  function openExport() {
+  function openExport(ids: string[]) {
     if (!desk.canExportOrders) return;
-    selectedOrderIds = filteredOrders.map((order) => order.id);
-    const first = filteredOrders[0];
+    selectedOrderIds = [...new Set(ids)].filter((id) => orders.some((order) => order.id === id));
+    if (!selectedOrderIds.length) { notify("请选择要导出的订单", true); return; }
+    const first = orders.find((order) => selectedOrderIds.includes(order.id));
     exportTitle = first ? `${first.project_name || first.customer_name || "订单"}结算明细` : "订单结算明细";
     exportPartyA = first?.customer_name || "";
     exportPartyB = "";
@@ -1593,6 +1625,67 @@ export function createOrderDesk(data: Data) {
     exportSign = true;
     exportMode = "detail";
     showExport = true;
+  }
+  function setBulkMode(enabled: boolean) {
+    if (bulkRunning) return;
+    bulkMode = enabled;
+    bulkOrderIds = [];
+    bulkResult = null;
+  }
+  function toggleBulkOrder(id: string) {
+    if (bulkRunning) return;
+    bulkOrderIds = bulkOrderIds.includes(id) ? bulkOrderIds.filter((item) => item !== id) : [...bulkOrderIds, id];
+  }
+  function toggleBulkPage() {
+    if (bulkRunning) return;
+    const ids = new Set(bulkOrderIds);
+    if (pagedOrders.every((order) => ids.has(order.id))) pagedOrders.forEach((order) => ids.delete(order.id));
+    else pagedOrders.forEach((order) => ids.add(order.id));
+    bulkOrderIds = [...ids];
+  }
+  async function runBulkOrders(operation: "delete" | "已结款" | "未结款") {
+    if (busy || bulkRunning || !bulkOrderIds.length) return;
+    if (operation === "delete" ? !desk.canDeleteOrders : !desk.canManageOrders) return;
+    const targets = orders.filter((order) => bulkOrderIds.includes(order.id));
+    if (!targets.length) return;
+    const title = operation === "delete" ? "批量删除订单" : `批量标记${operation}`;
+    const text = operation === "delete"
+      ? `确认删除选中的 ${targets.length} 笔订单？删除后不可恢复。`
+      : `确认将选中的 ${targets.length} 笔订单全部标记为${operation}？`;
+    if (!await requestConfirm(title, text)) return;
+    bulkRunning = true;
+    busy = true;
+    bulkProgress = 0;
+    bulkResult = null;
+    const failed: Array<{ id: string; code: string; message: string }> = [];
+    let success = 0;
+    let refreshError = "";
+    try {
+      // Each request retains the existing server authorization and audit behavior.
+      for (const order of targets) {
+        try {
+          const path = `/api/orders/${encodeURIComponent(order.id)}`;
+          if (operation === "delete") await api.delete(path);
+          else await api.post(`${path}/payment`, { payment_status: operation });
+          success += 1;
+        } catch (reason) {
+          failed.push({ id: order.id, code: order.code, message: reason instanceof Error ? reason.message : "操作失败" });
+        }
+        bulkProgress += 1;
+      }
+      bulkOrderIds = failed.map((item) => item.id);
+      if (operation === "delete") {
+        const failedIds = new Set(failed.map((item) => item.id));
+        const deletedIds = new Set(targets.filter((item) => !failedIds.has(item.id)).map((item) => item.id));
+        selectedOrderIds = selectedOrderIds.filter((id) => !deletedIds.has(id));
+      }
+      try { await refresh(); } catch (reason) { refreshError = reason instanceof Error ? reason.message : "数据刷新失败"; }
+      bulkResult = { success, failed, refreshError };
+      notify(`处理完成：成功 ${success} 笔${failed.length ? `，失败 ${failed.length} 笔` : ""}`, failed.length > 0 || !!refreshError);
+    } finally {
+      busy = false;
+      bulkRunning = false;
+    }
   }
   function downloadExport() {
     if (!desk.canExportOrders) return;
@@ -1868,7 +1961,7 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "reimbursementRejectOpen", { get: () => reimbursementRejectOpen, set: (value) => { reimbursementRejectOpen = value; } });
   Object.defineProperty(desk, "reimbursementRejectReason", { get: () => reimbursementRejectReason, set: (value) => { reimbursementRejectReason = value; } });
   Object.defineProperty(desk, "reimbursementRejectCount", { get: () => reimbursementRejectIds.length });
-  Object.defineProperty(desk, "confirmOpen", { get: () => confirmOpen, set: (value) => { confirmOpen = value; } });
+  Object.defineProperty(desk, "confirmOpen", { get: () => confirmOpen, set: (value) => { if (!value) cancelConfirm(); else confirmOpen = true; } });
   Object.defineProperty(desk, "confirmTitle", { get: () => confirmTitle });
   Object.defineProperty(desk, "confirmMessage", { get: () => confirmMessage });
   Object.defineProperty(desk, "filterCustomer", { get: () => filterCustomer, set: (value) => { filterCustomer = value; } });
@@ -1911,6 +2004,11 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "standaloneInvoice", { get: () => standaloneInvoice, set: (value) => { standaloneInvoice = value; } });
   Object.defineProperty(desk, "standaloneNote", { get: () => standaloneNote, set: (value) => { standaloneNote = value; } });
   Object.defineProperty(desk, "selectedOrderIds", { get: () => selectedOrderIds, set: (value) => { selectedOrderIds = value; } });
+  Object.defineProperty(desk, "bulkMode", { get: () => bulkMode });
+  Object.defineProperty(desk, "bulkOrderIds", { get: () => bulkOrderIds });
+  Object.defineProperty(desk, "bulkRunning", { get: () => bulkRunning });
+  Object.defineProperty(desk, "bulkProgress", { get: () => bulkProgress });
+  Object.defineProperty(desk, "bulkResult", { get: () => bulkResult });
   Object.defineProperty(desk, "selectedColumns", { get: () => selectedColumns, set: (value) => { selectedColumns = value; } });
   Object.defineProperty(desk, "visibleOrderColumns", { get: () => visibleOrderColumns });
   desk.orderColumnOptions = orderColumnOptions;
@@ -1951,6 +2049,7 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "historySearch", { get: () => historySearch, set: (value) => { historySearch = value; } });
   Object.defineProperty(desk, "creators", { get: () => creators });
   desk.money = money;
+  desk.notify = notify;
   desk.navigate = navigate;
   desk.setOrderPage = setOrderPage;
   desk.setCatalogPage = setCatalogPage;
@@ -1994,9 +2093,14 @@ export function createOrderDesk(data: Data) {
   desk.cancelCatalogImport = cancelCatalogImport;
   desk.confirmRejectReimbursements = confirmRejectReimbursements;
   desk.runConfirm = runConfirm;
+  desk.requestConfirm = requestConfirm;
   desk.toggleOrder = toggleOrder;
   desk.toggleFilteredOrders = toggleFilteredOrders;
   desk.openExport = openExport;
+  desk.setBulkMode = setBulkMode;
+  desk.toggleBulkOrder = toggleBulkOrder;
+  desk.toggleBulkPage = toggleBulkPage;
+  desk.runBulkOrders = runBulkOrders;
   desk.downloadExport = downloadExport;
   desk.copyExportTable = copyExportTable;
   desk.toggleColumn = toggleColumn;

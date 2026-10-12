@@ -14,7 +14,7 @@ export function loadWorkbench(identity?: CurrentIdentity) {
   );
   // “我的报销”始终只包含本人记录，审核者也一样。
   const reimbursements = !identity ? allReimbursements : allReimbursements.filter((item) => item.employee_uid === identityUid);
-  // “报销审核”是按角色审批节点裁剪的队列；固定管理员可见全部，其他审核者不能审自己的报销。
+  // “报销审核”仅展示当前身份负责的节点；其他审核者不能审自己的报销。
   const responsibleStatuses = identity ? reimbursementStatusesForRole(identity.role) : null;
   const reviewReimbursements = canViewAllReimbursements && responsibleStatuses
     ? allReimbursements.filter((item) =>
