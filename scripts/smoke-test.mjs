@@ -417,6 +417,49 @@ try {
     assert.equal(managedSource.response.status, 201, '管理人员可新增报价成本库');
   });
 
+  // 执行公司管理：仅系统管理员、老板与执行可维护，管理人员无权。
+  await withIdentityServer(1002, async (base) => {
+    let result = await requestOn(base, '/api/execution-companies');
+    assert.equal(result.response.status, 200, '老板可查看执行公司');
+    assert.ok(result.data.data.length >= 3, '默认执行公司应已初始化');
+    result = await requestOn(base, '/api/execution-companies', { method: 'POST', json: { name: '老板新增执行公司' } });
+    assert.equal(result.response.status, 201, JSON.stringify(result.data));
+    const companyId = result.data.data.id;
+    result = await requestOn(base, '/api/execution-companies', { method: 'POST', json: { name: '老板新增执行公司' } });
+    assert.equal(result.response.status, 400, '重复的执行公司应被拒绝');
+    result = await requestOn(base, '/api/execution-companies', { method: 'PATCH', json: { id: companyId, name: '老板改名执行公司' } });
+    assert.equal(result.response.status, 200, '老板可重命名执行公司');
+    assert.equal(result.data.data.name, '老板改名执行公司');
+    const ownerPage = await requestOn(base, '/employees');
+    assert.equal(ownerPage.response.status, 200, '老板可访问员工/执行公司管理页');
+    assert.match(Buffer.from(ownerPage.data).toString(), /执行公司/, '页面应包含执行公司管理区');
+    result = await requestOn(base, '/api/execution-companies', { method: 'DELETE', json: { id: companyId } });
+    assert.equal(result.response.status, 200, '老板可删除执行公司');
+    result = await requestOn(base, '/api/execution-companies');
+    assert.ok(!result.data.data.some((item) => item.id === companyId), '删除后不再返回该执行公司');
+  });
+
+  await withIdentityServer(1006, async (base) => {
+    let result = await requestOn(base, '/api/execution-companies');
+    assert.equal(result.response.status, 200, '执行可查看执行公司');
+    result = await requestOn(base, '/api/execution-companies', { method: 'POST', json: { name: '执行新增公司' } });
+    assert.equal(result.response.status, 201, '执行可新增执行公司');
+    const createdCompanyId = result.data.data.id;
+    const executorPage = await requestOn(base, '/employees');
+    assert.equal(executorPage.response.status, 200, '执行可访问执行公司管理页');
+    result = await requestOn(base, '/api/employees');
+    assert.equal(result.response.status, 403, '执行仍不能访问员工列表接口');
+    result = await requestOn(base, '/api/execution-companies', { method: 'DELETE', json: { id: createdCompanyId } });
+    assert.equal(result.response.status, 200, '执行可删除执行公司');
+  });
+
+  await withIdentityServer(1001, async (base) => {
+    let result = await requestOn(base, '/api/execution-companies');
+    assert.equal(result.response.status, 403, '管理人员不能查看执行公司管理接口');
+    result = await requestOn(base, '/api/execution-companies', { method: 'POST', json: { name: '管理人员越权公司' } });
+    assert.equal(result.response.status, 403, '管理人员不能新增执行公司');
+  });
+
   // 报价成本库可见性：执行可查看但不能新增/导入。
   await withIdentityServer(1006, async (base) => {
     let result = await requestOn(base, '/api/catalog');
@@ -500,7 +543,7 @@ try {
     assert.ok(result.data.data.some((item) => item.attachment_kind === 'design' && item.file_name === 'design.png'), '设计图应以 design 附件保存');
   });
 
-  console.log('Smoke test passed: public workbench, catalog import/copy, creator snapshots, order totals, independent attachments, order-linked reimbursements, reimbursement filters/state machine, voucher idempotency, aligned exports, employee management authorization, audit and v18/v20/v21/v23 migrations.');
+  console.log('Smoke test passed: public workbench, catalog import/copy, creator snapshots, order totals, independent attachments, order-linked reimbursements, reimbursement filters/state machine, voucher idempotency, aligned exports, employee management authorization, execution company management, audit and v18/v20/v21/v23 migrations.');
 } finally {
   server.kill('SIGTERM');
   await new Promise((resolve) => { server.once('exit', resolve); setTimeout(resolve, 1000); });

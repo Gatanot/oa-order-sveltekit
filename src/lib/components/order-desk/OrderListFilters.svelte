@@ -3,7 +3,7 @@
   import { ChevronDown, Search, SlidersHorizontal, X } from 'lucide-svelte';
   const desk = getContext<any>('order-desk');
   let expanded = $state(false);
-  const extraCount = $derived([desk.filterProject, desk.filterDesigner, desk.filterOwner, desk.filterCreator].filter(Boolean).length);
+  const extraCount = $derived([desk.filterProject, desk.filterDesigner, desk.filterPlanner, desk.filterOwner, desk.filterCreator].filter(Boolean).length);
   const chips = $derived([
     { key: 'search', label: '搜索', value: desk.search },
     { key: 'filterCustomer', label: '客户', value: desk.filterCustomer, text: desk.customers.find((item: any) => item.id === desk.filterCustomer)?.name },
@@ -12,6 +12,7 @@
     { key: 'filterFrom', label: '开始日期', value: desk.filterFrom },
     { key: 'filterTo', label: '结束日期', value: desk.filterTo },
     { key: 'filterDesigner', label: '设计师', value: desk.filterDesigner },
+    { key: 'filterPlanner', label: '策划人', value: desk.filterPlanner },
     { key: 'filterOwner', label: '负责人', value: desk.filterOwner },
     { key: 'filterCreator', label: '录入人', value: desk.filterCreator },
   ].filter((item) => item.value));
@@ -35,6 +36,7 @@
     <div class="order-filter-extra" id="order-extra-filters">
       <label class="field"><span>项目</span><select bind:value={desk.filterProject}><option value="">全部项目</option>{#each desk.projects.filter((item: any) => !desk.filterCustomer || item.customer_id === desk.filterCustomer) as project}<option value={project.id}>{project.name}</option>{/each}</select></label>
       <label class="field"><span>设计师</span><select bind:value={desk.filterDesigner}><option value="">全部设计师</option>{#each desk.designers as designer}<option value={designer}>{designer}</option>{/each}</select></label>
+      <label class="field"><span>策划人</span><select bind:value={desk.filterPlanner}><option value="">全部策划人</option>{#each desk.planners as planner}<option value={planner}>{planner}</option>{/each}</select></label>
       <label class="field"><span>负责人</span><select bind:value={desk.filterOwner}><option value="">全部负责人</option>{#each desk.owners as owner}<option value={owner}>{owner}</option>{/each}</select></label>
       <label class="field"><span>录入人</span><select bind:value={desk.filterCreator}><option value="">全部录入人</option>{#each desk.creators as creator}<option value={creator}>{creator}</option>{/each}</select></label>
     </div>

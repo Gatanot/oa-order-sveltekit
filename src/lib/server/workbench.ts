@@ -1,4 +1,4 @@
-import { listCatalog, listCatalogSources, listCustomers, listOrders, listProjects, listReimbursementOrders } from './order-db';
+import { listCatalog, listCatalogSources, listCustomers, listExecutionCompanies, listOrders, listProjects, listReimbursementOrders } from './order-db';
 import { ADMIN_UID, listActiveEmployees, orderViewAllRoles, reimbursementViewAllRoles, catalogViewRoles, hasAnyRole, type CurrentIdentity } from './identity';
 import { reimbursementStatusesForRole } from '$lib/permissions';
 
@@ -32,6 +32,7 @@ export function loadWorkbench(identity?: CurrentIdentity) {
     catalog: canViewCatalog ? listCatalog() : [],
     catalogSources: canViewCatalog ? listCatalogSources() : [],
     employees: listActiveEmployees(),
+    executionCompanies: listExecutionCompanies(),
     orders,
     reimbursements,
     reviewReimbursements,

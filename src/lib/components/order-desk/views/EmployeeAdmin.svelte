@@ -1,10 +1,14 @@
 <script lang="ts">
   import { getContext, onMount } from 'svelte';
-  import { Plus, Save, Trash2, X } from 'lucide-svelte';
+  import { Pencil, Plus, Save, Trash2, X } from 'lucide-svelte';
   import { api } from '$lib/api';
   import WorkbenchListFilters from '../WorkbenchListFilters.svelte';
   const desk = getContext<any>('order-desk');
 
+  const canManageEmployees = $derived(desk.canManageEmployees);
+  const canManageExecutionCompanies = $derived(desk.canManageExecutionCompanies);
+
+  // ── 员工管理 ──────────────────────────────────────────────────
   let employees = $state<any[]>([]);
   let savedEmployees = $state<any[]>([]);
   let departments = $state<string[]>([]);
@@ -66,12 +70,6 @@
       employees = employees.filter((item) => item.catsco_uid !== employee.catsco_uid);
     } catch (reason) { employeeError = reason instanceof Error ? reason.message : '员工删除失败'; }
   }
-  onMount(async () => {
-    try {
-      await loadEmployees();
-    } catch (reason) { employeeError = reason instanceof Error ? reason.message : '员工列表加载失败'; }
-    finally { loading = false; }
-  });
   async function saveEmployee(employee: any) {
     employeeError = '';
     employeeSuccess = '';
@@ -87,14 +85,82 @@
       employeeSuccess = '员工资料已保存';
     } catch (reason) { employeeError = reason instanceof Error ? reason.message : '员工保存失败'; }
   }
+
+  // ── 执行公司管理 ──────────────────────────────────────────────
+  let executionCompanies = $state<any[]>([]);
+  let executionError = $state('');
+  let executionSuccess = $state('');
+  let companySaving = $state(false);
+  let creatingCompany = $state(false);
+  let newCompanyName = $state('');
+  let editingCompanyId = $state('');
+  let editingCompanyName = $state('');
+  async function loadExecutionCompanies() {
+    const result = await api.get<{ data: any[] }>('/api/execution-companies');
+    executionCompanies = result.data;
+    desk.setExecutionCompanies(result.data);
+  }
+  function startCreateCompany() { executionError = ''; executionSuccess = ''; newCompanyName = ''; creatingCompany = true; }
+  function cancelCreateCompany() { creatingCompany = false; newCompanyName = ''; }
+  function startEditCompany(company: any) { executionError = ''; executionSuccess = ''; editingCompanyId = company.id; editingCompanyName = company.name; }
+  function cancelEditCompany() { editingCompanyId = ''; editingCompanyName = ''; }
+  async function createCompany() {
+    const name = newCompanyName.trim();
+    if (companySaving || !name) return;
+    companySaving = true; executionError = ''; executionSuccess = '';
+    try {
+      await api.post('/api/execution-companies', { name });
+      await loadExecutionCompanies();
+      cancelCreateCompany(); executionSuccess = '执行公司已新增';
+    } catch (reason) { executionError = reason instanceof Error ? reason.message : '执行公司新增失败'; }
+    finally { companySaving = false; }
+  }
+  async function saveCompany(company: any) {
+    const name = editingCompanyName.trim();
+    if (companySaving) return;
+    if (!name) { executionError = '执行公司名称不能为空'; return; }
+    companySaving = true; executionError = ''; executionSuccess = '';
+    try {
+      await api.patch('/api/execution-companies', { id: company.id, name });
+      await loadExecutionCompanies();
+      cancelEditCompany(); executionSuccess = '执行公司已保存';
+    } catch (reason) { executionError = reason instanceof Error ? reason.message : '执行公司保存失败'; }
+    finally { companySaving = false; }
+  }
+  async function deleteCompany(company: any) {
+    if (companySaving) return;
+    if (!await desk.requestConfirm('删除执行公司', `确定删除执行公司「${company.name}」？已使用该公司的历史订单不受影响。`)) return;
+    companySaving = true; executionError = ''; executionSuccess = '';
+    try {
+      await api.delete('/api/execution-companies', { id: company.id });
+      await loadExecutionCompanies();
+      executionSuccess = '执行公司已删除';
+    } catch (reason) { executionError = reason instanceof Error ? reason.message : '执行公司删除失败'; }
+    finally { companySaving = false; }
+  }
+
+  onMount(async () => {
+    try {
+      if (desk.canManageEmployees) await loadEmployees();
+      if (desk.canManageExecutionCompanies) await loadExecutionCompanies();
+    } catch (reason) { employeeError = reason instanceof Error ? reason.message : '数据加载失败'; }
+    finally { loading = false; }
+  });
 </script>
 <svelte:window onkeydown={(event) => { if (event.key === 'Escape' && !saving) createOpen = false; }} />
 
 <section class="page-section workbench-list-page employee-page">
   <div class="section-heading">
-    <div><p class="section-kicker">员工权限</p><h2>员工与权限管理</h2></div>
-    <div class="top-actions"><button class="primary-action" type="button" onclick={() => { employeeError = ''; createOpen = true; }}><Plus size={16} />新增员工</button></div>
+    <div>
+      <p class="section-kicker">{canManageEmployees ? '员工权限' : '基础资料'}</p>
+      <h2>{canManageEmployees ? '员工与权限管理' : '执行公司管理'}</h2>
+    </div>
+    {#if canManageEmployees}
+      <div class="top-actions"><button class="primary-action" type="button" onclick={() => { employeeError = ''; createOpen = true; }}><Plus size={16} />新增员工</button></div>
+    {/if}
   </div>
+
+  {#if canManageEmployees}
   <section class="employee-admin">
     <WorkbenchListFilters fields={filterFields} onchange={(key, value) => filters[key as keyof typeof filters] = value} onclear={clearFilters} label="员工筛选" />
     <div class="workbench-statistics"><div class="workbench-statistics-head"><span>当前筛选结果 · {visibleEmployees.length} 位员工</span></div><div class="summary-row"><div><span>员工总数</span><b>{visibleEmployees.length}</b></div><div><span>已启用</span><b>{visibleEmployees.filter((employee) => employee.active).length}</b></div><div><span>待开通</span><b>{visibleEmployees.filter((employee) => employee.role === 'pending').length}</b></div><div><span>涉及部门</span><b>{new Set(visibleEmployees.map((employee) => employee.department).filter(Boolean)).size}</b></div></div></div>
@@ -115,6 +181,45 @@
         {:else}<tr><td colspan="6"><div class="empty-table">{loading ? '加载中...' : employees.length ? '没有符合筛选条件的员工。' : employeeError ? '员工列表加载失败。' : '暂无员工。'}{#if filterFields.some((field) => field.value)}<button class="outline-action" type="button" onclick={clearFilters}>清空筛选</button>{/if}</div></td></tr>{/each}</tbody>
       </table></div>
   </section>
+  {/if}
+
+  {#if canManageExecutionCompanies}
+  <section class="employee-admin execution-company-admin">
+    <div class="table-tools workbench-table-tools">
+      <div class="order-table-heading"><h3>执行公司</h3><span class="filter-result">共 {executionCompanies.length} 家</span></div>
+      <div class="table-actions"><button class="primary-action" type="button" disabled={companySaving} onclick={startCreateCompany}><Plus size={16} />新增执行公司</button></div>
+    </div>
+    {#if executionError && !creatingCompany}<p class="employee-error" role="alert">{executionError}</p>{/if}
+    {#if executionSuccess}<p class="employee-success" role="status">{executionSuccess}</p>{/if}
+    {#if creatingCompany}
+      <form class="employee-create-form" onsubmit={(event) => { event.preventDefault(); createCompany(); }}>
+        <label>执行公司名称<input aria-label="新的执行公司名称" bind:value={newCompanyName} placeholder="例如：XX 制作公司" required disabled={companySaving} /></label>
+        {#if executionError}<p class="employee-error" role="alert">{executionError}</p>{/if}
+        <div class="employee-row-actions">
+          <button class="outline-action" type="button" disabled={companySaving} onclick={cancelCreateCompany}>取消</button>
+          <button class="primary-action" type="submit" disabled={companySaving || !newCompanyName.trim()}><Plus size={16} />{companySaving ? '新增中...' : '新增执行公司'}</button>
+        </div>
+      </form>
+    {/if}
+    <div class="employee-table-wrap"><table>
+      <thead><tr><th>执行公司名称</th><th>操作</th></tr></thead>
+      <tbody>{#each executionCompanies as company (company.id)}
+        <tr>
+          <td>{#if editingCompanyId === company.id}<input aria-label="执行公司名称" bind:value={editingCompanyName} disabled={companySaving} />{:else}{company.name}{/if}</td>
+          <td><div class="employee-row-actions">
+            {#if editingCompanyId === company.id}
+              <button type="button" class="icon-control" title="保存" aria-label={`保存执行公司 ${company.name}`} disabled={companySaving || !editingCompanyName.trim()} onclick={() => saveCompany(company)}><Save size={16} /></button>
+              <button type="button" class="outline-action" disabled={companySaving} onclick={cancelEditCompany}>取消</button>
+            {:else}
+              <button type="button" class="icon-control" title="编辑" aria-label={`编辑执行公司 ${company.name}`} disabled={companySaving} onclick={() => startEditCompany(company)}><Pencil size={16} /></button>
+              <button type="button" class="delete-action" title="删除" aria-label={`删除执行公司 ${company.name}`} disabled={companySaving} onclick={() => deleteCompany(company)}><Trash2 size={16} /></button>
+            {/if}
+          </div></td>
+        </tr>
+      {:else}<tr><td colspan="2"><div class="empty-table">{loading ? '加载中...' : '暂无执行公司，点击“新增执行公司”添加。'}</div></td></tr>{/each}</tbody>
+    </table></div>
+  </section>
+  {/if}
 </section>
 
 {#if createOpen}

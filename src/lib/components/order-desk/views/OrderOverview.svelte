@@ -24,7 +24,7 @@
   const allPageSelected = $derived(desk.pagedOrders.length > 0 && desk.pagedOrders.every((order: any) => desk.bulkOrderIds.includes(order.id)));
   const somePageSelected = $derived(desk.pagedOrders.some((order: any) => desk.bulkOrderIds.includes(order.id)));
   const hasExtraColumns = $derived(desk.visibleOrderColumns.some((key: string) => ['department', 'contact', 'designer', 'creator', 'delivery'].includes(key)));
-  const hasFilters = $derived([desk.search, desk.filterCustomer, desk.filterProject, desk.filterPayment, desk.filterFrom, desk.filterTo, desk.filterDesigner, desk.filterOwner, desk.filterCreator].some(Boolean));
+  const hasFilters = $derived([desk.search, desk.filterCustomer, desk.filterProject, desk.filterPayment, desk.filterFrom, desk.filterTo, desk.filterDesigner, desk.filterPlanner, desk.filterOwner, desk.filterCreator].some(Boolean));
   function activateRow(order: any) {
     if (desk.bulkMode) desk.toggleBulkOrder(order.id);
     else desk.openDetail(order);

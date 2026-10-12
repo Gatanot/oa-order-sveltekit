@@ -29,6 +29,8 @@ export function reimbursementNextStatus(status: string, role: string | undefined
 export const catalogViewRoles = ['admin', 'manager', 'owner', 'executor'] as const;
 export const catalogManageRoles = ['admin', 'manager', 'owner'] as const;
 export const employeeManageRoles = ['admin', 'manager', 'owner'] as const;
+// 执行公司管理与员工管理同页展示，但仅老板、执行与系统管理员可维护。
+export const executionCompanyManageRoles = ['admin', 'owner', 'executor'] as const;
 
 export function hasAnyRole(identity: { role: string } | null | undefined, roles: readonly string[]) {
   return Boolean(identity && roles.includes(identity.role));

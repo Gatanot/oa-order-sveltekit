@@ -34,13 +34,7 @@
           <div class="inline-create-actions"><button type="button" class="outline-action" onclick={() => (desk.showProjectForm = false)}>取消</button><button type="button" class="primary-action" disabled={desk.busy || !desk.newProject.trim()} onclick={desk.submitProject}>{desk.busy ? "保存中..." : "保存项目"}</button></div>
         </div>
       {/if}
-      <label>执行公司<div class="field-with-action"><select bind:value={desk.executionCompany}><option value="">请选择执行公司</option>{#each desk.executionCompanyOptions as company}<option>{company}</option>{/each}</select><button type="button" class="mini-create" title="新增执行公司" onclick={() => desk.toggleExecutionCompanyForm()}><Plus size={14}/>新增</button></div></label>
-      {#if desk.showExecutionCompanyForm}
-        <div class="full inline-create-form">
-          <label>新的执行公司名称<input bind:value={desk.newExecutionCompany} placeholder="输入执行公司名称" /></label>
-          <div class="inline-create-actions"><button type="button" class="outline-action" onclick={() => desk.toggleExecutionCompanyForm()}>取消</button><button type="button" class="primary-action" disabled={!desk.newExecutionCompany.trim()} onclick={desk.addExecutionCompany}>保存</button></div>
-        </div>
-      {/if}
+      <label>执行公司<select bind:value={desk.executionCompany}><option value="">请选择执行公司</option>{#each desk.executionCompanyOptions as company}<option>{company}</option>{/each}</select></label>
       <label>客户部门<input bind:value={desk.customerDepartment} placeholder="例如：市场部（可不填）" /></label>
       <label>联系人 / 下单人<input bind:value={desk.contact} placeholder="例如：张三（可不填）" /></label>
       <label class="compact-field">订单日期 <em>*</em><input class="date-input" type="date" bind:value={desk.orderDate} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} required /></label>

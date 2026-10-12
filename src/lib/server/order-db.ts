@@ -312,7 +312,21 @@ export function getOrderDb() {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS execution_companies (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
+    // 首次初始化时写入默认执行公司，与原前端内置的三项默认值保持一致。
+    const executionCompanyCount = (instance.prepare('SELECT COUNT(*) AS count FROM execution_companies').get() as { count: number }).count;
+    if (!executionCompanyCount) {
+      const timestamp = now();
+      const insertExecutionCompany = instance.prepare('INSERT INTO execution_companies(id,name,sort_order,created_at,updated_at) VALUES(?,?,?,?,?)');
+      ['执行公司一', '执行公司二', '执行公司三'].forEach((name, index) => insertExecutionCompany.run(uuid(), name, index, timestamp, timestamp));
+    }
     const orderColumns = new Set((instance.pragma('table_info(orders_simple)') as Array<{ name: string }>).map((column) => column.name));
     for (const column of ['created_by_uid', 'designer_uid', 'planner_uid']) {
       if (!orderColumns.has(column)) instance.exec(`ALTER TABLE orders_simple ADD COLUMN ${column} INTEGER`);
@@ -588,6 +602,53 @@ export function canEmployeeAccessOrder(id: string, uid: number): boolean {
 export function listOrders(): Array<Record<string, any>> {
   const rows = getOrderDb().prepare(`SELECT o.*, c.name AS customer_name, c.contact AS customer_contact, p.name AS project_name, p.owner AS project_owner, ci.category AS catalog_category FROM orders_simple o JOIN customers_simple c ON c.id=o.customer_id JOIN projects_simple p ON p.id=o.project_id LEFT JOIN catalog_items ci ON ci.id=o.catalog_id ORDER BY o.order_date DESC,o.created_at DESC`).all() as Array<Record<string, unknown>>;
   return rows.map(hydrateOrder);
+}
+
+export type ExecutionCompany = { id: string; name: string; sort_order: number; created_at: string; updated_at: string };
+type ExecutionCompanyActor = { name?: string; uid?: number | null };
+
+export function listExecutionCompanies(): ExecutionCompany[] {
+  return getOrderDb().prepare('SELECT id,name,sort_order,created_at,updated_at FROM execution_companies ORDER BY sort_order,name').all() as ExecutionCompany[];
+}
+
+export function createExecutionCompany(name: unknown, actor?: ExecutionCompanyActor): ExecutionCompany {
+  const value = text(name);
+  if (!value) throw new Error('执行公司名称不能为空');
+  if (value.length > 60) throw new Error('执行公司名称不能超过 60 个字符');
+  const db = getOrderDb();
+  if (db.prepare('SELECT 1 FROM execution_companies WHERE name=?').get(value)) throw new Error('该执行公司已存在');
+  const id = uuid();
+  const timestamp = now();
+  const maxOrder = (db.prepare('SELECT COALESCE(MAX(sort_order),-1) AS value FROM execution_companies').get() as { value: number }).value;
+  db.prepare('INSERT INTO execution_companies(id,name,sort_order,created_at,updated_at) VALUES(?,?,?,?,?)').run(id, value, maxOrder + 1, timestamp, timestamp);
+  recordAudit(db, { actorName: actor?.name, actorUid: actor?.uid, action: 'create_execution_company', entityType: 'execution_company', entityId: id, detail: { name: value } });
+  return db.prepare('SELECT id,name,sort_order,created_at,updated_at FROM execution_companies WHERE id=?').get(id) as ExecutionCompany;
+}
+
+export function updateExecutionCompany(id: unknown, name: unknown, actor?: ExecutionCompanyActor): ExecutionCompany {
+  const targetId = text(id);
+  const value = text(name);
+  if (!targetId) throw new Error('执行公司不存在');
+  if (!value) throw new Error('执行公司名称不能为空');
+  if (value.length > 60) throw new Error('执行公司名称不能超过 60 个字符');
+  const db = getOrderDb();
+  const existing = db.prepare('SELECT id,name FROM execution_companies WHERE id=?').get(targetId) as { id: string; name: string } | undefined;
+  if (!existing) throw new Error('执行公司不存在');
+  if (db.prepare('SELECT 1 FROM execution_companies WHERE name=? AND id<>?').get(value, targetId)) throw new Error('该执行公司已存在');
+  db.prepare('UPDATE execution_companies SET name=?,updated_at=? WHERE id=?').run(value, now(), targetId);
+  recordAudit(db, { actorName: actor?.name, actorUid: actor?.uid, action: 'update_execution_company', entityType: 'execution_company', entityId: targetId, fromValue: existing.name, toValue: value, detail: { name: value } });
+  return db.prepare('SELECT id,name,sort_order,created_at,updated_at FROM execution_companies WHERE id=?').get(targetId) as ExecutionCompany;
+}
+
+export function deleteExecutionCompany(id: unknown, actor?: ExecutionCompanyActor) {
+  const targetId = text(id);
+  if (!targetId) throw new Error('执行公司不存在');
+  const db = getOrderDb();
+  const existing = db.prepare('SELECT id,name FROM execution_companies WHERE id=?').get(targetId) as { id: string; name: string } | undefined;
+  if (!existing) throw new Error('执行公司不存在');
+  db.prepare('DELETE FROM execution_companies WHERE id=?').run(targetId);
+  recordAudit(db, { actorName: actor?.name, actorUid: actor?.uid, action: 'delete_execution_company', entityType: 'execution_company', entityId: targetId, detail: { name: existing.name } });
+  return { id: targetId };
 }
 
 const exportColumnLabels: Record<string, string> = {

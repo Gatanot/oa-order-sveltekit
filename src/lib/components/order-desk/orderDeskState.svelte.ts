@@ -4,7 +4,7 @@ import type * as XLSXType from "xlsx";
 import type { PublicArtifactVisitor } from "$lib/artifact-visitor";
 import { api, appPath, currentAppPath } from "$lib/api";
 import { reimbursementNextStatus } from "$lib/permissions";
-import { hasAnyRole, orderCreateRoles, orderExportRoles, orderManageRoles, orderViewAllRoles, reimbursementActionRoles, reimbursementViewAllRoles, catalogViewRoles, catalogManageRoles, employeeManageRoles } from "$lib/permissions";
+import { hasAnyRole, orderCreateRoles, orderExportRoles, orderManageRoles, orderViewAllRoles, reimbursementActionRoles, reimbursementViewAllRoles, catalogViewRoles, catalogManageRoles, employeeManageRoles, executionCompanyManageRoles } from "$lib/permissions";
 
 const apiFetch = (input: RequestInfo | URL, init?: RequestInit) =>
   fetch(typeof input === "string" ? appPath(input) : input, init);
@@ -37,6 +37,7 @@ const apiFetch = (input: RequestInfo | URL, init?: RequestInit) =>
     source_file?: string;
     library_file?: string;
   };
+  type ExecutionCompanyRow = { id: string; name: string; sort_order: number; created_at: string; updated_at: string };
   type Order = {
     id: string;
     code: string;
@@ -84,6 +85,7 @@ export type Data = {
     catalog: Catalog[];
     catalogSources: Array<Record<string, any>>;
     employees: Array<{ catsco_uid: number; display_name: string; department: string; role: string }>;
+    executionCompanies: ExecutionCompanyRow[];
     orders: Order[];
     reimbursements: Reimbursement[];
     reviewReimbursements: Reimbursement[];
@@ -122,9 +124,7 @@ export function createOrderDesk(data: Data) {
   let planner = $state("");
   let plannerUid = $state<number | null>(null);
   let executionCompany = $state("");
-  let executionCompanies = $state<string[]>(["执行公司一", "执行公司二", "执行公司三"]);
-  let newExecutionCompany = $state("");
-  let showExecutionCompanyForm = $state(false);
+  let executionCompanies = $state<ExecutionCompanyRow[]>(data.executionCompanies || []);
   let costPickerIndex = $state<number | null>(null);
   let paymentStatus = $state("未结款");
   let status = $state("已提交");
@@ -191,6 +191,7 @@ export function createOrderDesk(data: Data) {
   let filterProject = $state("");
   let filterOwner = $state("");
   let filterDesigner = $state("");
+  let filterPlanner = $state("");
   let filterCreator = $state("");
   let filterPayment = $state("");
   let filterFrom = $state("");
@@ -342,6 +343,7 @@ export function createOrderDesk(data: Data) {
         (!filterProject || o.project_id === filterProject) &&
         (!filterOwner || o.project_owner === filterOwner) &&
         (!filterDesigner || o.designer === filterDesigner) &&
+        (!filterPlanner || (o.planner || "") === filterPlanner) &&
         (!filterCreator || o.created_by === filterCreator) &&
         (!filterPayment || (o.payment_status || "未结款") === filterPayment) &&
         (!filterFrom || o.order_date >= filterFrom) &&
@@ -356,7 +358,7 @@ export function createOrderDesk(data: Data) {
   );
   function resetOrderFilters() {
     search = ""; filterCustomer = ""; filterProject = ""; filterOwner = "";
-    filterDesigner = ""; filterCreator = ""; filterPayment = ""; filterFrom = "";
+    filterDesigner = ""; filterPlanner = ""; filterCreator = ""; filterPayment = ""; filterFrom = "";
     filterTo = ""; orderSort = "date_desc";
   }
   function onFilterCustomerChange() {
@@ -380,6 +382,7 @@ export function createOrderDesk(data: Data) {
     filterProject;
     filterOwner;
     filterDesigner;
+    filterPlanner;
     filterCreator;
     filterPayment;
     filterFrom;
@@ -392,7 +395,7 @@ export function createOrderDesk(data: Data) {
   }
   $effect(() => {
     search; filterCustomer; filterProject; filterOwner; filterDesigner;
-    filterCreator; filterPayment; filterFrom; filterTo; orderSort; view;
+    filterPlanner; filterCreator; filterPayment; filterFrom; filterTo; orderSort; view;
     bulkOrderIds = [];
     bulkResult = null;
   });
@@ -430,10 +433,13 @@ export function createOrderDesk(data: Data) {
   const designers = $derived([
     ...new Set(orders.map((o) => o.designer).filter(Boolean)),
   ]);
+  const planners = $derived([
+    ...new Set(orders.map((o) => o.planner).filter(Boolean)),
+  ]);
   // 执行公司没有独立数据表：默认三项 + 历史订单中出现过的值 + 用户手动新增（本地持久化）。
   const executionCompanyOptions = $derived([
     ...new Set([
-      ...executionCompanies,
+      ...executionCompanies.map((company) => company.name),
       ...orders.map((order: any) => String(order.execution_company || "").trim()).filter(Boolean),
     ]),
   ]);
@@ -597,15 +603,6 @@ export function createOrderDesk(data: Data) {
     const catscoUsername = data.identity?.username || (data.visitor.status === "authenticated" ? data.visitor.username : "");
     creatorName = catscoUsername;
     createdBy = catscoUsername;
-    // 恢复用户手动新增的执行公司（无独立数据表，使用浏览器本地存储）。
-    try {
-      const stored = JSON.parse(localStorage.getItem("oa-execution-companies") || "[]");
-      if (Array.isArray(stored) && stored.length) {
-        executionCompanies = [...new Set([...executionCompanies, ...stored.map((item) => String(item).trim()).filter(Boolean)])];
-      }
-    } catch {
-      /* 忽略损坏或不可用的本地存储 */
-    }
     // 工作权限由服务端核验的身份决定，不再由浏览器工作模式或用户手动切换。
     workMode = hasAnyRole(data.identity, reimbursementActionRoles) ? "finance" : "entry";
     let restoringHistory = false;
@@ -1256,28 +1253,8 @@ export function createOrderDesk(data: Data) {
       busy = false;
     }
   }
-  function toggleExecutionCompanyForm() {
-    showExecutionCompanyForm = !showExecutionCompanyForm;
-    if (!showExecutionCompanyForm) newExecutionCompany = "";
-  }
-  function addExecutionCompany() {
-    const name = newExecutionCompany.trim();
-    if (!name) {
-      notify("请填写执行公司名称", true);
-      return;
-    }
-    if (!executionCompanies.includes(name)) {
-      executionCompanies = [...executionCompanies, name];
-      try {
-        localStorage.setItem("oa-execution-companies", JSON.stringify(executionCompanies));
-      } catch {
-        /* 隐私模式下无法写入，仅当前会话生效 */
-      }
-    }
-    executionCompany = name;
-    newExecutionCompany = "";
-    showExecutionCompanyForm = false;
-    notify(`已新增执行公司：${name}`);
+  function setExecutionCompanies(rows: ExecutionCompanyRow[]) {
+    executionCompanies = Array.isArray(rows) ? rows : [];
   }
   function toggleCostPicker(index: number) {
     costPickerIndex = costPickerIndex === index ? null : index;
@@ -1883,6 +1860,8 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "canManageCatalog", { get: () => hasAnyRole(data.identity, catalogManageRoles) });
   Object.defineProperty(desk, "canViewCatalog", { get: () => hasAnyRole(data.identity, catalogViewRoles) });
   Object.defineProperty(desk, "canManageEmployees", { get: () => hasAnyRole(data.identity, employeeManageRoles) });
+  Object.defineProperty(desk, "canManageExecutionCompanies", { get: () => hasAnyRole(data.identity, executionCompanyManageRoles) });
+  Object.defineProperty(desk, "canAccessEmployeePage", { get: () => hasAnyRole(data.identity, employeeManageRoles) || hasAnyRole(data.identity, executionCompanyManageRoles) });
   Object.defineProperty(desk, "visitor", { get: () => data.visitor });
   Object.defineProperty(desk, "identity", { get: () => data.identity });
   Object.defineProperty(desk, "isEmbedded", { get: () => isEmbedded });
@@ -1908,8 +1887,7 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "plannerUid", { get: () => plannerUid, set: (value) => { plannerUid = value ? Number(value) : null; } });
   Object.defineProperty(desk, "executionCompany", { get: () => executionCompany, set: (value) => { executionCompany = value; } });
   Object.defineProperty(desk, "executionCompanyOptions", { get: () => executionCompanyOptions });
-  Object.defineProperty(desk, "newExecutionCompany", { get: () => newExecutionCompany, set: (value) => { newExecutionCompany = value; } });
-  Object.defineProperty(desk, "showExecutionCompanyForm", { get: () => showExecutionCompanyForm, set: (value) => { showExecutionCompanyForm = value; } });
+  Object.defineProperty(desk, "executionCompanies", { get: () => executionCompanies });
   Object.defineProperty(desk, "costPickerIndex", { get: () => costPickerIndex });
   Object.defineProperty(desk, "paymentStatus", { get: () => paymentStatus, set: (value) => { paymentStatus = value; } });
   Object.defineProperty(desk, "status", { get: () => status, set: (value) => { status = value; } });
@@ -1968,6 +1946,7 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "filterProject", { get: () => filterProject, set: (value) => { filterProject = value; } });
   Object.defineProperty(desk, "filterOwner", { get: () => filterOwner, set: (value) => { filterOwner = value; } });
   Object.defineProperty(desk, "filterDesigner", { get: () => filterDesigner, set: (value) => { filterDesigner = value; } });
+  Object.defineProperty(desk, "filterPlanner", { get: () => filterPlanner, set: (value) => { filterPlanner = value; } });
   Object.defineProperty(desk, "filterCreator", { get: () => filterCreator, set: (value) => { filterCreator = value; } });
   Object.defineProperty(desk, "filterPayment", { get: () => filterPayment, set: (value) => { filterPayment = value; } });
   Object.defineProperty(desk, "filterFrom", { get: () => filterFrom, set: (value) => { filterFrom = value; } });
@@ -2026,6 +2005,7 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "totalUnpaid", { get: () => totalUnpaid });
   Object.defineProperty(desk, "owners", { get: () => owners });
   Object.defineProperty(desk, "designers", { get: () => designers });
+  Object.defineProperty(desk, "planners", { get: () => planners });
   Object.defineProperty(desk, "reimbursementPeople", { get: () => reimbursementPeople });
   Object.defineProperty(desk, "reimbursementStats", { get: () => reimbursementStats });
   Object.defineProperty(desk, "reimbursementRows", { get: () => reimbursementRows });
@@ -2078,8 +2058,7 @@ export function createOrderDesk(data: Data) {
   desk.onStandaloneInvoiceChange = onStandaloneInvoiceChange;
   desk.submitOrder = submitOrder;
   desk.submitProject = submitProject;
-  desk.toggleExecutionCompanyForm = toggleExecutionCompanyForm;
-  desk.addExecutionCompany = addExecutionCompany;
+  desk.setExecutionCompanies = setExecutionCompanies;
   desk.toggleCostPicker = toggleCostPicker;
   desk.costOptions = costOptions;
   desk.applyCostOption = applyCostOption;
