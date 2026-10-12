@@ -441,7 +441,7 @@ html body :is(button, [tabindex])[data-cc-pointer-focus="true"]:focus-visible { 
 .review-page:not(.selection-mode) .reimbursement-review-table :is(th, td):nth-child(6) { width: 7%; }
 .review-page:not(.selection-mode) .reimbursement-review-table :is(th, td):nth-child(7) { width: 86px; }
 .review-page:not(.selection-mode) .reimbursement-review-table :is(th, td):nth-child(8) { width: 172px; }
-.review-page .reimbursement-row-actions { justify-content: flex-end; flex-wrap: nowrap; }
+.review-page .reimbursement-row-actions { justify-content: flex-start; flex-wrap: nowrap; }
 .reimbursement-page:not(.review-page) .reimbursement-review-table :is(th, td):nth-child(1) { width: auto; }
 .reimbursement-page:not(.review-page) .reimbursement-review-table :is(th, td):nth-child(2) { width: 19%; }
 .reimbursement-page:not(.review-page) .reimbursement-review-table :is(th, td):nth-child(3) { width: 12%; }
