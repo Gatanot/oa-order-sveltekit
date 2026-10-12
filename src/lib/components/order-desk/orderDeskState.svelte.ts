@@ -141,6 +141,7 @@ export function createOrderDesk(data: Data) {
   let attachmentPreviewUrl = $state("");
   let attachmentPreviewName = $state("");
   let attachmentPreviewMime = $state("");
+  let attachmentPreviewBlob: Blob | null = $state(null);
   let attachmentPreviewRequest = 0;
   let uploadingFiles = $state(false);
   let creatorName = $state("");
@@ -655,6 +656,7 @@ export function createOrderDesk(data: Data) {
   function releaseAttachmentPreviewUrl() {
     if (attachmentPreviewUrl.startsWith("blob:")) URL.revokeObjectURL(attachmentPreviewUrl);
     attachmentPreviewUrl = "";
+    attachmentPreviewBlob = null;
   }
   function closeAttachmentPreview() {
     attachmentPreviewRequest++;
@@ -682,6 +684,7 @@ export function createOrderDesk(data: Data) {
       const blob = await response.blob();
       if (requestId !== attachmentPreviewRequest) return;
       attachmentPreviewMime = response.headers.get("content-type")?.split(";")[0] || blob.type || mime || "application/octet-stream";
+      attachmentPreviewBlob = blob;
       attachmentPreviewUrl = URL.createObjectURL(blob);
     } catch (reason) {
       if (requestId !== attachmentPreviewRequest) return;
@@ -698,6 +701,7 @@ export function createOrderDesk(data: Data) {
     attachmentPreviewError = "";
     attachmentPreviewName = file.name || "附件";
     attachmentPreviewMime = file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "application/octet-stream");
+    attachmentPreviewBlob = file;
     attachmentPreviewUrl = URL.createObjectURL(file);
   }
   async function setWorkMode(mode: "view" | "entry" | "finance") {
@@ -1904,6 +1908,7 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "attachmentPreviewUrl", { get: () => attachmentPreviewUrl });
   Object.defineProperty(desk, "attachmentPreviewName", { get: () => attachmentPreviewName });
   Object.defineProperty(desk, "attachmentPreviewMime", { get: () => attachmentPreviewMime });
+  Object.defineProperty(desk, "attachmentPreviewBlob", { get: () => attachmentPreviewBlob });
   Object.defineProperty(desk, "uploadingFiles", { get: () => uploadingFiles, set: (value) => { uploadingFiles = value; } });
   Object.defineProperty(desk, "creatorName", { get: () => creatorName });
   Object.defineProperty(desk, "newCustomer", { get: () => newCustomer, set: (value) => { newCustomer = value; } });

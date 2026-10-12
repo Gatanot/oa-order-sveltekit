@@ -12,3 +12,6 @@ npm-debug.log*
 *.xls
 *.xlsx
 report*.md
+
+# pdf.js 运行时资源由 scripts/sync-pdfjs-assets.mjs 生成
+static/pdfjs/

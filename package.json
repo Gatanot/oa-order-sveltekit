@@ -9,7 +9,9 @@
     "npm": ">=10"
   },
   "scripts": {
+    "predev": "node scripts/sync-pdfjs-assets.mjs",
     "dev": "vite dev",
+    "prebuild": "node scripts/sync-pdfjs-assets.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "start": "node build",
@@ -25,6 +27,7 @@
     "better-sqlite3": "11.10.0",
     "fflate": "^0.3.11",
     "lucide-svelte": "0.468.0",
+    "pdfjs-dist": "^4.10.38",
     "xlsx": "^0.18.5",
     "xlsx-js-style": "^1.2.0"
   },

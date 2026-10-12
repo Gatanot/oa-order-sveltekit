@@ -12,6 +12,17 @@ export function appPath(path: string, pathname?: string): string {
   return `${'../'.repeat(routeDepth)}${path.slice(1)}`;
 }
 
+// 返回应用根目录的绝对 URL（含网关路径前缀，结尾带 /）。
+// 静态资源（pdf.js 的 cmaps / standard_fonts）在 worker 中按目录拼接文件名请求，
+// 必须用绝对地址，否则会被解析到 worker 脚本所在目录。
+export function appBaseUrl(): string {
+  if (typeof window === 'undefined') return '/';
+  const segments = window.location.pathname.split('/').filter(Boolean);
+  const routeIndex = segments.findIndex((segment) => APP_ROUTE_SEGMENTS.has(segment));
+  const prefix = routeIndex < 0 ? '' : `/${segments.slice(0, routeIndex).join('/')}`;
+  return `${window.location.origin}${prefix}/`;
+}
+
 export function currentAppPath(): string {
   if (typeof window === 'undefined') return '/';
   const segments = window.location.pathname.split('/').filter(Boolean);
