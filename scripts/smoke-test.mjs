@@ -222,6 +222,9 @@ try {
     const response = await request('/admin?/saveExtraIdentity', { method: 'POST', body: form });
     assert.equal(response.response.status, 200, `管理员切换为${role}身份应成功`);
   }
+  result = await request('/api/reimbursements?scope=review');
+  assert.ok(result.data.data.some((item) => item.id === reimbursementId), '管理员应能看到待审核报销');
+  assert.ok(result.data.data.every((item) => item.reimbursement_status === '已提交待审核'), '管理员只应看到待审核节点');
   await setAdminWorkflowRole('manager');
   result = await request('/api/reimbursements?scope=mine&status=未报销');
   assert.ok(result.data.data.some((item) => item.id === reimbursementId), '未报销筛选应包含待审核记录');
@@ -236,16 +239,36 @@ try {
   assert.equal(result.data.data.find((item) => item.id === reimbursementId).reimbursement_status, '已提交待审核', '补传发票后应回到管理人审核');
   result = await request('/api/reimbursements/batch', { method: 'POST', json: { ids: [reimbursementId], status: '已确认待执行' } });
   assert.notEqual(result.response.status, 200, '不允许跳过审核、复核和确认');
+  await request('/admin?/clearExtraIdentity', { method: 'POST', body: new FormData() });
   result = await request('/api/reimbursements/batch', { method: 'POST', json: { ids: [reimbursementId], status: '已审核待复核' } });
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  for (const target of ['已复核待确认', '已打回']) {
+    for (const batch of [false, true]) {
+      result = await request(batch ? '/api/reimbursements/batch' : `/api/reimbursements/${reimbursementId}`, {
+        method: batch ? 'POST' : 'PATCH', json: { ...(batch ? { ids: [reimbursementId] } : {}), status: target, reject_reason: '越权测试' },
+      });
+      assert.equal(result.response.status, 403, '管理员不能复核或打回财务节点，单条与批量均应拦截');
+    }
+  }
   await setAdminWorkflowRole('finance');
   result = await request('/api/reimbursements/batch', { method: 'POST', json: { ids: [reimbursementId], status: '已复核待确认' } });
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  result = await request('/api/reimbursements/batch', { method: 'POST', json: { ids: [reimbursementId], status: '已确认待执行' } });
+  assert.equal(result.response.status, 403, '财务不能代替老板确认');
+  await request('/admin?/clearExtraIdentity', { method: 'POST', body: new FormData() });
+  result = await request(`/api/reimbursements/${reimbursementId}`, { method: 'PATCH', json: { status: '已确认待执行' } });
+  assert.equal(result.response.status, 403, '管理员不能代替老板确认');
   await setAdminWorkflowRole('owner');
   result = await request('/api/reimbursements/batch', { method: 'POST', json: { ids: [reimbursementId], status: '已确认待执行' } });
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  const confirmedReimbursement = result.data.data[0];
+  result = await request('/api/reimbursements/batch', { method: 'POST', json: { ids: [reimbursementId], status: '已执行' } });
+  assert.equal(result.response.status, 403, '老板不能代替财务执行');
+  await request('/admin?/clearExtraIdentity', { method: 'POST', body: new FormData() });
+  result = await request(`/api/reimbursements/${reimbursementId}`, { method: 'PATCH', json: { status: '已执行' } });
+  assert.equal(result.response.status, 403, '管理员不能代替财务执行');
   await setAdminWorkflowRole('finance');
-  const automaticVoucherNo = result.data.data[0].voucher_no;
+  const automaticVoucherNo = confirmedReimbursement.voucher_no;
   assert.ok(automaticVoucherNo, '老板确认后应自动生成单据');
   result = await request('/api/reimbursements/batch', { method: 'POST', json: { ids: [reimbursementId], status: '已执行' } });
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
@@ -452,6 +475,10 @@ try {
     assert.equal(result.response.status, 403, '普通员工不能访问员工管理接口');
     result = await requestOn(base, '/api/reimbursements?scope=review');
     assert.equal(result.response.status, 403, '普通员工不能访问报销审核队列');
+    const employeePage = await requestOn(base, '/orders');
+    assert.doesNotMatch(Buffer.from(employeePage.data).toString(), /aria-label="报销审核"/, '员工不应看到报销审核导航');
+    const employeeReviewPage = await requestOn(base, '/reimbursements/review');
+    assert.equal(employeeReviewPage.response.status, 303, '员工直接访问报销审核应跳转');
     const previewForm = new FormData();
     previewForm.append('mode', 'preview');
     previewForm.append('file', new Blob(['name,unit,cost_unit\nprint,sqm,10.50'], { type: 'text/csv' }), 'cost.csv');

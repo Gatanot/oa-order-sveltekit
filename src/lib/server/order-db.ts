@@ -6,6 +6,7 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import * as XLSX from 'xlsx';
 import XLSXStyle from 'xlsx-js-style';
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
+import { reimbursementNextStatus } from '$lib/permissions';
 
 export const databasePath = resolve(process.env.DATABASE_PATH || './data/oa.db');
 export const attachmentDir = resolve(dirname(databasePath), 'attachments');
@@ -1055,10 +1056,8 @@ export function canAdvanceReimbursement(status: string, target: string, role: st
   const from = reimbursementStatusCode(status);
   const to = reimbursementStatusCode(target);
   if (!reimbursementTransitions[from].includes(to)) return false;
-  if (role === 'admin') return true;
-  return (from === 'pending_review' && role === 'manager') ||
-    ((from === 'pending_recheck' || from === 'pending_payment') && role === 'finance') ||
-    (from === 'pending_confirmation' && role === 'owner');
+  const nextStatus = reimbursementNextStatus(reimbursementStatusLabel(from), role);
+  return Boolean(nextStatus && (to === 'rejected' || reimbursementStatusCode(nextStatus) === to));
 }
 
 export function updateReimbursement(id: string, status: string, actor: string, rejectReason = '', actorUid: number | null = null) {

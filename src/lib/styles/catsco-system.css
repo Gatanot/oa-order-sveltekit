@@ -400,17 +400,10 @@ html body :is(button, [tabindex])[data-cc-pointer-focus="true"]:focus-visible { 
 .reimbursement-row-actions .reimbursement-danger-icon { width: 34px; min-width: 34px; height: 34px; min-height: 34px; padding: 0; }
 .reimbursement-repair-icon { color: var(--blue); }
 .reimbursement-page .reimbursement-row-actions .primary-action { min-height: 32px; margin: 0; padding: 0 8px; font-size: 12px; }
-.reimbursement-page .reimbursement-row-actions .reimbursement-action { border: 1px solid transparent; color: #fff; }
-.reimbursement-page .reimbursement-row-actions .reimbursement-action-review { background: var(--color-status-review); }
-.reimbursement-page .reimbursement-row-actions .reimbursement-action-review:hover { background: var(--color-brand-700); }
-.reimbursement-page .reimbursement-row-actions .reimbursement-action-recheck { background: var(--color-status-recheck); }
-.reimbursement-page .reimbursement-row-actions .reimbursement-action-recheck:hover { background: color-mix(in srgb, var(--color-status-recheck) 86%, #000); }
-.reimbursement-page .reimbursement-row-actions .reimbursement-action-confirm { background: var(--color-status-confirm); }
-.reimbursement-page .reimbursement-row-actions .reimbursement-action-confirm:hover { background: color-mix(in srgb, var(--color-status-confirm) 86%, #000); }
-.reimbursement-page .reimbursement-row-actions .reimbursement-action-payment { background: var(--color-status-payment); }
-.reimbursement-page .reimbursement-row-actions .reimbursement-action-payment:hover { background: color-mix(in srgb, var(--color-status-payment) 86%, #000); }
-.reimbursement-page .reimbursement-row-actions .reimbursement-reject-action { min-height: 32px; padding: 0 8px; border: 1px solid color-mix(in srgb, var(--red) 42%, var(--line)); border-radius: 8px; background: transparent; color: var(--red); font-size: 12px; font-weight: 600; }
-.reimbursement-page .reimbursement-row-actions .reimbursement-reject-action:hover { background: var(--red-soft); border-color: var(--red); }
+.reimbursement-page .reimbursement-row-actions .reimbursement-action { height: 34px; min-height: 34px; border: 1px solid transparent; background: var(--color-status-success); color: #fff; }
+.reimbursement-page .reimbursement-row-actions .reimbursement-action:hover { background: color-mix(in srgb, var(--color-status-success) 86%, #000); }
+.reimbursement-page .reimbursement-row-actions .reimbursement-reject-action { width: 34px; min-width: 34px; height: 34px; min-height: 34px; padding: 0; border: 1px solid color-mix(in srgb, var(--color-danger) 42%, var(--line)); border-radius: 8px; background: transparent; color: var(--color-danger); }
+.reimbursement-page .reimbursement-row-actions .reimbursement-reject-action:hover { background: var(--color-danger-soft); border-color: var(--color-danger); }
 .review-page .batch-mode-toggle { color: var(--blue); }
 .review-page .batch-mode-action { min-height: 36px; padding-inline: 12px; }
 .review-page .batch-reject-action { min-height: 36px; padding-inline: 12px; border: 1px solid color-mix(in srgb, var(--red) 42%, var(--line)); border-radius: 8px; background: var(--red-soft); color: var(--red); }
@@ -435,15 +428,17 @@ html body :is(button, [tabindex])[data-cc-pointer-focus="true"]:focus-visible { 
 .review-page .reimbursement-review-table :is(th, td):nth-child(6) { width: 9%; }
 .review-page .reimbursement-review-table :is(th, td):nth-child(7) { width: 7%; }
 .review-page .reimbursement-review-table :is(th, td):nth-child(8) { width: 86px; }
-.review-page .reimbursement-review-table :is(th, td):nth-child(9) { width: 220px; }
-.review-page:not(.selection-mode) .reimbursement-review-table :is(th, td):nth-child(1) { width: 13%; }
+.review-page .reimbursement-review-table :is(th, td):nth-child(9) { width: 172px; }
+.review-page.selection-mode .reimbursement-review-table :is(th, td):nth-child(2) { width: auto; }
+.review-page:not(.selection-mode) .reimbursement-review-table :is(th, td):nth-child(1) { width: auto; }
 .review-page:not(.selection-mode) .reimbursement-review-table :is(th, td):nth-child(2) { width: 13%; }
 .review-page:not(.selection-mode) .reimbursement-review-table :is(th, td):nth-child(3) { width: 11%; }
 .review-page:not(.selection-mode) .reimbursement-review-table :is(th, td):nth-child(4) { width: 12%; }
 .review-page:not(.selection-mode) .reimbursement-review-table :is(th, td):nth-child(5) { width: 9%; }
 .review-page:not(.selection-mode) .reimbursement-review-table :is(th, td):nth-child(6) { width: 7%; }
 .review-page:not(.selection-mode) .reimbursement-review-table :is(th, td):nth-child(7) { width: 86px; }
-.review-page:not(.selection-mode) .reimbursement-review-table :is(th, td):nth-child(8) { width: 220px; }
+.review-page:not(.selection-mode) .reimbursement-review-table :is(th, td):nth-child(8) { width: 172px; }
+.review-page .reimbursement-row-actions { justify-content: flex-end; flex-wrap: nowrap; }
 .reimbursement-page:not(.review-page) .reimbursement-review-table :is(th, td):nth-child(1) { width: auto; }
 .reimbursement-page:not(.review-page) .reimbursement-review-table :is(th, td):nth-child(2) { width: 19%; }
 .reimbursement-page:not(.review-page) .reimbursement-review-table :is(th, td):nth-child(3) { width: 12%; }

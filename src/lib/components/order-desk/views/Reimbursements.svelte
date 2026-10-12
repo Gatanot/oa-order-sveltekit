@@ -1,7 +1,8 @@
 <script lang="ts">
   import { getContext } from "svelte";
   import { appPath } from "$lib/api";
-  import { Check, Download, Eye, FileText, Paperclip, Plus, Trash2, Wrench, X } from "lucide-svelte";
+  import { reimbursementActionForRole, reimbursementStatusesForRole } from '$lib/permissions';
+  import { Download, Eye, FileText, Paperclip, Plus, Trash2, Wrench, X } from "lucide-svelte";
   import WorkbenchListFilters from '../WorkbenchListFilters.svelte';
   import ReimbursementStatus from '../ReimbursementStatus.svelte';
   const desk = getContext<any>("order-desk");
@@ -18,14 +19,11 @@
     const targets = desk.selectedApprovableTargets as string[];
     if (targets.length === 1) return byTarget[targets[0]] || "统一处理";
     if (targets.length > 1) return "统一处理";
-    return desk.identity?.role === "manager" ? "统一审核" : desk.identity?.role === "owner" ? "统一确认" : "统一处理";
+    return ["admin", "manager"].includes(desk.identity?.role) ? "统一审核" : desk.identity?.role === "owner" ? "统一确认" : "统一处理";
   });
   // 服务端按角色裁剪队列，状态筛选只提供当前角色负责的节点。
   const responsibleStatuses = $derived(
-    desk.identity?.role === "manager" ? ["已提交待审核"] :
-    desk.identity?.role === "finance" ? ["已审核待复核", "已确认待执行"] :
-    desk.identity?.role === "owner" ? ["已复核待确认"] :
-    desk.identity?.role === "admin" ? ["已提交待审核", "已审核待复核", "已复核待确认", "已确认待执行"] : [],
+    reimbursementStatusesForRole(desk.identity?.role || '') || [],
   );
   const rows = $derived.by(() => {
     desk.reimbursementRefreshVersion;
@@ -64,20 +62,6 @@
   function clearFilters() { desk.resetReimbursementFilters(); }
   const steps = ["提交报销", "管理人审核", "财务复核", "老板确认", "财务执行"];
   const progress: Record<string, number> = { "已提交待审核": 1, "已审核待复核": 2, "已复核待确认": 3, "已确认待执行": 4, "已执行": 5, "已打回": 1 };
-  function nextAction(status: string, role: string) {
-    const canProcess = role === "admin";
-    if (status === "已提交待审核" && (role === "manager" || canProcess)) return { label: "审核通过", target: "已审核待复核" };
-    if (status === "已审核待复核" && (role === "finance" || canProcess)) return { label: "复核通过", target: "已复核待确认" };
-    if (status === "已复核待确认" && (role === "owner" || canProcess)) return { label: "确认报销", target: "已确认待执行" };
-    if (status === "已确认待执行" && (role === "finance" || canProcess)) return { label: "确认已执行", target: "已执行" };
-    return null;
-  }
-  function actionTone(target: string) {
-    if (target === "已审核待复核") return "review";
-    if (target === "已复核待确认") return "recheck";
-    if (target === "已确认待执行") return "confirm";
-    return "payment";
-  }
   function leaveSelectionMode() {
     selectionMode = false;
     desk.selectedReimbursementIds = [];
@@ -128,8 +112,7 @@
       {#if isReviewer && ["finance", "admin"].includes(desk.identity?.role)}<button class="outline-action" type="button" onclick={desk.exportReimbursements}><Download size={15} />导出当前筛选</button>{/if}
       {#if canBatchAct}
         {#if !selectionMode}
-          <button class="outline-action batch-mode-toggle" type="button" disabled={desk.busy} onclick={() => selectionMode = true}>统一处理</button>
-          <button class="delete-action batch-reject-action" type="button" disabled={desk.busy} onclick={() => selectionMode = true}>统一打回</button>
+          <button class="outline-action batch-mode-toggle" type="button" aria-pressed={selectionMode} disabled={desk.busy} onclick={() => selectionMode = true}>多选</button>
         {:else}
           <button class="primary-action batch-mode-action" type="button" disabled={!desk.selectedApprovableCount || desk.busy} onclick={desk.batchAdvanceReimbursements}>{batchApproveLabel}（{desk.selectedApprovableCount}）</button>
           <button class="delete-action batch-reject-action" type="button" disabled={!desk.selectedRejectableCount || desk.busy} onclick={desk.batchRejectReimbursements}>统一打回（{desk.selectedRejectableCount}）</button>
@@ -151,7 +134,7 @@
             ><th>备注附件</th><th>报销状态</th><th>操作</th></tr
           ></thead
         ><tbody
-          >{#each visibleRows as item}{@const action = isReviewer ? nextAction(item.reimbursement_status, desk.identity?.role) : null}<tr
+          >{#each visibleRows as item}{@const action = isReviewer ? reimbursementActionForRole(item.reimbursement_status, desk.identity?.role) : null}<tr
               >{#if isReviewer && selectionMode}<td><input type="checkbox" aria-label={`选择报销 ${item.advance_item || item.item}`} disabled={!action} checked={desk.selectedReimbursementIds.includes(item.id)} onchange={() => desk.toggleReimbursement(item.id)} /></td>{/if}<td>{#if item.order_id}<button class="link-action" type="button" onclick={() => desk.openDetail(desk.orders.find((order: any) => order.id === item.order_id))}><b>{item.code}</b></button>{:else}<b class="muted">内务报销</b>{/if}</td><td
                 ><b>{item.project_name}</b></td
               ><td>{item.advance_date}</td><td>{item.advance_item || "—"}</td><td
@@ -170,9 +153,9 @@
                 ><div class="reimbursement-row-actions">
                   <button class="icon-control" type="button" title="查看详情" aria-label={`查看报销详情：${item.advance_item || item.item}`} onclick={() => detailItem = item}><Eye size={16} /></button>
                   {#if !isReviewer && item.employee_uid === desk.identity?.uid && item.reimbursement_status === "已打回"}<button class="icon-control reimbursement-repair-icon" type="button" title="补充发票" aria-label={`补充发票：${item.advance_item || item.item}`} disabled={desk.busy} onclick={() => desk.reuploadReimbursement(item)}><Wrench size={16} /></button>{/if}
-                  {#if action}<button class={`primary-action reimbursement-action reimbursement-action-${actionTone(action.target)}`} type="button" disabled={desk.busy} onclick={() => desk.markReimbursement(item, action.target)}><Check size={14} />{action.label}</button>{/if}
+                  {#if action}<button class="primary-action reimbursement-action" type="button" disabled={desk.busy} onclick={() => desk.markReimbursement(item, action.target)}>{action.label}</button>{/if}
                   {#if !item.voucher_no && ["finance", "admin"].includes(desk.identity?.role) && (item.reimbursement_status === "已确认待执行" || item.reimbursement_status === "已执行")}<button class="icon-control" type="button" title="生成单据" aria-label={`生成报销单据：${item.advance_item || item.item}`} disabled={desk.busy} onclick={() => desk.generateReimbursementVoucher(item)}><FileText size={16} /></button>{/if}
-                  {#if isReviewer && desk.canManageReimbursements && ["已提交待审核", "已审核待复核", "已复核待确认"].includes(item.reimbursement_status) && action}<button class="delete-action reimbursement-reject-action" type="button" title="打回报销" aria-label={`打回报销：${item.advance_item || item.item}`} disabled={desk.busy} onclick={() => desk.rejectReimbursement(item)}><X size={14} />打回</button>{/if}
+                  {#if isReviewer && desk.canManageReimbursements && ["已提交待审核", "已审核待复核", "已复核待确认"].includes(item.reimbursement_status) && action}<button class="delete-action reimbursement-reject-action" type="button" title="打回报销" aria-label={`打回报销：${item.advance_item || item.item}`} disabled={desk.busy} onclick={() => desk.rejectReimbursement(item)}><X size={16} /></button>{/if}
                   {#if !isReviewer && item.employee_uid === desk.identity?.uid && item.reimbursement_status === "已提交待审核"}<button class="delete-action reimbursement-danger-icon" type="button" title="删除报销" aria-label={`删除报销：${item.advance_item || item.item}`} disabled={desk.busy} onclick={() => desk.deleteReimbursement(item)}><Trash2 size={16} /></button>{/if}
                 </div></td
               ></tr

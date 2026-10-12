@@ -3,6 +3,7 @@ import { pushState, replaceState } from "$app/navigation";
 import type * as XLSXType from "xlsx";
 import type { PublicArtifactVisitor } from "$lib/artifact-visitor";
 import { api, appPath, currentAppPath } from "$lib/api";
+import { reimbursementNextStatus } from "$lib/permissions";
 import { hasAnyRole, orderCreateRoles, orderExportRoles, orderManageRoles, orderViewAllRoles, reimbursementActionRoles, reimbursementViewAllRoles, catalogViewRoles, catalogManageRoles, employeeManageRoles } from "$lib/permissions";
 
 const apiFetch = (input: RequestInfo | URL, init?: RequestInit) =>
@@ -487,14 +488,6 @@ export function createOrderDesk(data: Data) {
       .filter((item: any) => item.voucher_no)
       .map((item: any) => ({ ...item, voucherNo: item.voucher_no })),
   );
-  function reimbursementNextStatus(status: string, role: string | undefined): string | null {
-    const canProcess = role === "admin";
-    if (status === "已提交待审核" && (role === "manager" || canProcess)) return "已审核待复核";
-    if (status === "已审核待复核" && (role === "finance" || canProcess)) return "已复核待确认";
-    if (status === "已复核待确认" && (role === "owner" || canProcess)) return "已确认待执行";
-    if (status === "已确认待执行" && (role === "finance" || canProcess)) return "已执行";
-    return null;
-  }
   const selectedApprovableRows = $derived(
     reviewReimbursementRows.filter((item: any) => selectedReimbursementIds.includes(item.id) && reimbursementNextStatus(item.reimbursement_status, data.identity?.role)),
   );
