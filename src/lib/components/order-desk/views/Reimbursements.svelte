@@ -42,6 +42,15 @@
   const visibleRows = $derived(
     isReviewer && selectedEmployee ? rows.filter((item: any) => item.employee === selectedEmployee) : rows,
   );
+  const selectableRows = $derived(visibleRows.filter((item: any) => reimbursementActionForRole(item.reimbursement_status, desk.identity?.role)));
+  const allVisibleSelected = $derived(selectableRows.length > 0 && selectableRows.every((item: any) => desk.selectedReimbursementIds.includes(item.id)));
+  const someVisibleSelected = $derived(selectableRows.some((item: any) => desk.selectedReimbursementIds.includes(item.id)));
+  function toggleVisibleSelection() {
+    const ids = selectableRows.map((item: any) => item.id);
+    desk.selectedReimbursementIds = allVisibleSelected
+      ? desk.selectedReimbursementIds.filter((id: string) => !ids.includes(id))
+      : [...new Set([...desk.selectedReimbursementIds, ...ids])];
+  }
   const pendingCount = $derived(visibleRows.length);
   const pendingAmount = $derived(visibleRows.reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0));
   const statusLabels: Record<string, string> = {
@@ -113,14 +122,21 @@
       {#if canBatchAct}
         {#if !selectionMode}
           <button class="outline-action batch-mode-toggle" type="button" aria-pressed={selectionMode} disabled={desk.busy} onclick={() => selectionMode = true}>多选</button>
-        {:else}
-          <button class="primary-action batch-mode-action" type="button" disabled={!desk.selectedApprovableCount || desk.busy} onclick={desk.batchAdvanceReimbursements}>{batchApproveLabel}（{desk.selectedApprovableCount}）</button>
-          <button class="delete-action batch-reject-action" type="button" disabled={!desk.selectedRejectableCount || desk.busy} onclick={desk.batchRejectReimbursements}>统一打回（{desk.selectedRejectableCount}）</button>
-          <button class="outline-action batch-cancel-action" type="button" disabled={desk.busy} onclick={leaveSelectionMode}>退出选择</button>
         {/if}
       {/if}
     </div>
   </div>
+  {#if canBatchAct && selectionMode}
+    <div class="order-bulk-toolbar" aria-label="批量报销操作" aria-busy={desk.busy}>
+      <label class="bulk-page-select"><input type="checkbox" aria-label="全选当前筛选报销" checked={allVisibleSelected} indeterminate={someVisibleSelected && !allVisibleSelected} disabled={desk.busy || !selectableRows.length} onchange={toggleVisibleSelection} /><span>全选当前筛选</span></label>
+      <span class="bulk-count" aria-live="polite">已选 {desk.selectedApprovableCount} 项</span>
+      <div class="bulk-actions">
+        <button class="primary-action batch-mode-action" type="button" disabled={!desk.selectedApprovableCount || desk.busy} onclick={desk.batchAdvanceReimbursements}>{batchApproveLabel}（{desk.selectedApprovableCount}）</button>
+        <button class="delete-action batch-reject-action" type="button" disabled={!desk.selectedRejectableCount || desk.busy} onclick={desk.batchRejectReimbursements}>统一打回（{desk.selectedRejectableCount}）</button>
+        <button class="outline-action batch-cancel-action" type="button" disabled={desk.busy} onclick={leaveSelectionMode}>退出选择</button>
+      </div>
+    </div>
+  {/if}
   {#if !isReviewer && desk.reimbursementStats.rejected}
     <div class="reimbursement-callout"><b>有 {desk.reimbursementStats.rejected} 条报销需要补充资料</b><span>请查看打回原因并重新上传发票，上传后会重新进入审核队列。</span></div>
   {/if}
@@ -129,13 +145,13 @@
       <table>
         <thead
           ><tr
-            >{#if isReviewer && selectionMode}<th>选择</th>{/if}<th>来源订单</th><th>项目垫付</th><th>垫付日期</th><th>垫付物品</th><th
+            >{#if isReviewer && selectionMode}<th><input type="checkbox" aria-label="全选列表报销" checked={allVisibleSelected} indeterminate={someVisibleSelected && !allVisibleSelected} disabled={desk.busy || !selectableRows.length} onchange={toggleVisibleSelection} /></th>{/if}<th>来源订单</th><th>项目垫付</th><th>垫付日期</th><th>垫付物品</th><th
               >金额</th
             ><th>备注附件</th><th>报销状态</th><th>操作</th></tr
           ></thead
         ><tbody
           >{#each visibleRows as item}{@const action = isReviewer ? reimbursementActionForRole(item.reimbursement_status, desk.identity?.role) : null}<tr
-              >{#if isReviewer && selectionMode}<td><input type="checkbox" aria-label={`选择报销 ${item.advance_item || item.item}`} disabled={!action} checked={desk.selectedReimbursementIds.includes(item.id)} onchange={() => desk.toggleReimbursement(item.id)} /></td>{/if}<td>{#if item.order_id}<button class="link-action" type="button" onclick={() => desk.openDetail(desk.orders.find((order: any) => order.id === item.order_id))}><b>{item.code}</b></button>{:else}<b class="muted">内务报销</b>{/if}</td><td
+              >{#if isReviewer && selectionMode}<td><input type="checkbox" aria-label={`选择报销 ${item.advance_item || item.item}`} disabled={!action || desk.busy} checked={desk.selectedReimbursementIds.includes(item.id)} onchange={() => desk.toggleReimbursement(item.id)} /></td>{/if}<td>{#if item.order_id}<button class="link-action" type="button" onclick={() => desk.openDetail(desk.orders.find((order: any) => order.id === item.order_id))}><b>{item.code}</b></button>{:else}<b class="muted">内务报销</b>{/if}</td><td
                 ><b>{item.project_name}</b></td
               ><td>{item.advance_date}</td><td>{item.advance_item || "—"}</td><td
                 class="money">{desk.money(item.advance_amount)}</td
