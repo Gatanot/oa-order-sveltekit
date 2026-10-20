@@ -27,7 +27,8 @@ export function reimbursementNextStatus(status: string, role: string | undefined
   return reimbursementActionForRole(status, role)?.target || null;
 }
 export const catalogViewRoles = ['admin', 'manager', 'owner', 'executor'] as const;
-export const catalogManageRoles = ['admin', 'manager', 'owner'] as const;
+// 报价库/成本库的维护权限与可见权限保持一致：能看到的人都能编辑。
+export const catalogManageRoles = catalogViewRoles;
 export const employeeManageRoles = ['admin', 'manager', 'owner'] as const;
 // 执行公司管理与员工管理同页展示，但仅老板、执行与系统管理员可维护。
 export const executionCompanyManageRoles = ['admin', 'owner', 'executor'] as const;

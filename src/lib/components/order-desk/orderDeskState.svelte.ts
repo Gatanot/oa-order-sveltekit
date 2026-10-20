@@ -1322,7 +1322,7 @@ export function createOrderDesk(data: Data) {
   }
   function requireCatalogManager() {
     if (hasAnyRole(data.identity, catalogManageRoles)) return true;
-    notify("报价成本库仅老板和管理人员可以新增或导入资料", true);
+    notify("当前身份没有维护报价成本库的权限", true);
     return false;
   }
   async function previewCatalogFile(file: File, targetId = "") {
