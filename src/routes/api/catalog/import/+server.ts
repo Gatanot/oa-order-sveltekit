@@ -21,9 +21,18 @@ function readRows(fileName: string, data: Buffer): { rows: Array<Record<string, 
       continue;
     }
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { range: headerIndex, defval: '' });
+    const headerCells = matrix[headerIndex] || [];
+    // 类别在真实表里常用合并单元格，只有首行有值；向下填充到后续行，保证每条都带类别。
+    const categoryKey = headerCells.map((cell) => String(cell || '').trim()).find((cell) => ['category', '分类', '类别'].includes(cell));
     let previousName = '';
+    let previousCategory = '';
     rows.forEach((sourceRow, index) => {
       const row: Record<string, unknown> = { ...sourceRow, source_file: fileName, source_sheet: sheetName };
+      if (categoryKey) {
+        const currentCategory = String(row[categoryKey] || '').trim();
+        if (currentCategory) previousCategory = currentCategory;
+        else if (previousCategory) row[categoryKey] = previousCategory;
+      }
       let name = row.name || row['名称'] || row['服务名称'] || row['产品名称'] || row['材料名称'] || row['服务项目'];
       const sequence = row['序号'];
       if (!String(name || '').trim() && previousName && sequence !== '' && Number.isFinite(Number(sequence))) {
