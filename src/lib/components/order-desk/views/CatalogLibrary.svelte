@@ -15,7 +15,8 @@
   function clearFilters() { desk.catalogSearch = ''; desk.catalogCategory = ''; desk.catalogSourceId = ''; }
   const detailItems = () => {
     const keyword = detailSearch.trim().toLowerCase();
-    return desk.catalog.filter((item: any) => item.source_id === detailSource?.id && (!keyword || `${item.name} ${item.category} ${item.specification || ''} ${item.supplier_remark || ''}`.toLowerCase().includes(keyword)));
+    const list = detailSource?.kind === 'cost' ? desk.catalogCost : desk.catalogQuote;
+    return list.filter((item: any) => item.source_id === detailSource?.id && (!keyword || `${item.name} ${item.category} ${item.specification || ''} ${item.supplier_name || item.remark || ''}`.toLowerCase().includes(keyword)));
   };
   const previewColumns = () => Object.keys(desk.catalogImportPreview?.rows?.[0] || {}).filter((key) => !['source_file', 'source_sheet'].includes(key)).slice(0, 6);
   function closeTopLayer() {
@@ -55,7 +56,7 @@
   </details>
   <div class="table-panel catalog-table-panel"><div class="table-scroll"><table>
     <thead><tr><th>分类</th><th>项目名称</th><th>{desk.catalogKind === 'quote' ? '客户' : '厂商'}</th><th>制作要求 / 备注</th><th>单位</th><th>{desk.catalogKind === 'quote' ? '报价单价' : '成本单价'}</th></tr></thead>
-    <tbody>{#each desk.pagedCatalog as item}<tr><td><span class="category-label" title={item.category || '未分类'}>{item.category || '未分类'}</span></td><td title={item.name}><b>{item.name}</b></td><td title={item.source_owner || item.customer_name || '通用'}>{item.source_owner || item.customer_name || '通用'}</td><td title={item.specification || item.supplier_remark || '—'}>{item.specification || item.supplier_remark || '—'}</td><td title={item.unit}>{item.unit}</td><td class="money" title={desk.money(desk.catalogKind === 'quote' ? item.quote_unit : item.cost_unit)}>{desk.money(desk.catalogKind === 'quote' ? item.quote_unit : item.cost_unit)}</td></tr>{:else}<tr><td colspan="6"><div class="empty-table">当前资料库没有符合条件的条目。{#if filterFields.some((field) => field.value)}<button class="outline-action" type="button" onclick={clearFilters}>清空筛选</button>{/if}</div></td></tr>{/each}</tbody>
+    <tbody>{#each desk.pagedCatalog as item}<tr><td><span class="category-label" title={item.category || '未分类'}>{item.category || '未分类'}</span></td><td title={item.name}><b>{item.name}</b></td><td title={item.source_owner || item.customer_name || '通用'}>{item.source_owner || item.customer_name || '通用'}</td><td title={item.specification || item.remark || '—'}>{item.specification || item.remark || '—'}</td><td title={item.unit}>{item.unit}</td><td class="money" title={desk.money(desk.catalogKind === 'quote' ? item.price_incl_tax : item.cost_unit)}>{desk.money(desk.catalogKind === 'quote' ? item.price_incl_tax : item.cost_unit)}</td></tr>{:else}<tr><td colspan="6"><div class="empty-table">当前资料库没有符合条件的条目。{#if filterFields.some((field) => field.value)}<button class="outline-action" type="button" onclick={clearFilters}>清空筛选</button>{/if}</div></td></tr>{/each}</tbody>
   </table></div></div>
   {#if desk.catalogPageCount > 1}
     <nav class="order-pagination catalog-pagination" aria-label="资料库分页">
@@ -89,7 +90,7 @@
   <div class="drawer-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) detailSource = null; }}>
     <div class="export-drawer catalog-detail-viewer" role="dialog" aria-modal="true" aria-labelledby="catalog-detail-title">
       <div class="drawer-head"><div><p class="section-kicker">资料库来源</p><h2 id="catalog-detail-title">{detailSource.owner_name}</h2><span>{detailSource.source_file || '手工配置'} · {detailSource.item_count} 个项目</span></div><button class="icon-control" aria-label="关闭明细" onclick={() => detailSource = null}><X size={17} /></button></div>
-      <div class="drawer-body"><label class="search-field"><Search size={16} /><input bind:value={detailSearch} placeholder="搜索名称、分类或制作要求" /></label><div class="table-panel"><div class="table-scroll"><table><thead><tr><th>分类</th><th>名称</th><th>规格 / 要求</th><th>单位</th><th>单价</th></tr></thead><tbody>{#each detailItems() as item}<tr><td>{item.category || '未分类'}</td><td><b>{item.name}</b></td><td>{item.specification || item.supplier_remark || '—'}</td><td>{item.unit}</td><td class="money">{desk.money(detailSource.kind === 'quote' ? item.quote_unit : item.cost_unit)}</td></tr>{:else}<tr><td colspan="5"><div class="empty-table">没有匹配的资料条目。</div></td></tr>{/each}</tbody></table></div></div></div>
+      <div class="drawer-body"><label class="search-field"><Search size={16} /><input bind:value={detailSearch} placeholder="搜索名称、分类或制作要求" /></label><div class="table-panel"><div class="table-scroll"><table><thead><tr><th>分类</th><th>名称</th><th>规格 / 要求</th><th>单位</th><th>单价</th></tr></thead><tbody>{#each detailItems() as item}<tr><td>{item.category || '未分类'}</td><td><b>{item.name}</b></td><td>{item.specification || item.remark || '—'}</td><td>{item.unit}</td><td class="money">{desk.money(detailSource.kind === 'quote' ? item.price_incl_tax : item.cost_unit)}</td></tr>{:else}<tr><td colspan="5"><div class="empty-table">没有匹配的资料条目。</div></td></tr>{/each}</tbody></table></div></div></div>
       <div class="drawer-footer"><button class="outline-action" onclick={() => detailSource = null}>关闭</button></div>
     </div>
   </div>

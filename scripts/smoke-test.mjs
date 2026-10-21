@@ -36,6 +36,13 @@ async function request(path, { json, ...options } = {}) {
 }
 
 /** 复制当前数据库为旧版本 fixture，启动一次服务触发迁移，再用只读连接断言结果。 */
+/** v27 迁移需要从旧 catalog_items 迁出数据；legacy fixture 复制自 v27 库，需按需重建旧目录表。 */
+function restoreLegacyCatalog(legacy) {
+  legacy.exec(`
+    CREATE TABLE IF NOT EXISTS catalog_items(id TEXT PRIMARY KEY, category TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, unit TEXT NOT NULL DEFAULT '项', quote_unit INTEGER NOT NULL DEFAULT 0, cost_unit INTEGER NOT NULL DEFAULT 0, customer_name TEXT NOT NULL DEFAULT '', project_name TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, source_file TEXT NOT NULL DEFAULT '', source_sheet TEXT NOT NULL DEFAULT '', source_type TEXT NOT NULL DEFAULT 'manual', item_no TEXT NOT NULL DEFAULT '', specification TEXT NOT NULL DEFAULT '', estimated_quantity TEXT NOT NULL DEFAULT '', max_quote_unit INTEGER NOT NULL DEFAULT 0, supplier_remark TEXT NOT NULL DEFAULT '', raw_data TEXT NOT NULL DEFAULT '{}', source_id TEXT, UNIQUE(category,name,customer_name,project_name,specification,estimated_quantity));
+  `);
+}
+
 async function withMigratedFixture(name, legacyVersion, prepare, assertions) {
   const path = join(directory, name);
   const source = new Database(databasePath, { readonly: true });
@@ -155,7 +162,7 @@ try {
   assert.equal(result.data.data.item_count, 1, '沿用资料库时应复制有效条目');
   const copiedSourceId = result.data.data.id;
   result = await request('/api/catalog');
-  assert.equal(result.data.data.filter((item) => item.source_id === copiedSourceId).length, 1, '沿用后的资料库应可直接用于录单');
+  assert.equal(result.data.data.cost.filter((item) => item.source_id === copiedSourceId).length, 1, '沿用后的资料库应可直接用于录单');
 
   const createPayload = { project_id: projectId, order_date: '2026-09-16', delivery_date: '2026-09-20', designer: '设计师甲', created_by: '填写人甲', idempotency_key: 'smoke-order-1', products: [{ name: '测试产品', unit: '项', quantity: 2, unit_price: '12.34', specification: '测试要求' }], costs: [{ name: '制作成本', vendor: '测试厂商', unit: '项', quantity: 2, unit_price: '3.21' }] };
   result = await request('/api/orders', { method: 'POST', json: createPayload });
@@ -296,7 +303,14 @@ try {
   assert.match(result.response.headers.get('content-type') || '', /spreadsheet/);
 
   const db = new Database(databasePath, { readonly: true });
-  assert.equal(db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '26');
+  assert.equal(db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '27');
+  assert.equal(db.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('catalog_quote_items','catalog_cost_items')").pluck().get(), 2, 'v27 应创建报价库/成本库分表');
+  assert.equal(db.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='catalog_items'").pluck().get(), 0, 'v27 应移除旧的 catalog_items');
+  assert.equal(db.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='catalog_id'").pluck().get(), 0, 'v27 应移除 orders_simple.catalog_id');
+  assert.ok(db.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='catalog_cost_items'").pluck().get(), '成本库分表应存在');
+  assert.ok(db.prepare("SELECT COUNT(*) FROM pragma_table_info('catalog_quote_items') WHERE name='price_incl_tax'").pluck().get(), '报价库应含税单价字段');
+  assert.ok(db.prepare("SELECT COUNT(*) FROM pragma_table_info('catalog_quote_items') WHERE name='price_excl_tax'").pluck().get(), '报价库应含不含税单价字段');
+  assert.ok(db.prepare("SELECT COUNT(*) FROM pragma_table_info('catalog_cost_items') WHERE name='cost_unit'").pluck().get(), '成本库应含成本单价字段');
   assert.ok(db.prepare("SELECT COUNT(*) FROM pragma_table_info('audit_logs') WHERE name='actor_uid'").pluck().get(), '审计表应包含操作者 UID');
   assert.ok(db.prepare('SELECT COUNT(*) FROM audit_logs WHERE actor_uid=826').pluck().get() >= 1, '审计应记录操作者 UID');
   assert.equal(db.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='system_admin_identity'").pluck().get(), 1, '系统管理员额外身份应持久化保存');
@@ -310,21 +324,24 @@ try {
   db.close();
 
   await withMigratedFixture('oa-v23.db', '23', (legacy) => {
+    restoreLegacyCatalog(legacy);
     // 全新库已加 status CHECK；测试旧值归并时临时关闭校验写入历史脏值。
     legacy.pragma('ignore_check_constraints = ON');
     legacy.prepare("UPDATE orders_simple SET status='待确认'").run();
     legacy.pragma('ignore_check_constraints = OFF');
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '26');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '27');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('audit_logs') WHERE name='actor_uid'").pluck().get(), 'v23 数据库迁移后应补齐审计 actor_uid');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v23 数据库重启后应保留订单');
     assert.equal(migrated.prepare('SELECT status FROM orders_simple LIMIT 1').pluck().get(), '已提交', 'v26 迁移应将历史订单状态归并为已提交');
   });
 
   await withMigratedFixture('oa-v18.db', '18', (legacy) => {
+    restoreLegacyCatalog(legacy);
     legacy.exec(`
       DROP INDEX IF EXISTS idx_orders_idempotency;
       ALTER TABLE orders_simple DROP COLUMN idempotency_key;
+      ALTER TABLE orders_simple ADD COLUMN catalog_id TEXT;
       CREATE TABLE users(id TEXT PRIMARY KEY, username TEXT);
       CREATE TABLE sessions(id TEXT PRIMARY KEY, user_id TEXT);
       ALTER TABLE orders_simple ADD COLUMN created_by_user_id TEXT;
@@ -336,7 +353,7 @@ try {
       ALTER TABLE audit_logs ADD COLUMN actor_user_id TEXT;
     `);
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '26');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '27');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='idempotency_key'").pluck().get(), 'v18 数据库应补齐幂等字段');
     assert.equal(migrated.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('users','sessions')").pluck().get(), 0, '迁移后不应保留登录表');
     for (const [table, column] of [['orders_simple', 'created_by_user_id'], ['reimbursements_simple', 'employee_user_id'], ['reimbursements_simple', 'voucher_archived_by_user_id'], ['order_attachments', 'uploaded_by_user_id'], ['reimbursement_attachments', 'uploaded_by_user_id'], ['catalog_sources', 'maintained_by_user_id'], ['audit_logs', 'actor_user_id']]) {
@@ -347,9 +364,10 @@ try {
   });
 
   await withMigratedFixture('oa-v20.db', '20', (legacy) => {
+    restoreLegacyCatalog(legacy);
     legacy.exec('ALTER TABLE orders_simple DROP COLUMN planner; ALTER TABLE orders_simple DROP COLUMN execution_company;');
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '26');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '27');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='planner'").pluck().get(), 'v20 数据库应补齐策划人字段');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='execution_company'").pluck().get(), 'v20 数据库应补齐执行公司字段');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v20 迁移不应丢失订单');
@@ -357,9 +375,10 @@ try {
   });
 
   await withMigratedFixture('oa-v21.db', '21', (legacy) => {
+    restoreLegacyCatalog(legacy);
     legacy.exec('ALTER TABLE orders_simple DROP COLUMN execution_company;');
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '26');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '27');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='execution_company'").pluck().get(), 'v21 数据库应补齐执行公司字段');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v21 迁移不应丢失订单');
     assert.deepEqual(migrated.prepare('PRAGMA foreign_key_check').all(), []);
@@ -460,15 +479,15 @@ try {
     assert.equal(result.response.status, 403, '管理人员不能新增执行公司');
   });
 
-  // 报价成本库可见性：执行可查看但不能新增/导入。
+  // 报价成本库：执行与可见权限对齐，可见即可维护（见 commit 06166c9）。
   await withIdentityServer(1006, async (base) => {
     let result = await requestOn(base, '/api/catalog');
     assert.equal(result.response.status, 200, '执行可请求资料库接口');
-    assert.ok(result.data.data.length > 0, '执行应能看到报价成本库');
+    assert.ok(result.data.data.quote.length + result.data.data.cost.length > 0, '执行应能看到报价成本库');
     result = await requestOn(base, '/api/catalog/sources');
     assert.ok(result.data.data.length > 0, '执行应能看到报价成本库来源');
-    result = await requestOn(base, '/api/catalog/sources', { method: 'POST', json: { kind: 'cost', owner_name: '执行越权库' } });
-    assert.equal(result.response.status, 403, '执行不能新增/导入报价成本库');
+    result = await requestOn(base, '/api/catalog/sources', { method: 'POST', json: { kind: 'cost', owner_name: '执行可维护库' } });
+    assert.equal(result.response.status, 201, '执行应可新增报价成本库来源');
     result = await requestOn(base, '/api/reimbursements?scope=history');
     assert.equal(result.response.status, 403, '执行不能查看全部历史报销');
   });
@@ -499,7 +518,7 @@ try {
     assert.equal(uploaded.response.status, 201, JSON.stringify(uploaded.data));
     const financeCatalog = await requestOn(base, '/api/catalog');
     assert.equal(financeCatalog.response.status, 200, '财务可请求资料库接口');
-    assert.equal(financeCatalog.data.data.length, 0, '财务不应看到报价成本库');
+    assert.equal(financeCatalog.data.data.quote.length + financeCatalog.data.data.cost.length, 0, '财务不应看到报价成本库');
   });
   const auditDb = new Database(databasePath, { readonly: true });
   const financeUploadAudit = auditDb.prepare("SELECT actor_name,actor_uid FROM audit_logs WHERE entity_type='reimbursement' AND entity_id=? AND action IN ('upload_attachment','reupload_attachment') ORDER BY created_at DESC LIMIT 1").get(financeUploadReimbursementId);

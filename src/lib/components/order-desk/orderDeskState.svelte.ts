@@ -18,24 +18,38 @@ const apiFetch = (input: RequestInfo | URL, init?: RequestInit) =>
     owner: string;
     status: string;
   };
-  type Catalog = {
+  type CatalogBase = {
     id: string;
     category: string;
     name: string;
     unit: string;
-    quote_unit: number;
-    cost_unit: number;
     specification?: string;
-    customer_name?: string;
-    project_name?: string;
+    item_no?: string;
     source_type?: string;
-    supplier_remark?: string;
     raw_data?: string;
     source_id?: string;
     library_kind?: "quote" | "cost";
     source_owner?: string;
     source_file?: string;
     library_file?: string;
+  };
+  type QuoteCatalog = CatalogBase & {
+    price_incl_tax: number;
+    price_excl_tax: number;
+    tax_rate?: string;
+    max_price?: number;
+    estimated_quantity?: string;
+    customer_name?: string;
+    project_name?: string;
+    remark?: string;
+  };
+  type CostCatalog = CatalogBase & {
+    cost_unit: number;
+    cost_unit_excl_tax: number;
+    tax_rate?: string;
+    supplier_name?: string;
+    min_quantity?: string;
+    remark?: string;
   };
   type ExecutionCompanyRow = { id: string; name: string; sort_order: number; created_at: string; updated_at: string };
   type Order = {
@@ -82,7 +96,7 @@ function isArtifactGatewayHost(): boolean {
 export type Data = {
     customers: Customer[];
     projects: Project[];
-    catalog: Catalog[];
+    catalog: { quote: QuoteCatalog[]; cost: CostCatalog[] };
     catalogSources: Array<Record<string, any>>;
     employees: Array<{ catsco_uid: number; display_name: string; department: string; role: string }>;
     executionCompanies: ExecutionCompanyRow[];
@@ -102,7 +116,8 @@ export function createOrderDesk(data: Data) {
   let onArtifactGateway = $state(false);
   let customers = $state(data.customers);
   let projects = $state(data.projects);
-  let catalog = $state(data.catalog);
+  let catalogQuote = $state<QuoteCatalog[]>(data.catalog.quote);
+  let catalogCost = $state<CostCatalog[]>(data.catalog.cost);
   let employees = $state(data.employees);
   let catalogSources = $state(data.catalogSources);
   let orders = $state(data.orders);
@@ -292,26 +307,22 @@ export function createOrderDesk(data: Data) {
   const filteredProjects = $derived(
     projects.filter((p) => !customerId || p.customer_id === customerId),
   );
+  const activeCatalog = $derived(
+    (catalogKind === "quote" ? catalogQuote : catalogCost) as Array<QuoteCatalog | CostCatalog>,
+  );
   const visibleCatalog = $derived(
-    catalog.filter(
-      (item) =>
-        (!item.library_kind || item.library_kind === catalogKind) &&
-        (!catalogSourceId || item.source_id === catalogSourceId) &&
-        (!catalogSearch ||
-          `${item.name} ${item.category} ${item.customer_name || ""} ${item.project_name || ""}`
-            .toLowerCase()
-            .includes(catalogSearch.toLowerCase())) &&
-        (!catalogCategory || item.category === catalogCategory),
+    activeCatalog.filter((item: any) =>
+      (!catalogSourceId || item.source_id === catalogSourceId) &&
+      (!catalogSearch ||
+        `${item.name} ${item.category} ${item.source_owner || ""} ${item.customer_name || ""} ${item.supplier_name || ""} ${item.project_name || ""}`
+          .toLowerCase()
+          .includes(catalogSearch.toLowerCase())) &&
+      (!catalogCategory || item.category === catalogCategory),
     ),
   );
-  const catalogCategories = $derived([
-    ...new Set(
-      catalog
-        .filter((item) => !item.library_kind || item.library_kind === catalogKind)
-        .map((item) => item.category)
-        .filter(Boolean),
-    ),
-  ]);
+  const catalogCategories = $derived(
+    [...new Set(activeCatalog.map((item: any) => item.category).filter(Boolean))] as string[],
+  );
   const catalogPageCount = $derived(Math.max(1, Math.ceil(visibleCatalog.length / catalogPageSize)));
   const pagedCatalog = $derived(
     visibleCatalog.slice((catalogPage - 1) * catalogPageSize, catalogPage * catalogPageSize),
@@ -762,7 +773,7 @@ export function createOrderDesk(data: Data) {
       api.get<{ data: Order[] }>("/api/orders"),
       api.get<{ data: Customer[] }>("/api/customers"),
       api.get<{ data: Project[] }>("/api/projects"),
-      api.get<{ data: Catalog[] }>("/api/catalog"),
+      api.get<{ data: { quote: QuoteCatalog[]; cost: CostCatalog[] } }>("/api/catalog"),
       api.get<{ data: Reimbursement[] }>("/api/reimbursements?scope=mine"),
       canReviewReimbursements
         ? api.get<{ data: Reimbursement[] }>("/api/reimbursements?scope=review")
@@ -774,7 +785,8 @@ export function createOrderDesk(data: Data) {
     orders = o.data;
     customers = c.data;
     projects = p.data;
-    catalog = k.data;
+    catalogQuote = k.data.quote;
+    catalogCost = k.data.cost;
     const sources = await api.get<{ data: Array<Record<string, any>> }>("/api/catalog/sources");
     catalogSources = sources.data;
     reimbursements = r.data;
@@ -1267,19 +1279,13 @@ export function createOrderDesk(data: Data) {
   function costOptions(index: number) {
     const product = products[index];
     const keyword = String(product?.name || "").trim().toLowerCase();
-    return catalog
+    return catalogCost
       .filter((item) => item.cost_unit > 0)
       .filter((item) => !keyword || item.name.toLowerCase().includes(keyword) || keyword.includes(item.name.toLowerCase()))
-      .sort((a, b) => {
-        const aExact = a.name.toLowerCase() === keyword ? 1 : 0;
-        const bExact = b.name.toLowerCase() === keyword ? 1 : 0;
-        const aContext = (a.customer_name === selectedCustomer ? 2 : 0) + (a.project_name === selectedProject ? 1 : 0);
-        const bContext = (b.customer_name === selectedCustomer ? 2 : 0) + (b.project_name === selectedProject ? 1 : 0);
-        return bExact - aExact || bContext - aContext;
-      })
+      .sort((a, b) => (b.name.toLowerCase() === keyword ? 1 : 0) - (a.name.toLowerCase() === keyword ? 1 : 0))
       .slice(0, 8);
   }
-  function applyCostOption(index: number, item: Catalog) {
+  function applyCostOption(index: number, item: CostCatalog) {
     if (!products[index]) return;
     products[index] = {
       ...products[index],
@@ -1494,11 +1500,11 @@ export function createOrderDesk(data: Data) {
   function findCatalogItem(name: string) {
     const keyword = name.trim().toLowerCase();
     if (!keyword) return undefined;
-    const matches = catalog.filter((item) => {
+    const matches = catalogQuote.filter((item) => {
       const text = item.name.toLowerCase();
       const customerMatch = !selectedCustomer || !item.customer_name || item.customer_name === selectedCustomer;
       const projectMatch = !selectedProject || !item.project_name || item.project_name === selectedProject;
-      return item.quote_unit > 0 && customerMatch && projectMatch && (text === keyword || text.includes(keyword) || keyword.includes(text));
+      return item.price_incl_tax > 0 && customerMatch && projectMatch && (text === keyword || text.includes(keyword) || keyword.includes(text));
     });
     return matches.sort((a, b) => {
       const aExact = a.name.toLowerCase() === keyword ? 1 : 0;
@@ -1508,14 +1514,14 @@ export function createOrderDesk(data: Data) {
       return bExact - aExact || bContext - aContext;
     })[0];
   }
-  function costVendorOf(item: Catalog) {
+  function costVendorOf(item: CostCatalog) {
     const raw = (item.raw_data ? (() => { try { return JSON.parse(item.raw_data as string); } catch { return {}; } })() : {}) as Record<string, unknown>;
-    return String(raw.vendor || raw.supplier || item.source_owner || item.supplier_remark || (item.source_type === "supplier_cost" ? item.source_file?.match(/硕达|印客邦|[^】]+(?=202\d)/)?.[0] || "成本库" : ""));
+    return String(raw.vendor || raw.supplier || item.supplier_name || item.source_owner || "成本库");
   }
   function findCostItem(name: string) {
     const keyword = name.trim().toLowerCase();
     if (!keyword) return undefined;
-    return catalog.find((item) => item.cost_unit > 0 && (!item.quote_unit || item.source_type === "supplier_cost") && item.name.trim().toLowerCase() === keyword);
+    return catalogCost.find((item) => item.cost_unit > 0 && item.name.trim().toLowerCase() === keyword);
   }
   function applyProductCost(index: number) {
     const product = products[index];
@@ -1526,15 +1532,15 @@ export function createOrderDesk(data: Data) {
     products = [...products];
   }
   function applyProductCatalog(index: number, value: string) {
-    const item = catalog.find((entry) => entry.id === value) || findCatalogItem(value);
+    const item = catalogQuote.find((entry) => entry.id === value) || findCatalogItem(value);
     if (!item) { updateProduct(index, "name", value); return; }
     products[index] = {
       ...products[index],
       name: item.name,
       unit: item.unit || "项",
-      unit_price: (item.quote_unit / 100).toFixed(2),
-      cost_unit: (item.cost_unit / 100).toFixed(2),
-      specification: item.specification || item.supplier_remark || "",
+      unit_price: (item.price_incl_tax / 100).toFixed(2),
+      cost_unit: "0.00",
+      specification: item.specification || "",
       catalog_id: item.id,
       cost_manual: false,
     };
@@ -1874,7 +1880,8 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "onArtifactGateway", { get: () => onArtifactGateway });
   Object.defineProperty(desk, "customers", { get: () => customers, set: (value) => { customers = value; } });
   Object.defineProperty(desk, "projects", { get: () => projects, set: (value) => { projects = value; } });
-  Object.defineProperty(desk, "catalog", { get: () => catalog, set: (value) => { catalog = value; } });
+  Object.defineProperty(desk, "catalogQuote", { get: () => catalogQuote, set: (value) => { catalogQuote = value; } });
+  Object.defineProperty(desk, "catalogCost", { get: () => catalogCost, set: (value) => { catalogCost = value; } });
   Object.defineProperty(desk, "employees", { get: () => employees });
   Object.defineProperty(desk, "catalogSources", { get: () => catalogSources, set: (value) => { catalogSources = value; } });
   Object.defineProperty(desk, "orders", { get: () => orders, set: (value) => { orders = value; } });

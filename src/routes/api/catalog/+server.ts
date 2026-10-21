@@ -6,7 +6,7 @@ import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ locals }) => {
   const identity = await locals.getCurrentIdentity();
-  return json({ data: identity && hasAnyRole(identity, catalogViewRoles) ? listCatalog() : [] });
+  return json({ data: identity && hasAnyRole(identity, catalogViewRoles) ? listCatalog() : { quote: [], cost: [] } });
 };
 export const POST: RequestHandler = async (event) => {
   const identity = await event.locals.getCurrentIdentity();

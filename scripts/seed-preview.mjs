@@ -102,7 +102,7 @@ try {
     orders: db.prepare('SELECT COUNT(*) AS count FROM orders_simple').get().count,
     reimbursements: db.prepare('SELECT COUNT(*) AS count FROM reimbursements_simple').get().count,
     ownReimbursements: db.prepare('SELECT COUNT(*) AS count FROM reimbursements_simple WHERE employee_uid=826').get().count,
-    catalogItems: db.prepare('SELECT COUNT(*) AS count FROM catalog_items WHERE active=1').get().count,
+    catalogItems: db.prepare('SELECT (SELECT COUNT(*) FROM catalog_quote_items WHERE active=1)+(SELECT COUNT(*) FROM catalog_cost_items WHERE active=1) AS count').get().count,
     employees: db.prepare('SELECT COUNT(*) AS count FROM employees').get().count
   }, null, 2));
 } finally {

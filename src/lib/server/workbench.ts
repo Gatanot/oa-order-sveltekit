@@ -29,7 +29,7 @@ export function loadWorkbench(identity?: CurrentIdentity) {
   return {
     customers: listCustomers(),
     projects: listProjects(),
-    catalog: canViewCatalog ? listCatalog() : [],
+    catalog: canViewCatalog ? listCatalog() : { quote: [], cost: [] },
     catalogSources: canViewCatalog ? listCatalogSources() : [],
     employees: listActiveEmployees(),
     executionCompanies: listExecutionCompanies(),

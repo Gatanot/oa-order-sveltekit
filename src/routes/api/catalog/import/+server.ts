@@ -10,7 +10,7 @@ function readRows(fileName: string, data: Buffer): { rows: Array<Record<string, 
   try { workbook = XLSX.read(data, { type: 'buffer', cellDates: false }); }
   catch { return { rows: [], errors: ['文件无法解析，请上传有效的 CSV、XLS 或 XLSX 文件'] }; }
   const valid: Array<Record<string, unknown>> = [];
-  const nameHeaders = new Set(['name', '名称', '服务名称', '产品名称', '材料名称']);
+  const nameHeaders = new Set(['name', '名称', '服务名称', '产品名称', '材料名称', '服务项目']);
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];
     if (!sheet) continue;
@@ -24,10 +24,10 @@ function readRows(fileName: string, data: Buffer): { rows: Array<Record<string, 
     let previousName = '';
     rows.forEach((sourceRow, index) => {
       const row: Record<string, unknown> = { ...sourceRow, source_file: fileName, source_sheet: sheetName };
-      let name = row.name || row['名称'] || row['服务名称'] || row['产品名称'] || row['材料名称'];
+      let name = row.name || row['名称'] || row['服务名称'] || row['产品名称'] || row['材料名称'] || row['服务项目'];
       const sequence = row['序号'];
       if (!String(name || '').trim() && previousName && sequence !== '' && Number.isFinite(Number(sequence))) {
-        const nameKey = ['name', '名称', '服务名称', '产品名称', '材料名称'].find((key) => key in row) || 'name';
+        const nameKey = ['name', '名称', '服务名称', '产品名称', '材料名称', '服务项目'].find((key) => key in row) || 'name';
         row[nameKey] = previousName;
         name = previousName;
       }
