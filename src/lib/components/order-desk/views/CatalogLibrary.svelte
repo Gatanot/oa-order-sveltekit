@@ -70,7 +70,7 @@
 {#if desk.catalogSourceOpen}
   <div class="project-modal-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) desk.catalogSourceOpen = false; }}>
     <div class="project-modal" role="dialog" aria-modal="true" aria-labelledby="catalog-source-title">
-      <div class="project-modal-head"><div><p class="section-kicker">新增资料库来源</p><h2 id="catalog-source-title">新增{desk.catalogKind === 'quote' ? '客户公司' : '厂商'}</h2><span>填写名称并上传配置文件，文件内容会自动解析为该公司的资料数据。</span></div><button class="icon-control" aria-label="关闭新增资料库" onclick={() => desk.catalogSourceOpen = false}><X size={18} /></button></div>
+      <div class="project-modal-head"><div><p class="section-kicker">新增资料库来源</p><h2 id="catalog-source-title">新增{desk.catalogKind === 'quote' ? '客户公司' : '厂商'}</h2><span>填写名称并上传配置文件，文件内容会自动解析为该公司的资料数据；该公司名称会直接成为订单录入里的可选客户。</span></div><button class="icon-control" aria-label="关闭新增资料库" onclick={() => desk.catalogSourceOpen = false}><X size={18} /></button></div>
       <form onsubmit={(event) => { event.preventDefault(); desk.submitCatalogSourceForm(); }}>
         <div class="project-modal-body">
           <label>{desk.catalogKind === 'quote' ? '客户公司名称' : '厂商名称'} <em>*</em><input bind:value={desk.catalogSourceName} maxlength="80" placeholder={desk.catalogKind === 'quote' ? '例如：华东科技有限公司' : '例如：硕达'} required /></label>
@@ -102,7 +102,7 @@
       <div class="drawer-head"><div><p class="section-kicker">导入预览</p><h2 id="catalog-import-title">导入预览</h2><span>{desk.catalogImportPreview.file_name} · {desk.catalogImportPreview.sheet || '首个工作表'}</span></div><button class="icon-control" aria-label="关闭导入预览" onclick={desk.cancelCatalogImport}><X size={17} /></button></div>
       <div class="drawer-body">
         <div class="import-preview-summary"><div><small>读取行数</small><b>{desk.catalogImportPreview.total_rows}</b></div><div><small>有效行</small><b>{desk.catalogImportPreview.valid_rows}</b></div><div><small>忽略行</small><b>{desk.catalogImportPreview.ignored_rows}</b></div></div>
-        {#if !desk.catalogImportTargetId}<label class="settings-name-field">{desk.catalogKind === 'quote' ? '客户公司名称' : '厂商名称'}<input bind:value={desk.catalogImportOwner} maxlength="80" placeholder={desk.catalogKind === 'quote' ? '例如：佛山广电' : '例如：硕达'} /></label>{/if}
+        {#if !desk.catalogImportTargetId}<label class="settings-name-field">{desk.catalogKind === 'quote' ? '客户公司名称' : '厂商名称'}<input bind:value={desk.catalogImportOwner} maxlength="80" placeholder={desk.catalogKind === 'quote' ? '例如：佛山广电' : '例如：硕达'} />{#if desk.catalogKind === 'quote'}<small class="field-hint">按填写内容原样加入订单可选客户</small>{/if}</label>{/if}
         <div class="import-column-map"><b>识别列</b><span>{previewColumns().join('、') || '未识别到表头'}</span></div>
         <div class="table-panel"><div class="table-scroll"><table><thead><tr>{#each previewColumns() as column}<th>{column}</th>{/each}</tr></thead><tbody>{#each desk.catalogImportPreview.rows.slice(0, 10) as row}<tr>{#each previewColumns() as column}<td>{String(row[column] ?? '')}</td>{/each}</tr>{:else}<tr><td colspan={Math.max(previewColumns().length, 1)}><div class="empty-table">没有可导入的有效行</div></td></tr>{/each}</tbody></table></div></div>
         {#if desk.catalogImportPreview.errors.length}<div class="import-errors"><b>忽略原因</b><ul>{#each desk.catalogImportPreview.errors.slice(0, 8) as issue}<li>{issue}</li>{/each}</ul></div>{/if}

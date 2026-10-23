@@ -258,7 +258,7 @@ function migrate(db: Database.Database) {
     CREATE TABLE catalog_sources(id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('quote','cost')), owner_name TEXT NOT NULL, source_file TEXT NOT NULL DEFAULT '', source_method TEXT NOT NULL DEFAULT 'manual', active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, import_summary_json TEXT NOT NULL DEFAULT '{}', UNIQUE(kind,owner_name));
     CREATE TABLE catalog_items(id TEXT PRIMARY KEY, category TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, unit TEXT NOT NULL DEFAULT '项', quote_unit INTEGER NOT NULL DEFAULT 0, cost_unit INTEGER NOT NULL DEFAULT 0, customer_name TEXT NOT NULL DEFAULT '', project_name TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, source_file TEXT NOT NULL DEFAULT '', source_sheet TEXT NOT NULL DEFAULT '', source_type TEXT NOT NULL DEFAULT 'manual', item_no TEXT NOT NULL DEFAULT '', specification TEXT NOT NULL DEFAULT '', estimated_quantity TEXT NOT NULL DEFAULT '', max_quote_unit INTEGER NOT NULL DEFAULT 0, supplier_remark TEXT NOT NULL DEFAULT '', raw_data TEXT NOT NULL DEFAULT '{}', source_id TEXT REFERENCES catalog_sources(id) ON DELETE SET NULL, UNIQUE(category,name,customer_name,project_name,specification,estimated_quantity));
     CREATE TABLE orders_simple(id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, customer_id TEXT NOT NULL, project_id TEXT NOT NULL, catalog_id TEXT, service_name TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 1, unit TEXT NOT NULL DEFAULT '项', quote_amount INTEGER NOT NULL DEFAULT 0, cost_amount INTEGER NOT NULL DEFAULT 0, order_date TEXT NOT NULL, delivery_date TEXT NOT NULL DEFAULT '', contact TEXT NOT NULL DEFAULT '', customer_department TEXT NOT NULL DEFAULT '', designer TEXT NOT NULL DEFAULT '', planner TEXT NOT NULL DEFAULT '', execution_company TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL, status TEXT NOT NULL DEFAULT '已提交' CHECK(status IN ('已提交','已完成')), payment_status TEXT NOT NULL DEFAULT '未结款', note TEXT NOT NULL DEFAULT '', specification TEXT NOT NULL DEFAULT '', products_json TEXT NOT NULL DEFAULT '[]', costs_json TEXT NOT NULL DEFAULT '[]', is_extra INTEGER NOT NULL DEFAULT 0, idempotency_key TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, FOREIGN KEY(customer_id) REFERENCES customers_simple(id), FOREIGN KEY(project_id) REFERENCES projects_simple(id), FOREIGN KEY(catalog_id) REFERENCES catalog_items(id));
-    CREATE TABLE order_products(id TEXT PRIMARY KEY, order_id TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, catalog_item_id TEXT, name TEXT NOT NULL, specification TEXT NOT NULL DEFAULT '', unit TEXT NOT NULL DEFAULT '项', quantity REAL NOT NULL DEFAULT 1, unit_price INTEGER NOT NULL DEFAULT 0, subtotal INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE, FOREIGN KEY(catalog_item_id) REFERENCES catalog_items(id) ON DELETE SET NULL);
+    CREATE TABLE order_products(id TEXT PRIMARY KEY, order_id TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, catalog_item_id TEXT, name TEXT NOT NULL, specification TEXT NOT NULL DEFAULT '', remark TEXT NOT NULL DEFAULT '', unit TEXT NOT NULL DEFAULT '项', quantity REAL NOT NULL DEFAULT 1, unit_price INTEGER NOT NULL DEFAULT 0, subtotal INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE, FOREIGN KEY(catalog_item_id) REFERENCES catalog_items(id) ON DELETE SET NULL);
     CREATE TABLE order_costs(id TEXT PRIMARY KEY, order_id TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, catalog_item_id TEXT, name TEXT NOT NULL, vendor TEXT NOT NULL DEFAULT '', unit TEXT NOT NULL DEFAULT '项', quantity REAL NOT NULL DEFAULT 1, unit_price INTEGER NOT NULL DEFAULT 0, subtotal INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE, FOREIGN KEY(catalog_item_id) REFERENCES catalog_items(id) ON DELETE SET NULL);
     CREATE TABLE order_attachments(id TEXT PRIMARY KEY, order_id TEXT NOT NULL, file_name TEXT NOT NULL, mime_type TEXT NOT NULL DEFAULT '', file_size INTEGER NOT NULL DEFAULT 0, storage_path TEXT NOT NULL DEFAULT '', attachment_kind TEXT NOT NULL DEFAULT 'note', visibility TEXT NOT NULL DEFAULT 'order', created_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE);
     CREATE TABLE reimbursements_simple(id TEXT PRIMARY KEY, employee TEXT NOT NULL, item TEXT NOT NULL, amount INTEGER NOT NULL DEFAULT 0, advance_date TEXT NOT NULL, order_id TEXT, invoice TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending_review' CHECK(status IN ('pending_review','rejected','pending_payment','paid')), reject_reason TEXT NOT NULL DEFAULT '', reviewed_by TEXT NOT NULL DEFAULT '', reviewed_at TEXT, reimbursed_by TEXT NOT NULL DEFAULT '', reimbursed_at TEXT, voucher_no TEXT NOT NULL DEFAULT '', voucher_created_at TEXT, voucher_archived_at TEXT, created_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE);
@@ -331,12 +331,17 @@ export function getOrderDb() {
     for (const column of ['created_by_uid', 'designer_uid', 'planner_uid']) {
       if (!orderColumns.has(column)) instance.exec(`ALTER TABLE orders_simple ADD COLUMN ${column} INTEGER`);
     }
+    // v28：订单项增加行备注，和订单级备注分开；历史订单行默认为空，导出时回退到订单备注。
+    const productColumns = new Set((instance.pragma('table_info(order_products)') as Array<{ name: string }>).map((column) => column.name));
+    if (!productColumns.has('remark')) instance.exec("ALTER TABLE order_products ADD COLUMN remark TEXT NOT NULL DEFAULT ''");
     const reimbursementColumns = new Set((instance.pragma('table_info(reimbursements_simple)') as Array<{ name: string }>).map((column) => column.name));
     if (!reimbursementColumns.has('employee_uid')) instance.exec('ALTER TABLE reimbursements_simple ADD COLUMN employee_uid INTEGER');
     const auditColumns = new Set((instance.pragma('table_info(audit_logs)') as Array<{ name: string }>).map((column) => column.name));
     if (!auditColumns.has('actor_uid')) instance.exec('ALTER TABLE audit_logs ADD COLUMN actor_uid INTEGER');
-    const appVersion = instance.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get() as string;
-    if (appVersion !== '25' && appVersion !== '26') {
+    // 用数值比较而不是 !== 逐个排除：v27 的库第二次启动时，旧写法会把版本退回 25 并重复执行 v26，
+    // 而 v26 需要已被 v27 删除的 catalog_items，导致每次启动都抛错。
+    const appVersion = Number(instance.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get()) || 0;
+    if (appVersion < 25) {
       instance.transaction(() => {
         instance!.exec(`
           CREATE TABLE reimbursements_next (
@@ -358,12 +363,12 @@ export function getOrderDb() {
         `);
       })();
     }
-    if (appVersion !== '26') {
+    if (appVersion < 26) {
       instance.exec(`UPDATE orders_simple SET status='已提交' WHERE status <> '已完成'; UPDATE catalog_items SET source_type='customer_quote' WHERE source_type='enterprise_quote'; UPDATE schema_meta SET value='26' WHERE key='order_app_version';`);
     }
     // v27：报价库/成本库彻底分表。catalog_quote_items 存客户报价（含税/不含税单价、税率、限价），
     // catalog_cost_items 存厂商成本（成本单价、税率、供应商）；订单行分别外键到对应库，删除 orders_simple.catalog_id。
-    if (appVersion !== '27') {
+    if (appVersion < 27) {
       instance.pragma('foreign_keys = OFF');
       try {
         instance.transaction(() => {
@@ -448,7 +453,7 @@ export function getOrderDb() {
 
             CREATE TABLE order_products_v27(
               id TEXT PRIMARY KEY, order_id TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, catalog_item_id TEXT,
-              name TEXT NOT NULL, specification TEXT NOT NULL DEFAULT '', unit TEXT NOT NULL DEFAULT '项',
+              name TEXT NOT NULL, specification TEXT NOT NULL DEFAULT '', remark TEXT NOT NULL DEFAULT '', unit TEXT NOT NULL DEFAULT '项',
               quantity REAL NOT NULL DEFAULT 1, unit_price INTEGER NOT NULL DEFAULT 0, subtotal INTEGER NOT NULL DEFAULT 0,
               FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE,
               FOREIGN KEY(catalog_item_id) REFERENCES catalog_quote_items(id) ON DELETE SET NULL
@@ -562,8 +567,32 @@ function importBundledExcel(db: Database.Database) {
   })();
 }
 
+// 客户集合由「客户报价库」决定：新增/导入报价库时填写的公司名称就是订单可选的客户名称。
+// 名称只做首尾去空格，不改写、不做同义合并——填什么就用什么。
+// 唯一的例外是旧数据迁移时给缺失客户名补的占位名，它不是真实客户。
+const quoteLibraryPlaceholderOwners = new Set(['通用客户报价']);
+
+function ensureCustomerRow(db: Database.Database, name: string): string | null {
+  const customerName = text(name);
+  if (!customerName || quoteLibraryPlaceholderOwners.has(customerName)) return null;
+  const existing = db.prepare('SELECT id FROM customers_simple WHERE name=?').get(customerName) as { id: string } | undefined;
+  if (existing) return existing.id;
+  const id = uuid();
+  db.prepare('INSERT INTO customers_simple(id,name,contact,created_at) VALUES(?,?,?,?)').run(id, customerName, '', now());
+  return id;
+}
+
+/** 把已有客户报价库的公司名同步为可选客户，保证在此规则之前导入的报价库也能直接下单。 */
+function syncQuoteLibraryCustomers(db: Database.Database) {
+  const rows = db.prepare("SELECT DISTINCT owner_name FROM catalog_sources WHERE kind='quote' AND active=1").all() as Array<{ owner_name: string }>;
+  if (!rows.length) return;
+  db.transaction(() => { for (const row of rows) ensureCustomerRow(db, row.owner_name); })();
+}
+
 export function listCustomers() {
-  return getOrderDb().prepare('SELECT * FROM customers_simple ORDER BY name').all();
+  const db = getOrderDb();
+  syncQuoteLibraryCustomers(db);
+  return db.prepare('SELECT * FROM customers_simple ORDER BY name').all();
 }
 
 export function listProjects(customerId?: string) {
@@ -622,6 +651,8 @@ export function createCatalogSource(data: Record<string, unknown>) {
         for (const item of copyItems) insertQuote.run(uuid(), id, item.item_no, item.category, item.name, item.specification, item.unit, item.estimated_quantity, item.price_incl_tax, item.price_excl_tax, item.tax_rate, item.max_price, owner, item.project_name, item.remark, item.source_file, item.source_sheet, item.source_type, item.raw_data, createdAt);
       }
     }
+    // 客户报价库的公司名直接成为订单可选客户；成本库的 owner 是厂商，不写入客户表。
+    if (kind === 'quote') ensureCustomerRow(db, owner);
     return db.prepare(`SELECT cs.*, CASE cs.kind WHEN 'cost' THEN (SELECT COUNT(*) FROM catalog_cost_items ki WHERE ki.source_id=cs.id AND ki.active=1) ELSE (SELECT COUNT(*) FROM catalog_quote_items qi WHERE qi.source_id=cs.id AND qi.active=1) END AS item_count FROM catalog_sources cs WHERE cs.id=?`).get(id);
   })();
 }
@@ -662,15 +693,15 @@ function resolveEmployeeUidByName(db: Database.Database, name: string): number |
 function syncNormalizedOrderLines(db: Database.Database, orderId: string, products: Array<Record<string, unknown>>, costs: Array<Record<string, unknown>>) {
   db.prepare('DELETE FROM order_products WHERE order_id=?').run(orderId);
   db.prepare('DELETE FROM order_costs WHERE order_id=?').run(orderId);
-  const productInsert = db.prepare('INSERT INTO order_products(id,order_id,position,catalog_item_id,name,specification,unit,quantity,unit_price,subtotal) VALUES(?,?,?,?,?,?,?,?,?,?)');
+  const productInsert = db.prepare('INSERT INTO order_products(id,order_id,position,catalog_item_id,name,specification,remark,unit,quantity,unit_price,subtotal) VALUES(?,?,?,?,?,?,?,?,?,?,?)');
   const costInsert = db.prepare('INSERT INTO order_costs(id,order_id,position,catalog_item_id,name,vendor,unit,quantity,unit_price,subtotal) VALUES(?,?,?,?,?,?,?,?,?,?)');
-  products.forEach((item, index) => productInsert.run(uuid(), orderId, index, text(item.catalog_id) || null, text(item.name), text(item.specification), text(item.unit) || '项', Number(item.quantity || 1), optionalMoneyToCents(item.unit_price), moneyToCents(lineTotalYuan(item))));
+  products.forEach((item, index) => productInsert.run(uuid(), orderId, index, text(item.catalog_id) || null, text(item.name), text(item.specification), text(item.remark), text(item.unit) || '项', Number(item.quantity || 1), optionalMoneyToCents(item.unit_price), moneyToCents(lineTotalYuan(item))));
   costs.forEach((item, index) => costInsert.run(uuid(), orderId, index, text(item.catalog_id) || null, text(item.name), text(item.vendor), text(item.unit) || '项', Number(item.quantity || 1), optionalMoneyToCents(item.unit_price), moneyToCents(lineTotalYuan(item))));
 }
 
 function hydrateOrder(row: Record<string, unknown>): Record<string, any> {
   const db = getOrderDb();
-  const normalizedProducts = db.prepare(`SELECT op.catalog_item_id AS catalog_id,op.name,op.specification,op.unit,op.quantity,op.unit_price / 100.0 AS unit_price,op.subtotal / 100.0 AS subtotal,qi.category
+  const normalizedProducts = db.prepare(`SELECT op.catalog_item_id AS catalog_id,op.name,op.specification,op.remark,op.unit,op.quantity,op.unit_price / 100.0 AS unit_price,op.subtotal / 100.0 AS subtotal,qi.category
     FROM order_products op LEFT JOIN catalog_quote_items qi ON qi.id=op.catalog_item_id WHERE op.order_id=? ORDER BY op.position`).all(row.id) as Array<Record<string, unknown>>;
   const normalizedCosts = db.prepare('SELECT catalog_item_id AS catalog_id,name,vendor,unit,quantity,unit_price / 100.0 AS unit_price,subtotal / 100.0 AS subtotal FROM order_costs WHERE order_id=? ORDER BY position').all(row.id) as Array<Record<string, unknown>>;
   const products = normalizedProducts.length ? normalizedProducts : parseList(row.products_json);
@@ -679,7 +710,28 @@ function hydrateOrder(row: Record<string, unknown>): Record<string, any> {
     (SELECT ra.id FROM reimbursement_attachments ra WHERE ra.reimbursement_id=r.id ORDER BY ra.created_at DESC LIMIT 1) AS attachment_id,
     (SELECT COUNT(*) FROM reimbursement_attachments ra WHERE ra.reimbursement_id=r.id) AS attachment_count
     FROM reimbursements_simple r WHERE r.order_id=? ORDER BY r.advance_date,r.id`).all(row.id) as Array<Record<string, unknown>>).map((item) => ({ ...item, status: reimbursementStatusLabel(item.status) }));
-  return { ...row, status: normalizeOrderStatus(row.status), products, costs, advances, reimbursement_status: reimbursementStatusFor(advances) };
+  const employeeUids = [...new Set([row.created_by_uid, row.designer_uid, row.planner_uid]
+    .map((uid) => Number(uid))
+    .filter((uid) => Number.isSafeInteger(uid) && uid > 0))];
+  const employeeNames = new Map<number, string>();
+  if (employeeUids.length) {
+    const rows = db.prepare(`SELECT catsco_uid,display_name FROM employees WHERE catsco_uid IN (${employeeUids.map(() => '?').join(',')})`).all(...employeeUids) as Array<{ catsco_uid: number; display_name: string }>;
+    for (const employee of rows) employeeNames.set(employee.catsco_uid, employee.display_name);
+  }
+  // 订单里保存的是姓名快照，展示时优先按 UID 读取员工档案的最新姓名，
+  // 这样员工改名后历史订单（以及旧数据中的用户名）都会显示为当前设置的员工姓名。
+  const displayName = (uid: unknown, fallback: unknown) => {
+    const value = Number(uid);
+    return (Number.isSafeInteger(value) ? employeeNames.get(value) : '') || text(fallback);
+  };
+  return {
+    ...row,
+    created_by: displayName(row.created_by_uid, row.created_by),
+    designer: displayName(row.designer_uid, row.designer),
+    planner: displayName(row.planner_uid, row.planner),
+    status: normalizeOrderStatus(row.status), products, costs, advances,
+    reimbursement_status: reimbursementStatusFor(advances)
+  };
 }
 
 export function getOrderAccessInfo(id: string) {
@@ -791,7 +843,7 @@ const exportColumnLabels: Record<string, string> = {
   project_owner: '项目负责人', customer_department: '客户部门', designer: '设计师', planner: '策划人', contact: '联系人',
   delivery_date: '交货日期', payment_status: '结款状态', service_name: '订单内容', quantity: '数量', unit: '单位',
   quote_amount: '总报价', cost_amount: '制作成本', advance_amount: '报销金额', profit: '预计毛利', created_by: '录入人',
-  status: '订单状态', reimbursement_status: '报销状态', product_name: '产品名称', product_specification: '制作要求',
+  status: '订单状态', reimbursement_status: '报销状态', product_name: '产品名称', product_specification: '制作要求', product_remark: '行备注',
   product_quantity: '产品数量', product_unit: '产品单位', product_unit_price: '产品单价', product_subtotal: '产品小计', note: '备注',
 };
 
@@ -828,6 +880,8 @@ export function exportOrders(filters: Record<string, string>) {
         const category = String(product.category || order.catalog_category || '其他类');
         const rows = categories.get(category) || [];
         const note = text(order.note);
+        // 行备注优先；未填时回退到订单备注，保证历史订单导出口径不变。
+        const lineRemark = text(product.remark);
         rows.push({
           name: product.name || order.service_name,
           unit: product.unit || order.unit || '项',
@@ -835,8 +889,8 @@ export function exportOrders(filters: Record<string, string>) {
           quantity: Number(product.quantity || 0),
           specification: product.specification || order.specification || '',
           unitPrice: Number(product.unit_price || 0),
-          // 备注使用订单填写时的备注；勾选“备注含订单编号”时在备注后附上订单号。
-          remark: filters.remarkOrder === 'true' ? (note ? `${note}（${order.code}）` : order.code) : note,
+          // 勾选“备注含订单编号”时在备注后附上订单号。
+          remark: lineRemark || (filters.remarkOrder === 'true' ? (note ? `${note}（${order.code}）` : order.code) : note),
         });
         categories.set(category, rows);
       }
@@ -1035,6 +1089,7 @@ export function exportOrders(filters: Record<string, string>) {
         created_by: order.created_by, status: order.status, reimbursement_status: order.reimbursement_status || '无需报销',
         product_name: product?.name || products.map((item: any) => item.name).join('、'),
         product_specification: product?.specification || products.map((item: any) => item.specification).filter(Boolean).join('；'),
+        product_remark: product?.remark || products.map((item: any) => item.remark).filter(Boolean).join('；'),
         product_quantity: product?.quantity ?? products.map((item: any) => item.quantity).join('、'),
         product_unit: product?.unit || products.map((item: any) => item.unit).join('、'),
         product_unit_price: product ? Number(product.unit_price || 0) : products.map((item: any) => item.unit_price).join('、'),
@@ -1462,7 +1517,8 @@ export function importCatalog(rows: Array<Record<string, unknown>>, sourceId = '
       } else {
         const quote = row.quote_unit ?? row.price_incl_tax ?? row['报价'] ?? row['报价单价'] ?? row['含税投标单价报价'] ?? row['含税单价（元）'] ?? row['含税单价'] ?? 0;
         const quoteExcl = row.price_excl_tax ?? row['不含税单价'] ?? row['不含税单价（元）'] ?? 0;
-        const customerName = text(row.customer_name || row['客户'] || row['公司'] || row['企业'] || (source ? owner : ''));
+        // 一个报价库对应一个客户：客户名统一取资料库来源名称，保证与订单客户列表、报价匹配口径一致。
+        const customerName = text(source ? owner : (row.customer_name || row['客户'] || row['公司'] || row['企业']));
         const projectName = text(row.project_name || row['项目'] || row['项目名称'] || '');
         const estimatedQuantity = text(row.estimated_quantity || row['预估数量'] || '');
         insertQuote.run(uuid(), sourceId || null, itemNo, category, name, specification, unit, estimatedQuantity, excelMoney(quote), excelMoney(quoteExcl), taxRate, excelMoney(row.max_quote_unit || row['含税最高单价限价'] || 0), customerName, projectName, remark, sourceFile, sourceSheet, sourceType, raw, now());
@@ -1472,6 +1528,7 @@ export function importCatalog(rows: Array<Record<string, unknown>>, sourceId = '
     if (source) {
       const summary = JSON.stringify({ rows: rows.length, imported: count, replaced: Boolean(options.replace), imported_at: now() });
       db.prepare("UPDATE catalog_sources SET source_file=COALESCE(NULLIF(?,''),source_file),source_method='upload',import_summary_json=?,updated_at=? WHERE id=?").run(text(rows[0]?.source_file), summary, now(), sourceId);
+      if (kind === 'quote') ensureCustomerRow(db, text(source.owner_name));
       recordAudit(db, { actorName: options.actorName, actorUid: options.actorUid ?? null, action: options.replace ? 'replace_catalog' : 'import_catalog', entityType: 'catalog_source', entityId: sourceId, detail: { rows: rows.length, imported: count } });
     }
     return count;

@@ -17,9 +17,15 @@ server.stdout.on('data', (chunk) => { logs += chunk; });
 server.stderr.on('data', (chunk) => { logs += chunk; });
 let fixturePortOffset = 0;
 
-async function waitForServer(targetOrigin = origin, readLogs = () => logs) {
+async function waitForServer(targetOrigin = origin, readLogs = () => logs, child = server) {
   for (let index = 0; index < 80; index++) {
-    try { if ((await fetch(`${targetOrigin}/orders`)).ok) return; } catch { /* retry */ }
+    // 进程已退出时立即失败并带上日志，避免迁移/启动错误只表现为 8 秒超时。
+    if (child.exitCode !== null) throw new Error(`服务器已退出（code ${child.exitCode}）\n${readLogs()}`);
+    let response;
+    try { response = await fetch(`${targetOrigin}/orders`); } catch { /* 端口未就绪，重试 */ }
+    if (response?.ok) return;
+    // 服务已能响应但返回 5xx，说明迁移/初始化失败，立即失败而不是空等 8 秒。
+    if (response && response.status >= 500) throw new Error(`服务器启动失败（HTTP ${response.status}）\n${readLogs()}`);
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(`服务器启动超时\n${readLogs()}`);
@@ -59,7 +65,7 @@ async function withMigratedFixture(name, legacyVersion, prepare, assertions) {
   fixtureServer.stdout.on('data', (chunk) => { fixtureLogs += chunk; });
   fixtureServer.stderr.on('data', (chunk) => { fixtureLogs += chunk; });
   try {
-    await waitForServer(fixtureOrigin, () => fixtureLogs);
+    await waitForServer(fixtureOrigin, () => fixtureLogs, fixtureServer);
     const migrated = new Database(path, { readonly: true });
     try {
       assertions(migrated);
@@ -90,7 +96,7 @@ async function withIdentityServer(uid, assertions) {
   identityServer.stdout.on('data', (chunk) => { identityLogs += chunk; });
   identityServer.stderr.on('data', (chunk) => { identityLogs += chunk; });
   try {
-    await waitForServer(identityOrigin, () => identityLogs);
+    await waitForServer(identityOrigin, () => identityLogs, identityServer);
     await assertions(identityOrigin);
   } finally {
     identityServer.kill('SIGTERM');
@@ -164,7 +170,7 @@ try {
   result = await request('/api/catalog');
   assert.equal(result.data.data.cost.filter((item) => item.source_id === copiedSourceId).length, 1, '沿用后的资料库应可直接用于录单');
 
-  const createPayload = { project_id: projectId, order_date: '2026-09-16', delivery_date: '2026-09-20', designer: '设计师甲', created_by: '填写人甲', idempotency_key: 'smoke-order-1', products: [{ name: '测试产品', unit: '项', quantity: 2, unit_price: '12.34', specification: '测试要求' }], costs: [{ name: '制作成本', vendor: '测试厂商', unit: '项', quantity: 2, unit_price: '3.21' }] };
+  const createPayload = { project_id: projectId, order_date: '2026-09-16', delivery_date: '2026-09-20', designer: '设计师甲', created_by: '填写人甲', idempotency_key: 'smoke-order-1', products: [{ name: '测试产品', unit: '项', quantity: 2, unit_price: '12.34', specification: '测试要求', remark: '行备注甲' }], costs: [{ name: '制作成本', vendor: '测试厂商', unit: '项', quantity: 2, unit_price: '3.21' }] };
   result = await request('/api/orders', { method: 'POST', json: createPayload });
   assert.equal(result.response.status, 201, JSON.stringify(result.data));
   assert.equal(result.data.data.created_by, 'catsco', '录入人必须取自可信的登录身份，而非客户端提交值');
@@ -172,6 +178,7 @@ try {
   assert.equal(result.data.data.cost_amount, 642);
   assert.equal(result.data.data.status, '已提交', '新订单默认状态应为已提交');
   assert.equal((result.data.data.advances || []).length, 0, '订单录入不再直接创建报销，需在报销页面关联订单');
+  assert.equal(result.data.data.products[0].remark, '行备注甲', '订单项行备注应随产品保存并返回');
   const orderId = result.data.data.id;
   result = await request('/api/orders', { method: 'POST', json: createPayload });
   assert.equal(result.data.data.id, orderId, '重复提交必须返回原订单');
@@ -189,16 +196,20 @@ try {
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
   assert.equal(result.data.data.status, '已完成', '录入人（执行）可将订单标记为已完成');
 
-  result = await request(`/api/orders/${orderId}`, { method: 'PATCH', json: { project_id: projectId, order_date: '2026-09-16', delivery_date: '2026-09-21', designer: '设计师乙', created_by: '填写人乙', payment_status: '已结款', status: '已完成', products: [{ name: '测试产品', unit: '项', quantity: 1, unit_price: '20.00' }], costs: [], advances: [] } });
+  result = await request(`/api/orders/${orderId}`, { method: 'PATCH', json: { project_id: projectId, order_date: '2026-09-16', delivery_date: '2026-09-21', designer: '设计师乙', created_by: '填写人乙', payment_status: '已结款', status: '已完成', note: '整单备注', products: [{ name: '测试产品', unit: '项', quantity: 1, unit_price: '20.00', remark: '行备注乙' }, { name: '测试产品二', unit: '项', quantity: 1, unit_price: '5.00' }], costs: [], advances: [] } });
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
   assert.equal(result.data.data.created_by, 'catsco');
+  assert.equal(result.data.data.products[0].remark, '行备注乙', '编辑订单应保留行备注');
+  assert.equal(result.data.data.products[1].remark, '', '未填行备注的订单项应为空字符串');
 
-  result = await request(`/api/orders/export?ids=${encodeURIComponent(orderId)}&mode=detail&columns=code,product_name,quote_amount&expand=false&total=true&actor=财务甲`);
+  result = await request(`/api/orders/export?ids=${encodeURIComponent(orderId)}&mode=detail&columns=code,product_name,product_remark,quote_amount&expand=false&total=true&actor=财务甲`);
   assert.equal(result.response.status, 200);
   let workbook = XLSX.read(Buffer.from(result.data), { type: 'buffer' });
   let exportRows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1, defval: '' });
   assert.equal(exportRows.length, 3, '订单明细应包含表头、订单行和合计行');
   assert.equal(exportRows[2][0], '合计');
+  assert.equal(exportRows[0][2], '行备注', '订单明细应支持导出行备注列');
+  assert.equal(exportRows[1][2], '行备注乙', '导出的行备注应取自订单项而非订单备注');
   result = await request(`/api/orders/export?ids=${encodeURIComponent(orderId)}&mode=settlement&followA=${encodeURIComponent('甲方联系人')}&followB=${encodeURIComponent('乙方跟进人')}&contactPhone=123456&actor=财务甲`);
   assert.equal(result.response.status, 200);
   const settlementBuffer = Buffer.from(result.data);
@@ -208,6 +219,10 @@ try {
   exportRows = XLSX.utils.sheet_to_json(settlementSheet, { header: 1, defval: '' });
   assert.equal(workbook.SheetNames[0], '结算', '结算单工作表名称应与模板一致');
   assert.deepEqual(exportRows[6].slice(0, 8), ['序号', '产品名称', '单位', '数量', '规格和技术要求', '含税单价(元）', '小计（元）', '备注']);
+  const settlementProductRow = exportRows.find((row) => row[1] === '测试产品');
+  assert.equal(settlementProductRow?.[7], '行备注乙', '结算单备注列应优先使用行备注');
+  const settlementFallbackRow = exportRows.find((row) => row[1] === '测试产品二');
+  assert.equal(settlementFallbackRow?.[7], '整单备注', '行备注为空时应回退到订单备注');
   assert.match(String(exportRows.flat().find((cell) => String(cell).includes('甲方项目跟进人')) || ''), /甲方联系人/);
   assert.ok((settlementSheet['!merges'] || []).some((merge) => merge.s.r === 0 && merge.s.c === 0 && merge.e.r === 0 && merge.e.c === 8), '结算单标题应合并 A1:I1');
   assert.ok((settlementSheet['!cols'] || []).length >= 9, '结算单应保留模板的九列布局');
@@ -287,7 +302,7 @@ try {
   const clearWorkflowRole = new FormData();
   result = await request('/admin?/clearExtraIdentity', { method: 'POST', body: clearWorkflowRole });
   assert.equal(result.response.status, 200, '流程测试后应清除管理员额外身份');
-  result = await request(`/api/orders/${orderId}`,  { method: 'PATCH', json: { project_id: projectId, order_date: '2026-09-16', delivery_date: '2026-09-21', designer: '设计师乙', created_by: '填写人乙', payment_status: '已结款', status: '已完成', products: [{ name: '测试产品', unit: '项', quantity: 1, unit_price: '20.00' }], costs: [], advances: [] } });
+  result = await request(`/api/orders/${orderId}`,  { method: 'PATCH', json: { project_id: projectId, order_date: '2026-09-16', delivery_date: '2026-09-21', designer: '设计师乙', created_by: '填写人乙', payment_status: '已结款', status: '已完成', products: [{ name: '测试产品', unit: '项', quantity: 1, unit_price: '20.00', remark: '行备注丙' }], costs: [], advances: [] } });
   assert.equal(result.response.status, 200, '订单更新应忽略垫付字段且不影响已关联的报销');
   assert.ok((result.data.data.advances || []).some((item) => item.id === reimbursementId), '订单更新后仍应显示关联的报销');
   result = await request(`/api/reimbursements/${reimbursementId}/voucher`, { method: 'POST' });
@@ -318,6 +333,8 @@ try {
   assert.equal(db.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, '幂等键不能产生重复订单');
   assert.equal(db.prepare('SELECT created_by_uid FROM orders_simple LIMIT 1').pluck().get(), 826, '订单录入人应关联可信的 Catsco UID');
   assert.ok(db.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name IN ('created_by_uid','designer_uid','planner_uid')").pluck().get() === 3, '订单应保存员工 UID 关联');
+  assert.equal(db.prepare("SELECT COUNT(*) FROM pragma_table_info('order_products') WHERE name='remark'").pluck().get(), 1, '订单项表应包含行备注列');
+  assert.equal(db.prepare("SELECT remark FROM order_products WHERE name='测试产品'").pluck().get(), '行备注丙', '行备注应写入规范化的订单项表');
   assert.equal(db.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('users','sessions')").pluck().get(), 0, '全新数据库不应创建登录或角色表');
   assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
   assert.ok(db.prepare('SELECT COUNT(*) FROM audit_logs').pluck().get() >= 5);
@@ -325,6 +342,7 @@ try {
 
   await withMigratedFixture('oa-v23.db', '23', (legacy) => {
     restoreLegacyCatalog(legacy);
+    legacy.exec('ALTER TABLE order_products DROP COLUMN remark');
     // 全新库已加 status CHECK；测试旧值归并时临时关闭校验写入历史脏值。
     legacy.pragma('ignore_check_constraints = ON');
     legacy.prepare("UPDATE orders_simple SET status='待确认'").run();
@@ -334,6 +352,17 @@ try {
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('audit_logs') WHERE name='actor_uid'").pluck().get(), 'v23 数据库迁移后应补齐审计 actor_uid');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v23 数据库重启后应保留订单');
     assert.equal(migrated.prepare('SELECT status FROM orders_simple LIMIT 1').pluck().get(), '已提交', 'v26 迁移应将历史订单状态归并为已提交');
+    assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('order_products') WHERE name='remark'").pluck().get(), '迁移后订单项应补齐行备注字段');
+  });
+
+  // 已在 v27 的库（上一版程序建的库）不会重跑 v27 重建，行备注只能靠幂等 ALTER 补齐。
+  await withMigratedFixture('oa-v27.db', '27', (legacy) => {
+    legacy.exec('ALTER TABLE order_products DROP COLUMN remark');
+  }, (migrated) => {
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '27');
+    assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('order_products') WHERE name='remark'").pluck().get(), 'v27 数据库重启应通过 ALTER 补齐行备注列');
+    assert.equal(migrated.prepare('SELECT COUNT(*) FROM order_products').pluck().get(), 1, '补列不应丢失订单项');
+    assert.equal(migrated.prepare('SELECT remark FROM order_products LIMIT 1').pluck().get(), '', '补列后历史行备注应为空字符串');
   });
 
   await withMigratedFixture('oa-v18.db', '18', (legacy) => {
@@ -562,7 +591,7 @@ try {
     assert.ok(result.data.data.some((item) => item.attachment_kind === 'design' && item.file_name === 'design.png'), '设计图应以 design 附件保存');
   });
 
-  console.log('Smoke test passed: public workbench, catalog import/copy, creator snapshots, order totals, independent attachments, order-linked reimbursements, reimbursement filters/state machine, voucher idempotency, aligned exports, employee management authorization, execution company management, audit and v18/v20/v21/v23 migrations.');
+  console.log('Smoke test passed: public workbench, catalog import/copy, creator snapshots, order totals, independent attachments, order-linked reimbursements, reimbursement filters/state machine, voucher idempotency, aligned exports, employee management authorization, execution company management, audit and v18/v20/v21/v23/v27 migrations.');
 } finally {
   server.kill('SIGTERM');
   await new Promise((resolve) => { server.once('exit', resolve); setTimeout(resolve, 1000); });

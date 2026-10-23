@@ -286,6 +286,7 @@ export function createOrderDesk(data: Data) {
     ["profit", "预计毛利"],
     ["product_name", "产品名称"],
     ["product_specification", "制作要求"],
+    ["product_remark", "行备注"],
     ["product_quantity", "产品数量"],
     ["product_unit", "产品单位"],
     ["product_unit_price", "产品单价"],
@@ -348,7 +349,7 @@ export function createOrderDesk(data: Data) {
     orders.filter(
       (o) =>
         (!search ||
-          `${o.code}${o.customer_name}${o.project_name}${o.service_name}${o.customer_department || ""}${o.contact || ""}${o.designer || ""}${o.created_by || ""}${o.note || ""}${(o.products || []).map((item: any) => `${item.name || ""}${item.specification || ""}`).join("")}${(o.costs || []).map((item: any) => item.name || "").join("")}`
+          `${o.code}${o.customer_name}${o.project_name}${o.service_name}${o.customer_department || ""}${o.contact || ""}${o.designer || ""}${o.created_by || ""}${o.note || ""}${(o.products || []).map((item: any) => `${item.name || ""}${item.specification || ""}${item.remark || ""}`).join("")}${(o.costs || []).map((item: any) => item.name || "").join("")}`
             .toLowerCase()
             .includes(search.toLowerCase())) &&
         (!filterCustomer || o.customer_id === filterCustomer) &&
@@ -611,10 +612,10 @@ export function createOrderDesk(data: Data) {
       }
     }
 
-    // 填写人直接取 Catsco 登录用户名，不再允许在浏览器中自行设置。
-    const catscoUsername = data.identity?.username || (data.visitor.status === "authenticated" ? data.visitor.username : "");
-    creatorName = catscoUsername;
-    createdBy = catscoUsername;
+    // 填写人优先使用员工档案里设置的姓名（display_name），无档案时才回退到 Catsco 登录用户名。
+    const identityName = data.identity?.displayName || data.identity?.username || (data.visitor.status === "authenticated" ? data.visitor.username : "");
+    creatorName = identityName;
+    createdBy = identityName;
     // 工作权限由服务端核验的身份决定，不再由浏览器工作模式或用户手动切换。
     workMode = hasAnyRole(data.identity, reimbursementActionRoles) ? "finance" : "entry";
     let restoringHistory = false;
@@ -1475,11 +1476,11 @@ export function createOrderDesk(data: Data) {
       return { ...base, vendor: cost.vendor || "", cost_unit: cost.unit_price ?? cost.cost_unit ?? base.cost_unit, cost_catalog_id: cost.catalog_id };
     });
     for (const cost of pending) {
-      merged.push({ name: cost.name, unit: cost.unit || "项", quantity: cost.quantity ?? 1, unit_price: 0, cost_unit: cost.unit_price ?? cost.cost_unit ?? 0, vendor: cost.vendor || "", specification: "", cost_catalog_id: cost.catalog_id });
+      merged.push({ name: cost.name, unit: cost.unit || "项", quantity: cost.quantity ?? 1, unit_price: 0, cost_unit: cost.unit_price ?? cost.cost_unit ?? 0, vendor: cost.vendor || "", specification: "", remark: "", cost_catalog_id: cost.catalog_id });
     }
     return merged;
   }
-  function addProduct() { products = [...products, { name: "", quantity: 1, unit: "项", unit_price: 0, cost_unit: 0, vendor: "", subtotal: 0, specification: "" }]; orderFormDirty = true; }
+  function addProduct() { products = [...products, { name: "", quantity: 1, unit: "项", unit_price: 0, cost_unit: 0, vendor: "", subtotal: 0, specification: "", remark: "" }]; orderFormDirty = true; }
   function removeProduct(index: number) { products = products.filter((_, i) => i !== index); orderFormDirty = true; }
   function updateProduct(index: number, key: string, value: unknown) {
     const product = products[index];
@@ -1577,7 +1578,7 @@ export function createOrderDesk(data: Data) {
     createdBy = creatorName;
     note = "";
     noteFiles = [];
-    products = [{ name: "", quantity: 1, unit: "项", unit_price: 0, cost_unit: 0, vendor: "", subtotal: 0, specification: "" }];
+    products = [{ name: "", quantity: 1, unit: "项", unit_price: 0, cost_unit: 0, vendor: "", subtotal: 0, specification: "", remark: "" }];
     view = "entry";
     orderFormDirty = false;
   }
@@ -1723,6 +1724,7 @@ export function createOrderDesk(data: Data) {
         created_by: order.created_by, status: order.status, note: order.note, reimbursement_status: order.reimbursement_status,
         product_name: product?.name ?? productsForText.map((item: any) => item.name).join("、"),
         product_specification: product?.specification ?? productsForText.map((item: any) => item.specification).filter(Boolean).join("；"),
+        product_remark: product?.remark ?? productsForText.map((item: any) => item.remark).filter(Boolean).join("；"),
         product_quantity: product?.quantity ?? productsForText.map((item: any) => item.quantity).join("、"),
         product_unit: product?.unit ?? productsForText.map((item: any) => item.unit).join("、"),
         product_unit_price: product?.unit_price ?? productsForText.map((item: any) => item.unit_price).join("、"),
@@ -1736,7 +1738,8 @@ export function createOrderDesk(data: Data) {
       for (const order of selectedOrders) for (const product of order.products || []) lines.push([
         product.category || "其他", product.name, product.specification || "", product.unit || "项", product.quantity,
         product.unit_price, Number(product.quantity || 0) * Number(product.unit_price || 0), order.code,
-        exportRemarkOrder ? (order.note ? `${order.note}（${order.code}）` : order.code) : (order.note || ""),
+        // 行备注优先，未填时回退到订单备注，和历史导出口径一致。
+        product.remark || (exportRemarkOrder ? (order.note ? `${order.note}（${order.code}）` : order.code) : (order.note || "")),
       ].map(clean));
       if (exportTotal) lines.push(["合计", "", "", "", "", "", selectedOrders.reduce((sum, order) => sum + Number(order.quote_amount || 0) / 100, 0), "", ""].map(clean));
       if (exportSign) lines.push(["甲方（盖章）", "", "", "乙方（盖章）", "", "", "", "", ""]);

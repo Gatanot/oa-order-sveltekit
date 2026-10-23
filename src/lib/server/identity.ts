@@ -87,6 +87,12 @@ export function listActiveEmployees(): Pick<Employee, 'catsco_uid' | 'display_na
   return getOrderDb().prepare("SELECT catsco_uid,display_name,department,role FROM employees WHERE active=1 ORDER BY department,display_name").all() as Pick<Employee, 'catsco_uid' | 'display_name' | 'department' | 'role'>[];
 }
 
+/** 按 UID 读取员工档案姓名，订单展示与写入统一使用该姓名而非登录用户名。 */
+export function getEmployeeDisplayName(uid: number): string | null {
+  const row = getOrderDb().prepare('SELECT display_name FROM employees WHERE catsco_uid=?').get(uid) as { display_name: string } | undefined;
+  return row?.display_name?.trim() || null;
+}
+
 export function listEmployees(): Employee[] {
   return getOrderDb().prepare('SELECT catsco_uid,username,display_name,department,role,active FROM employees ORDER BY active,department,display_name').all() as Employee[];
 }

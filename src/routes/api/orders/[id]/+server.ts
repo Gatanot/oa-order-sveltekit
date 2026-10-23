@@ -1,5 +1,5 @@
 import { action, body } from '$lib/server/http';
-import { hasAnyRole, orderManageRoles } from '$lib/server/identity';
+import { hasAnyRole, orderManageRoles, getEmployeeDisplayName } from '$lib/server/identity';
 import { addAuditLog, deleteOrder, getOrderAccessInfo, resolveOrderEmployeeUid, setOrderEmployees, updateOrder } from '$lib/server/order-db';
 import type { RequestHandler } from './$types';
 
@@ -19,6 +19,9 @@ export const PATCH: RequestHandler = async (event) => {
     // 在写订单前先校验员工 UID，避免订单已提交后 setOrderEmployees 再抛错导致部分写入。
     const designerUid = resolveOrderEmployeeUid(data.designer_uid, 'designer');
     const plannerUid = resolveOrderEmployeeUid(data.planner_uid, 'planner');
+    // 指派姓名统一取员工档案里的 display_name，避免把用户名写进订单。
+    if (designerUid) data.designer = getEmployeeDisplayName(designerUid) || data.designer;
+    if (plannerUid) data.planner = getEmployeeDisplayName(plannerUid) || data.planner;
     data.created_by = existing.created_by;
     const updated = updateOrder(event.params.id, data);
     setOrderEmployees(event.params.id, existing.created_by_uid as number, designerUid, plannerUid);

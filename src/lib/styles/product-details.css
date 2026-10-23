@@ -95,6 +95,21 @@
   padding: 8px 9px;
   font-size: 11px;
 }
+
+/* 每行产品有两段自由文本：制作要求（对客展示/带进报价库口径）与行备注（仅内部留痕）。 */
+.product-note-fields {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.product-note-fields > textarea {
+  /* 覆盖 legacy.css 里 .editor-row textarea 的整行铺满，改由外层两列栅格排布。 */
+  grid-column: auto;
+  min-width: 0;
+}
+
 .row-index {
   display: inline-flex;
   flex: 0 0 auto;
@@ -116,7 +131,8 @@
 }
 @media (max-width: 700px) {
   .repeat-row.editor-row,
-  .repeat-header-fields {
+  .repeat-header-fields,
+  .product-note-fields {
     grid-template-columns: 1fr;
   }
 }
