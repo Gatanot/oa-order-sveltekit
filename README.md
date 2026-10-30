@@ -67,15 +67,23 @@ Smoke 测试覆盖无登录访问、资料库导入/沿用、项目和订单写�
 | `/reimbursements/review` | 报销审核队列，财务/老板/管理人员/管理员可见，审核者不能处理本人报销 |
 | `/catalog` | 报价库与成本库，可查看该页面的身份（管理员/管理人员/老板/执行）均可新增、导入和维护 |
 
-## AI 接口试用
+## 本机代录工具
 
-- `GET /api/ai/me`：获取当前服务 Agent 信息（不是浏览器登录员工），需 `X-OA-Agent-Key`。
-- `GET /api/ai/catalog`：获取报价/成本库工具定义及 JSON Schema。
-- `POST /api/ai/catalog`：执行资料库查询、条目搜索、新建来源、批量新增/更新；写入默认只预览，显式 `dry_run: false` 才提交。
-- `GET/POST /api/ai/orders`：订单搜索、详情、参考数据、单笔/批量代录、带版本校验的局部修改与重新归属。Agent 可逐单提供 `created_by_uid`、设计/策划人员等信息；不开放删除和结款，见 [订单工具说明](docs/ai-order-tools.md)。
-- 云端服务适配器：`src/lib/server/catsco-oa-tools.js`，使用固定 `appBaseUrl` 和运行环境中的服务 `apiKey`；不再接收 `currentUserRequest`，不读取员工浏览器信息。CLI：`node scripts/ai-catalog-tool.mjs me|tools|call`。
+v3 取消服务密钥与 Agent 身份配置，改为独立的本机入口。普通网页的 Artifact 登录、员工权限和审计保持原规则；网页 `/api/ai/*` 返回410，不开放或转发本机能力。
 
-v2 已改为管理员授权的共享服务 Agent 模式，**AI 接口不再使用员工身份分发**。管理员配置 `OA_AI_SERVICE_KEY`（至少32字符）和稳定的 `OA_AI_SERVICE_ID`，工具执行器自动带 `X-OA-Agent-Key`。未配置默认关闭，浏览器 Cookie 不作为 AI 接口认证。服务执行者与订单归属员工分别审计；普通网页的 Artifact 登录和权限不变。批量 Excel 由云端 Agent 解析并调用结构化批量接口，本期不直接上传 Excel。外层 Artifact 网关仍需允许云端机器访问并透传服务头，不能假设绕过网关登录。配置与注意事项见 [AI 服务接入说明](docs/ai-catalog-tools.md)。
+```bash
+npm run build:local
+DATABASE_PATH=/绝对路径/oa.db npm run start:local
+```
+
+仅监听 `127.0.0.1:3101`，应与网页使用同一数据库。不要发布或反向代理这个端口；同一网络命名空间的本机进程都可以使用，无密钥、Cookie或员工登录要求。
+
+- 本机 `GET /api/ai/me`：返回入口能力，不返回Agent身份。
+- 本机 `GET/POST /api/ai/catalog`：资料库查询、搜索、新建、批量录入更新。
+- 本机 `GET/POST /api/ai/orders`：全量订单搜索、详情、参考数据、单笔/批量代录、局部修改与重新归属。调用方填写员工 `created_by_uid` 及其它业务数据，不自动添加Agent痕迹。写入默认预览，不开放删除或结款。
+- 适配器 `src/lib/server/catsco-oa-tools.js` 默认连接本机，无apiKey/context配置。CLI：`node scripts/ai-catalog-tool.mjs me|tools|call`。
+
+Excel由同机程序解析后调用结构化批量接口；新增审计不写Agent标识，未知提交者留空，不冒充已验证员工。详见 [本机入口说明](docs/ai-catalog-tools.md) 和 [订单代录说明](docs/ai-order-tools.md)。
 
 ## 数据与备份
 

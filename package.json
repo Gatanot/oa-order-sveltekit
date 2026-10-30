@@ -13,10 +13,12 @@
     "dev": "vite dev",
     "prebuild": "node scripts/sync-pdfjs-assets.mjs",
     "build": "vite build",
+    "build:local": "vite build --config vite.local.config.ts",
+    "start:local": "node build-local/server.js",
     "preview": "vite preview",
     "start": "node build",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-    "test": "npm run check && npm run build && npm run test:smoke && npm run test:ai",
+    "test": "npm run check && npm run build && npm run build:local && npm run test:smoke && npm run test:ai",
     "test:smoke": "node scripts/smoke-test.mjs",
     "test:ai": "node --test scripts/ai-tool-host-test.mjs && node scripts/ai-current-user-test.mjs && node scripts/ai-orders-test.mjs",
     "seed:preview": "node scripts/seed-preview.mjs"

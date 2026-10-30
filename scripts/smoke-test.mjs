@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -11,13 +12,16 @@ const directory = mkdtempSync(join(tmpdir(), 'oa-order-test-'));
 const databasePath = join(directory, 'oa.db');
 const port = 4300 + Math.floor(Math.random() * 500);
 const origin = `http://127.0.0.1:${port}`;
-// 固定的虚构服务 Agent 凭据：仅用于 smoke test，不对应任何真实密钥。
-const AI_SERVICE_KEY = 'smoke-ai-service-key-0123456789abcdef0123456789abcdef';
-const AI_SERVICE_ID = 'smoke-agent';
-const server = spawn(process.execPath, ['build'], { env: { ...process.env, DATABASE_PATH: databasePath, NODE_ENV: 'test', OA_TEST_AUTH_BYPASS: '1', OA_AI_SERVICE_KEY: AI_SERVICE_KEY, OA_AI_SERVICE_ID: AI_SERVICE_ID, PORT: String(port), ORIGIN: origin }, stdio: ['ignore', 'pipe', 'pipe'] });
+// 独立本机入口与网页服务共用同一测试数据库，但使用独立端口和独立进程。
+const localPort = 6300 + Math.floor(Math.random() * 500);
+const localOrigin = `http://127.0.0.1:${localPort}`;
+const localEntryPath = join(process.cwd(), 'build-local', 'server.js');
+const server = spawn(process.execPath, ['build'], { env: { ...process.env, DATABASE_PATH: databasePath, NODE_ENV: 'test', OA_TEST_AUTH_BYPASS: '1', PORT: String(port), ORIGIN: origin }, stdio: ['ignore', 'pipe', 'pipe'] });
 let logs = '';
 server.stdout.on('data', (chunk) => { logs += chunk; });
 server.stderr.on('data', (chunk) => { logs += chunk; });
+let localServer = null;
+let localLogs = '';
 let fixturePortOffset = 0;
 
 async function waitForServer(targetOrigin = origin, readLogs = () => logs, child = server, probePath = '/orders', readyStatuses = null) {
@@ -35,10 +39,57 @@ async function waitForServer(targetOrigin = origin, readLogs = () => logs, child
   throw new Error(`服务器启动超时\n${readLogs()}`);
 }
 
+/** 原生 node:http 请求：本机入口会拒绝带浏览器 Fetch metadata 的请求，不能使用 fetch。 */
+function rawHttp(base, path, { method = 'GET', headers = {}, body } = {}) {
+  const url = new URL(path, base);
+  return new Promise((resolve, reject) => {
+    const req = httpRequest({
+      protocol: url.protocol,
+      hostname: url.hostname,
+      port: url.port,
+      path: `${url.pathname}${url.search}`,
+      method,
+      headers
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => resolve({
+        status: res.statusCode || 0,
+        headers: res.headers,
+        body: Buffer.concat(chunks)
+      }));
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    if (body !== undefined) req.write(body);
+    req.end();
+  });
+}
+
+/**
+ * request helper：/api/ai/* 一律分流到独立本机入口（raw HTTP，不自动带密钥）；
+ * 其余网页/业务接口仍走网页服务的 fetch。
+ */
 async function request(path, { json, ...options } = {}) {
+  if (path.startsWith('/api/ai/')) {
+    const headers = { ...(options.headers || {}) };
+    let body = options.body;
+    if (json !== undefined) {
+      headers['content-type'] = 'application/json';
+      body = Buffer.from(JSON.stringify(json));
+    }
+    if (Buffer.isBuffer(body)) headers['content-length'] = String(body.byteLength);
+    const raw = await rawHttp(localOrigin, path, { method: options.method || 'GET', headers, body });
+    const text = raw.body.toString('utf8');
+    const contentType = String(raw.headers['content-type'] || '');
+    const response = {
+      status: raw.status,
+      headers: { get: (name) => raw.headers[String(name).toLowerCase()] ?? null }
+    };
+    const data = contentType.includes('json') && text ? JSON.parse(text) : raw.body;
+    return { response, data };
+  }
   const headers = new Headers(options.headers);
-  // AI 路由只接受服务 Agent 密钥；业务接口不带该请求头。
-  if (path.startsWith('/api/ai/') && !headers.has('x-oa-agent-key')) headers.set('x-oa-agent-key', AI_SERVICE_KEY);
   if (json !== undefined) headers.set('content-type', 'application/json');
   if (options.body instanceof FormData) headers.set('origin', origin);
   const response = await fetch(`${origin}${path}`, { ...options, headers, body: json === undefined ? options.body : JSON.stringify(json), redirect: 'manual' });
@@ -47,7 +98,7 @@ async function request(path, { json, ...options } = {}) {
   return { response, data };
 }
 
-/** 以服务 Agent 密钥调用 AI 小工具：统一 POST /api/ai/catalog 的 {tool,arguments} 请求体。 */
+/** 以工具名调用本机代录 AI 小工具：统一 POST /api/ai/catalog 的 {tool,arguments} 请求体。 */
 async function aiCall(tool, args) {
   return request('/api/ai/catalog', { method: 'POST', json: { tool, arguments: args } });
 }
@@ -100,13 +151,25 @@ function readDb(assertions) {
 
 async function requestOn(base, path, { json, ...options } = {}) {
   const headers = new Headers(options.headers);
-  // 刻意不注入 X-OA-Agent-Key：用于验证 AI 路由拒绝浏览器身份与无密钥请求。
+  // 刻意不注入任何 AI 密钥或身份：网页 /api/ai/* 已下线，统一应返回 410 LOCAL_ENTRY_ONLY。
   if (json !== undefined) headers.set('content-type', 'application/json');
   if (options.body instanceof FormData) headers.set('origin', base);
   const response = await fetch(`${base}${path}`, { ...options, headers, body: json === undefined ? options.body : JSON.stringify(json), redirect: 'manual' });
   const contentType = response.headers.get('content-type') || '';
   const data = contentType.includes('json') ? await response.json() : await response.arrayBuffer();
   return { response, data };
+}
+
+/** 网页 AI 路由已下线：无论网页身份如何，都必须返回 410 LOCAL_ENTRY_ONLY。 */
+function assertWebAiOffline(result, message) {
+  assert.equal(result.response.status, 410, message);
+  let body = result.data;
+  if (!body || typeof body !== 'object' || body instanceof ArrayBuffer) {
+    const text = typeof body === 'string' ? body : body instanceof ArrayBuffer ? Buffer.from(body).toString('utf8') : '';
+    try { body = JSON.parse(text); } catch { body = null; }
+  }
+  const code = body?.error?.code ?? body?.code;
+  assert.equal(code, 'LOCAL_ENTRY_ONLY', `${message}（错误码应为 LOCAL_ENTRY_ONLY）`);
 }
 
 /** 以指定员工 UID 启动一次服务，用于验证非管理员的员工管理授权。 */
@@ -125,7 +188,7 @@ async function withIdentityServer(uid, assertions, probePath = '/orders', readyS
   }
 }
 
-/** 不注入测试身份启动一次服务，用于验证未登录时 AI 接口由 hooks 直接返回 401。 */
+/** 不注入测试身份启动一次服务，用于验证未登录时 AI 网页接口统一返回 410。 */
 async function withAnonymousServer(assertions) {
   const anonymousPort = port + 1200 + fixturePortOffset++;
   const anonymousOrigin = `http://127.0.0.1:${anonymousPort}`;
@@ -133,7 +196,6 @@ async function withAnonymousServer(assertions) {
   const anonymousEnv = { ...process.env, DATABASE_PATH: databasePath, NODE_ENV: 'test', PORT: String(anonymousPort), ORIGIN: anonymousOrigin, ARTIFACT_APP_ID: '' };
   delete anonymousEnv.OA_TEST_AUTH_BYPASS;
   delete anonymousEnv.OA_TEST_UID;
-  delete anonymousEnv.OA_AI_SERVICE_KEY;
   const anonymousServer = spawn(process.execPath, ['build'], { env: anonymousEnv, stdio: ['ignore', 'pipe', 'pipe'] });
   anonymousServer.stdout.on('data', (chunk) => { anonymousLogs += chunk; });
   anonymousServer.stderr.on('data', (chunk) => { anonymousLogs += chunk; });
@@ -145,8 +207,41 @@ async function withAnonymousServer(assertions) {
   }
 }
 
+/** 等待独立本机入口就绪：用 node:http 原生请求探测（fetch 会带上被入口拒绝的 Fetch metadata）。 */
+async function waitForLocalServer() {
+  let lastStatus = '无响应';
+  for (let index = 0; index < 80; index++) {
+    if (localServer.exitCode !== null) throw new Error(`本机入口已退出（code ${localServer.exitCode}）\n${localLogs}`);
+    try {
+      const probe = await rawHttp(localOrigin, '/api/ai/me');
+      lastStatus = String(probe.status);
+      if (probe.status === 200) {
+        try {
+          if (JSON.parse(probe.body.toString('utf8'))?.data?.mode === 'local_entry') return;
+        } catch { /* 响应仍在启动中 */ }
+      }
+      if (probe.status >= 500) throw new Error(`本机入口启动失败（HTTP ${probe.status}）\n${localLogs}`);
+    } catch (reason) {
+      if (reason instanceof Error && reason.message.startsWith('本机入口')) throw reason;
+      /* 端口未就绪，重试 */
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`本机入口启动超时（最后状态：${lastStatus}）\n${localLogs}`);
+}
+
 try {
+  if (!existsSync(localEntryPath)) {
+    throw new Error('缺少 build-local/server.js，请先执行 npm run build:local');
+  }
   await waitForServer();
+  localServer = spawn(process.execPath, [localEntryPath], {
+    env: { ...process.env, DATABASE_PATH: databasePath, NODE_ENV: 'test', OA_LOCAL_PORT: String(localPort) },
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  localServer.stdout.on('data', (chunk) => { localLogs += chunk; });
+  localServer.stderr.on('data', (chunk) => { localLogs += chunk; });
+  await waitForLocalServer();
   let result = await request('/api/employees');
   assert.equal(result.response.status, 200, '固定 Catsco 管理员可管理员工');
   result = await request('/api/employees', { method: 'PATCH', json: { uid: 826, display_name: '伪造管理员', department: '', role: 'owner', active: true } });
@@ -157,11 +252,9 @@ try {
   result = await request('/admin');
   assert.equal(result.response.status, 200, '系统管理员可通过网址直接进入 admin 页面');
   assert.match(Buffer.from(result.data).toString(), /我的额外业务身份/);
-  // 浏览器测试身份旁路只影响网页/业务接口：缺少 X-OA-Agent-Key 时浏览器身份也拿不到 AI 权限。
-  const browserAiMe = await requestOn(origin, '/api/ai/me');
-  assert.equal(browserAiMe.response.status, 401, '浏览器测试身份无 Agent 密钥不能读取 AI 身份');
-  const browserAiCatalog = await requestOn(origin, '/api/ai/catalog');
-  assert.equal(browserAiCatalog.response.status, 401, '浏览器测试身份无 Agent 密钥不能获取 AI 工具清单');
+  // 网页不再挂载 AI 接口：管理员浏览器身份访问 /api/ai/* 也是 410，AI 只能走独立本机入口。
+  assertWebAiOffline(await requestOn(origin, '/api/ai/me'), '管理员浏览器身份不能通过网页读取 AI 身份');
+  assertWebAiOffline(await requestOn(origin, '/api/ai/catalog'), '管理员浏览器身份不能通过网页获取 AI 工具清单');
   result = await request('/orders');
   assert.equal(result.response.headers.get('cache-control'), 'no-store', '页面 HTML 不应缓存');
   assert.doesNotMatch(Buffer.from(result.data).toString(), /href="\/admin"|管理员入口/, '工作台导航不应出现 admin 入口');
@@ -179,15 +272,17 @@ try {
   assert.equal(result.response.status, 200, '财务身份可以导出订单');
   result = await request('/api/catalog/sources', { method: 'POST', json: { kind: 'cost', owner_name: '财务身份验证库', source_file: 'finance-check.csv' } });
   assert.equal(result.response.status, 403, '财务不能新增/导入报价成本库');
-  // AI 路由只认服务 Agent 密钥，与网页/业务身份完全分离：财务额外身份无密钥一律 401。
-  result = await requestOn(origin, '/api/ai/me');
-  assert.equal(result.response.status, 401, '财务额外身份无 Agent 密钥不能读取 AI 身份');
-  const financeAiList = await requestOn(origin, '/api/ai/catalog');
-  assert.equal(financeAiList.response.status, 401, '财务额外身份无 Agent 密钥不能获取 AI 工具清单');
-  const financeAiUpsert = await requestOn(origin, '/api/ai/catalog', { method: 'POST', json: { tool: 'search_items', arguments: { kind: 'cost', q: 'AI-SMOKE' } } });
-  assert.equal(financeAiUpsert.response.status, 401, '财务额外身份无 Agent 密钥不能调用 AI 小工具');
-  const financeAiCreate = await requestOn(origin, '/api/ai/catalog', { method: 'POST', json: { tool: 'create_source', arguments: { kind: 'cost', owner_name: 'AI-SMOKE-财务越权库', dry_run: false } } });
-  assert.equal(financeAiCreate.response.status, 401, '财务额外身份无 Agent 密钥不能通过 AI 新建资料库');
+  // 网页 AI 路由已下线：财务额外身份同样只能得到 410，且不会写入任何数据。
+  assertWebAiOffline(await requestOn(origin, '/api/ai/me'), '财务额外身份不能通过网页读取 AI 身份');
+  assertWebAiOffline(await requestOn(origin, '/api/ai/catalog'), '财务额外身份不能通过网页获取 AI 工具清单');
+  assertWebAiOffline(
+    await requestOn(origin, '/api/ai/catalog', { method: 'POST', json: { tool: 'search_items', arguments: { kind: 'cost', q: 'AI-SMOKE' } } }),
+    '财务额外身份不能通过网页调用 AI 小工具'
+  );
+  assertWebAiOffline(
+    await requestOn(origin, '/api/ai/catalog', { method: 'POST', json: { tool: 'create_source', arguments: { kind: 'cost', owner_name: 'AI-SMOKE-财务越权库', dry_run: false } } }),
+    '财务额外身份不能通过网页新建资料库'
+  );
   assert.equal(readDb((db) => db.prepare("SELECT COUNT(*) FROM catalog_sources WHERE owner_name='AI-SMOKE-财务越权库'").pluck().get()), 0, '被拒绝的 AI 调用不应写入资料库');
   const clearExtraIdentity = new FormData();
   result = await request('/admin?/clearExtraIdentity', { method: 'POST', body: clearExtraIdentity });
@@ -470,14 +565,15 @@ try {
     assert.deepEqual(migrated.prepare('PRAGMA foreign_key_check').all(), []);
   });
 
-  // AI 小工具：服务 Agent 身份/工具清单、默认预览不写库、金额元口径、重复与跨库防护、校验错误与原子性。
+  // AI 小工具：本机入口身份/工具清单、默认预览不写库、金额元口径、重复与跨库防护、校验错误与原子性。
   // 所有测试数据均使用 "AI-SMOKE-" 前缀，避免影响其他断言。
   result = await request('/api/ai/me');
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
-  assert.equal(result.data.data.kind, 'service_agent', 'AI 身份接口应返回服务 Agent');
-  assert.equal(result.data.data.agent_id, 'smoke-agent', 'AI 身份接口应返回配置的服务 Agent ID');
-  assert.ok(result.data.data.display_name, 'AI 身份接口应返回展示名称');
-  assert.equal(result.data.data.uid, undefined, 'AI 身份不再绑定浏览器登录 UID');
+  assert.equal(result.data.data.mode, 'local_entry', 'AI 身份接口应返回本机入口模式');
+  assert.equal(result.data.data.kind, undefined, '本机入口不再返回服务 Agent 类型');
+  assert.equal(result.data.data.agent_id, undefined, '本机入口不返回 Agent ID');
+  assert.equal(result.data.data.display_name, undefined, '本机入口不返回展示名称');
+  assert.equal(result.data.data.uid, undefined, '本机入口不绑定浏览器登录 UID');
   assert.equal(result.data.data.username, undefined, 'AI 身份不再返回浏览器用户名');
   assert.equal(result.data.data.role, undefined, 'AI 身份不再返回员工角色');
   assert.equal(result.data.data.active, undefined, 'AI 身份不再返回员工启用状态');
@@ -787,28 +883,33 @@ try {
     assert.ok(result.data.data.some((item) => item.attachment_kind === 'design' && item.file_name === 'design.png'), '设计图应以 design 附件保存');
   });
 
-  // AI 小工具鉴权：无 Agent 密钥时，待开通浏览器身份与未登录请求同样只能得到 401。
+  // 网页 AI 路由已下线：待开通浏览器身份也只能得到 410。
   await withIdentityServer(1099, async (base) => {
-    let result = await requestOn(base, '/api/ai/me');
-    assert.equal(result.response.status, 401, '待开通身份无 Agent 密钥不能读取 AI 身份信息');
-    result = await requestOn(base, '/api/ai/catalog');
-    assert.equal(result.response.status, 401, '待开通身份无 Agent 密钥不能获取 AI 工具清单');
-    result = await requestOn(base, '/api/ai/catalog', { method: 'POST', json: { tool: 'search_items', arguments: { kind: 'cost', q: 'AI-SMOKE' } } });
-    assert.equal(result.response.status, 401, '待开通身份无 Agent 密钥不能调用 AI 小工具');
+    assertWebAiOffline(await requestOn(base, '/api/ai/me'), '待开通身份不能通过网页读取 AI 身份信息');
+    assertWebAiOffline(await requestOn(base, '/api/ai/catalog'), '待开通身份不能通过网页获取 AI 工具清单');
+    assertWebAiOffline(
+      await requestOn(base, '/api/ai/catalog', { method: 'POST', json: { tool: 'search_items', arguments: { kind: 'cost', q: 'AI-SMOKE' } } }),
+      '待开通身份不能通过网页调用 AI 小工具'
+    );
   }, '/api/employees', [403]);
 
   await withAnonymousServer(async (base) => {
-    let result = await requestOn(base, '/api/ai/me');
-    assert.equal(result.response.status, 401, '未登录且无 Agent 密钥不能读取 AI 身份信息');
-    result = await requestOn(base, '/api/ai/catalog');
-    assert.equal(result.response.status, 401, '未登录且无 Agent 密钥不能获取 AI 工具清单');
-    result = await requestOn(base, '/api/ai/catalog', { method: 'POST', json: { tool: 'create_source', arguments: { kind: 'cost', owner_name: 'AI-SMOKE-未登录库' } } });
-    assert.equal(result.response.status, 401, '未登录且无 Agent 密钥不能调用 AI 小工具');
+    assertWebAiOffline(await requestOn(base, '/api/ai/me'), '未登录不能通过网页读取 AI 身份信息');
+    assertWebAiOffline(await requestOn(base, '/api/ai/catalog'), '未登录不能通过网页获取 AI 工具清单');
+    assertWebAiOffline(
+      await requestOn(base, '/api/ai/catalog', { method: 'POST', json: { tool: 'create_source', arguments: { kind: 'cost', owner_name: 'AI-SMOKE-未登录库' } } }),
+      '未登录不能通过网页调用 AI 小工具'
+    );
   });
 
-  console.log('Smoke test passed: public workbench, catalog import/copy, creator snapshots, order totals, independent attachments, order-linked reimbursements, reimbursement filters/state machine, voucher idempotency, aligned exports, employee management authorization, execution company management, AI service-key auth and catalog tools preview/money/conflict handling, audit and v18/v20/v21/v23/v27 migrations.');
+  console.log('Smoke test passed: public workbench, catalog import/copy, creator snapshots, order totals, independent attachments, order-linked reimbursements, reimbursement filters/state machine, voucher idempotency, aligned exports, employee management authorization, execution company management, local entry identity and catalog tools preview/money/conflict handling, failure-closed web AI routes, audit and v18/v20/v21/v23/v27 migrations.');
 } finally {
   server.kill('SIGTERM');
+  if (localServer) localServer.kill('SIGTERM');
   await new Promise((resolve) => { server.once('exit', resolve); setTimeout(resolve, 1000); });
+  if (localServer) {
+    const child = localServer;
+    if (child.exitCode === null) await new Promise((resolve) => { child.once('exit', resolve); setTimeout(resolve, 2000); });
+  }
   rmSync(directory, { recursive: true, force: true });
 }

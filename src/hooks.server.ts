@@ -4,7 +4,6 @@ import { json, type Handle, type HandleServerError } from '@sveltejs/kit';
 import { getArtifactVisitor } from '$lib/server/artifact-visitor';
 import { ADMIN_UID, getAdminExtraIdentity, orderExportRoles, reimbursementActionRoles, resolveActingIdentity, resolveIdentity, hasAnyRole } from '$lib/server/identity';
 import type { CurrentIdentity } from '$lib/server/identity';
-import { resolveAiServiceIdentity } from '$lib/server/ai-service';
 
 // 仅供 smoke test 使用：在测试环境下可指定一个固定的 Catsco UID，以便验证非管理员员工的权限。
 function testBypassIdentity(): CurrentIdentity | null {
@@ -19,7 +18,6 @@ function testBypassIdentity(): CurrentIdentity | null {
 }
 
 export const handle: Handle = async ({ event, resolve }) => {
-  event.locals.getAiIdentity = async () => resolveAiServiceIdentity(event.request);
   const useTestIdentity = env.OA_TEST_AUTH_BYPASS === '1' && (dev || process.env.NODE_ENV === 'test');
   let visitor: ReturnType<typeof getArtifactVisitor> | undefined;
   event.locals.getArtifactVisitor = () => {
@@ -55,16 +53,16 @@ export const handle: Handle = async ({ event, resolve }) => {
   };
 
   const routeId = event.route.id || '';
+  // 本机代录只在独立 loopback 进程提供。网页即使由本机代理转发，也不能进入代录通道。
+  // 不依赖 remoteAddress 或 X-Forwarded-* 判断，以免 Artifact 连接器的本机来源造成误放行。
+  if (event.url.pathname === '/api/ai' || event.url.pathname.startsWith('/api/ai/')) {
+    return json({ error: { code: 'LOCAL_ENTRY_ONLY', message: '此入口已移至独立本机代录服务，网页不提供代录通道' } }, { status: 410, headers: { 'Cache-Control': 'no-store' } });
+  }
   if (routeId.startsWith('/api/') && routeId !== '/api/whoami') {
-    const isAiRequest = routeId.startsWith('/api/ai/');
-    const current = isAiRequest ? await event.locals.getAiIdentity() : await event.locals.getCurrentIdentity();
-    const authHeaders = isAiRequest ? { 'Cache-Control': 'no-store' } : undefined;
-    if (!current) return json({ error: {
-      code: isAiRequest ? 'AGENT_AUTH_REQUIRED' : 'UNAUTHORIZED',
-      message: isAiRequest ? '服务 Agent 未获授权，请联系管理员配置接入；不需要员工浏览器登录态' : '请通过 Catsco 登录'
-    } }, { status: 401, headers: authHeaders });
+    const current = await event.locals.getCurrentIdentity();
+    if (!current) return json({ error: { code: 'UNAUTHORIZED', message: '请通过 Catsco 登录' } }, { status: 401 });
     if (current.role !== 'admin' && (!current.active || current.role === 'pending')) {
-      return json({ error: { code: 'FORBIDDEN', message: '账户待管理员开通或已停用' } }, { status: 403, headers: authHeaders });
+      return json({ error: { code: 'FORBIDDEN', message: '账户待管理员开通或已停用' } }, { status: 403 });
     }
     const method = event.request.method;
     const isOrderExport = routeId === '/api/orders/export' && !hasAnyRole(current, orderExportRoles);

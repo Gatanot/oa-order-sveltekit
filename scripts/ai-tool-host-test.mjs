@@ -1,63 +1,52 @@
 /**
- * Host-adapter contract tests for createCatscoOaTools (service Agent mode).
+ * Host-adapter contract tests for createCatscoOaTools (local entry, no key).
  *
- * The adapter is configured only from server-side config: a fixed appBaseUrl plus a
- * service Agent apiKey. Every test uses an in-memory mock fetch; there is no real OA
- * service, no browser session, no cookies and no network access.
+ * Every test uses an in-memory mock fetch; there is no real OA service, no browser
+ * session, no cookies, no API key and no network access.
  *
  * Run with: node --test scripts/ai-tool-host-test.mjs
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 
 import { createCatscoOaTools, OaToolHostError } from '../src/lib/server/catsco-oa-tools.js';
 
-const APP_BASE = 'https://oa.example.test/app42/';
-const AGENT_KEY = 'svc-agent-key-0123456789abcdef0123456789abcdef';
-const OTHER_KEY = 'another-agent-key-fedcba9876543210fedcba9876543210';
-const AGENT_AUTH_MESSAGE = 'OA 服务接入未通过验证：服务 Agent 密钥缺失、无效或已停用。请联系管理员配置服务接入，无需用户登录浏览器。';
+const LOCAL_BASE = 'http://127.0.0.1:43107/';
+const DEFAULT_BASE = 'http://127.0.0.1:3101/';
+const SECRET = 'SUPER-SECRET-DO-NOT-LEAK';
 
-const adminIdentity = Object.freeze({
-  kind: 'service_agent',
-  agent_id: 'agent-oa-orders',
-  display_name: 'OA 订单服务 Agent',
+/** /me payload deliberately carries extra identity/config fields that must be dropped. */
+const entryIdentity = Object.freeze({
+  mode: 'local_entry',
   permissions: {
     catalog: { read: true, manage: true },
     orders: { read: true, create: true }
-  }
+  },
+  agent_id: SECRET,
+  kind: 'service_agent',
+  display_name: SECRET,
+  apiKey: SECRET,
+  config: { token: SECRET }
 });
 
 const ordersOnlyIdentity = Object.freeze({
-  kind: 'service_agent',
-  agent_id: 'agent-oa-orders-readonly',
-  display_name: 'OA 订单只读 Agent',
-  permissions: {
-    orders: { read: true, create: true }
-  }
+  mode: 'local_entry',
+  permissions: { orders: { read: true, create: true } }
 });
 
 const ordersNoCreateIdentity = Object.freeze({
-  kind: 'service_agent',
-  agent_id: 'agent-oa-orders-viewer',
-  display_name: 'OA 订单查看 Agent',
-  permissions: {
-    orders: { read: true, create: false }
-  }
+  mode: 'local_entry',
+  permissions: { orders: { read: true, create: false } }
 });
 
 const catalogOnlyIdentity = Object.freeze({
-  kind: 'service_agent',
-  agent_id: 'agent-oa-catalog',
-  display_name: 'OA 资料库 Agent',
-  permissions: {
-    catalog: { read: true, manage: true }
-  }
+  mode: 'local_entry',
+  permissions: { catalog: { read: true, manage: true } }
 });
 
 const noPermissionIdentity = Object.freeze({
-  kind: 'service_agent',
-  agent_id: 'agent-oa-empty',
-  display_name: 'OA 空权限 Agent',
+  mode: 'local_entry',
   permissions: {}
 });
 
@@ -89,17 +78,9 @@ const catalogManifest = Object.freeze({
       description: '写入资料库条目',
       inputSchema: { type: 'object', properties: { source_id: { type: 'string' }, items: { type: 'array' } }, additionalProperties: false }
     },
-    // Must be filtered out: not part of the host's allow-list.
-    {
-      name: 'delete_everything',
-      description: '危险且未授权的工具',
-      inputSchema: { type: 'object', properties: { cookie: { type: 'string' } } }
-    },
-    {
-      name: '../../api/ai/me',
-      description: '路径注入工具',
-      inputSchema: { type: 'object', properties: {} }
-    }
+    // Must be filtered out: not part of the host allow-list.
+    { name: 'delete_everything', description: '危险工具', inputSchema: { type: 'object', properties: { cookie: { type: 'string' } } } },
+    { name: '../../api/ai/me', description: '路径注入', inputSchema: { type: 'object', properties: {} } }
   ]
 });
 
@@ -112,10 +93,23 @@ const ordersManifest = Object.freeze({
       description: '搜索订单',
       inputSchema: {
         type: 'object',
-        properties: { query: { type: 'string' }, dry_run: { type: 'boolean' } },
-        required: ['query'],
+        // Credential-looking properties and tool-level context must be stripped.
+        properties: {
+          query: { type: 'string' },
+          dry_run: { type: 'boolean' },
+          created_by_uid: { type: 'integer' },
+          cookie: { type: 'string' },
+          authorization: { type: 'string' },
+          apiKey: { type: 'string' },
+          access_token: { type: 'string' },
+          session: { type: 'string' },
+          agent_id: { type: 'string' },
+          'x-oa-agent-key': { type: 'string' }
+        },
+        required: ['query', 'cookie', 'apiKey'],
         additionalProperties: false
-      }
+      },
+      context: { cookie: SECRET }
     },
     {
       name: 'get_order',
@@ -154,7 +148,6 @@ const ordersManifest = Object.freeze({
         type: 'object',
         properties: {
           orders: { type: 'array' },
-          // 代录归属，不是认证字段：服务 Agent 代表某位员工录单时使用的业务归属。
           created_by_uid: { type: 'integer' },
           created_by_name: { type: 'string' },
           dry_run: { type: 'boolean' }
@@ -163,10 +156,10 @@ const ordersManifest = Object.freeze({
         additionalProperties: false
       }
     },
-    // Must be filtered out: unknown names, path injection, double prefixing.
-    { name: 'delete_everything', description: '危险且未授权的订单工具', inputSchema: { type: 'object', properties: {} } },
-    { name: '../../api/ai/me', description: '订单路径注入工具', inputSchema: { type: 'object', properties: {} } },
-    { name: 'oa_orders_search_orders', description: '已被前缀命名的工具', inputSchema: { type: 'object', properties: {} } }
+    // Unknown, path-injection and double-prefixed names must be dropped.
+    { name: 'delete_everything', description: '危险订单工具', inputSchema: { type: 'object', properties: {} } },
+    { name: '../../api/ai/me', description: '订单路径注入', inputSchema: { type: 'object', properties: {} } },
+    { name: 'oa_orders_search_orders', description: '已被前缀命名', inputSchema: { type: 'object', properties: {} } }
   ]
 });
 
@@ -181,10 +174,9 @@ function pathOf(url) {
   return new URL(String(url)).pathname;
 }
 
-function defaultHandler(snapshot) {
-  const { url, init } = snapshot;
+function defaultHandler({ url, init }) {
   const pathname = pathOf(url);
-  if (pathname.endsWith('/api/ai/me')) return jsonResponse({ data: adminIdentity });
+  if (pathname.endsWith('/api/ai/me')) return jsonResponse({ data: entryIdentity });
   if (pathname.endsWith('/api/ai/catalog')) {
     if ((init.method ?? 'GET') === 'GET') return jsonResponse({ data: catalogManifest });
     const body = JSON.parse(init.body);
@@ -198,9 +190,7 @@ function defaultHandler(snapshot) {
   throw new Error(`unexpected mock URL: ${url}`);
 }
 
-/** Only the orders surface; catalog must never be requested. */
-function ordersHandler(snapshot) {
-  const { url, init } = snapshot;
+function ordersHandler({ url, init }) {
   const pathname = pathOf(url);
   if (pathname.endsWith('/api/ai/me')) return jsonResponse({ data: ordersOnlyIdentity });
   if (pathname.endsWith('/api/ai/orders')) {
@@ -211,9 +201,7 @@ function ordersHandler(snapshot) {
   throw new Error(`orders-only mock must not request ${url}`);
 }
 
-/** Only the catalog surface; orders must never be requested. */
-function catalogHandler(snapshot) {
-  const { url, init } = snapshot;
+function catalogHandler({ url, init }) {
   const pathname = pathOf(url);
   if (pathname.endsWith('/api/ai/me')) return jsonResponse({ data: catalogOnlyIdentity });
   if (pathname.endsWith('/api/ai/catalog')) {
@@ -224,7 +212,7 @@ function catalogHandler(snapshot) {
   throw new Error(`catalog-only mock must not request ${url}`);
 }
 
-function recordingAdapter({ handler = defaultHandler, appBaseUrl = APP_BASE, apiKey = AGENT_KEY } = {}) {
+function recordingAdapter({ handler = defaultHandler, appBaseUrl = LOCAL_BASE, config = {} } = {}) {
   const calls = [];
   const fetchImpl = async (url, init) => {
     const snapshot = {
@@ -235,19 +223,20 @@ function recordingAdapter({ handler = defaultHandler, appBaseUrl = APP_BASE, api
       body: init.body,
       redirect: init.redirect,
       cache: init.cache,
+      credentials: init.credentials,
       signal: init.signal
     };
     calls.push(snapshot);
     return handler(snapshot);
   };
-  return { adapter: createCatscoOaTools({ appBaseUrl, apiKey, fetchImpl }), calls };
+  const adapter = createCatscoOaTools({ appBaseUrl, fetchImpl, ...config });
+  return { adapter, calls };
 }
 
 function noFetchAdapter(options = {}) {
   let count = 0;
   const adapter = createCatscoOaTools({
-    appBaseUrl: APP_BASE,
-    apiKey: AGENT_KEY,
+    appBaseUrl: LOCAL_BASE,
     ...options,
     fetchImpl: async () => {
       count += 1;
@@ -268,94 +257,133 @@ async function rejectsWith(promise, code, status) {
   return caught;
 }
 
-/** 认证类字段绝不能出现在工具 schema 中；created_by_uid 是业务归属，允许保留。 */
+/** No authentication fields in tool schemas; created_by_uid is business attribution. */
 function assertNoCredentialSchemaLeak(tools) {
   const serialized = JSON.stringify(tools);
-  assert.doesNotMatch(serialized, /cookie|authorization|bearer|x-oa-agent-key|api[_-]?key|access[_-]?token|session/i);
+  assert.doesNotMatch(serialized, /cookie|authorization|bearer|api[_-]?key|access[_-]?token|session|x-oa|secret|agent_id/i);
   assert.doesNotMatch(serialized, /currentUserRequest|userContext/i);
-  assert.ok(!serialized.includes(AGENT_KEY), 'the configured apiKey must never appear in tool definitions');
+  assert.ok(!serialized.includes(SECRET), 'server identity/config extras must never appear in tool definitions');
   for (const tool of tools) {
     assert.equal(typeof tool.name, 'string');
     assert.equal(typeof tool.description, 'string');
     assert.equal(typeof tool.inputSchema, 'object');
     assert.equal(tool.inputSchema.type, 'object');
+    assert.equal(tool.inputSchema.additionalProperties, false);
     assert.ok(!('context' in tool), 'host context must never be part of the tool definition');
     assert.ok(!('currentUserRequest' in tool), 'browser request must never be part of the tool definition');
   }
 }
 
-test('rejects unsafe base URLs or invalid service keys from config without echoing the key', () => {
-  for (const appBaseUrl of [
-    'http://oa.example.test/app42/',
-    'ftp://oa.example.test/app42/',
-    'https://user:password@oa.example.test/app42/',
-    'https://oa.example.test/app42/?redirect=https://evil.test/',
-    'https://oa.example.test/app42/#fragment',
-    '',
-    undefined
+/** Only the adapter-set headers may be present: no cookie/auth/key/origin/forwarding headers. */
+function assertNoAuthHeaders(call) {
+  const names = [...call.headers.keys()].sort();
+  const expected = call.method === 'POST' ? ['accept', 'content-type'] : ['accept'];
+  assert.deepEqual(names, expected);
+  for (const name of [
+    'cookie', 'authorization', 'x-oa-agent-key', 'x-api-key',
+    'origin', 'referer', 'x-forwarded-for', 'x-forwarded-host', 'x-real-ip', 'forwarded'
   ]) {
-    assert.throws(
-      () => createCatscoOaTools({ appBaseUrl, apiKey: AGENT_KEY, fetchImpl: async () => { throw new Error('unused'); } }),
-      (error) => error instanceof OaToolHostError && error.code === 'INVALID_HOST_CONFIG' && error.status === 400,
-      `expected base URL to be rejected: ${String(appBaseUrl)}`
+    assert.equal(call.headers.get(name), null, `${name} must never be sent`);
+  }
+  assert.equal(call.credentials, 'omit');
+}
+
+test('config only accepts a loopback root URL on 127.0.0.1 with an explicit port', () => {
+  const valid = [
+    'http://127.0.0.1:3101/',
+    'http://127.0.0.1:3101',
+    'http://127.0.0.1:43107/'
+  ];
+  for (const appBaseUrl of valid) {
+    assert.doesNotThrow(
+      () => createCatscoOaTools({ appBaseUrl, fetchImpl: async () => { throw new Error('unused'); } }),
+      `expected URL to be accepted: ${appBaseUrl}`
     );
   }
 
-  // Plain HTTP is tolerated only for local development hosts.
-  for (const appBaseUrl of [
-    'http://localhost:5173/app42/',
-    'http://127.0.0.1:5173/app42/',
-    'http://[::1]:5173/app42/'
-  ]) {
-    assert.doesNotThrow(() => createCatscoOaTools({ appBaseUrl, apiKey: AGENT_KEY, fetchImpl: async () => { throw new Error('unused'); } }));
+  const invalid = [
+    // Remote or non-IPv4-loopback hosts.
+    'https://127.0.0.1:3101/',
+    'http://localhost:3101/',
+    'http://[::1]:3101/',
+    'http://0.0.0.0:3101/',
+    'http://127.0.0.2:3101/',
+    'http://192.168.1.5:3101/',
+    'http://oa.example.test/',
+    // Credentials, query, hash, subpaths and missing/invalid ports.
+    'http://user:pass@127.0.0.1:3101/',
+    'http://user@127.0.0.1:3101/',
+    'http://127.0.0.1:3101/?remote=https://evil.test/',
+    'http://127.0.0.1:3101/#fragment',
+    'http://127.0.0.1:3101/app42/',
+    'http://127.0.0.1:3101/api/ai/me',
+    'http://127.0.0.1:3101//',
+    'http://127.0.0.1:3101/api/ai/',
+    'http://127.0.0.1/',
+    'http://127.0.0.1:0/',
+    'http://127.0.0.1:70000/',
+    // Malformed input.
+    '',
+    '   ',
+    ' http://127.0.0.1:3101/',
+    'http://127.0.0.1:3101/ ',
+    'not a url',
+    null,
+    123,
+    {}
+  ];
+  for (const appBaseUrl of invalid) {
+    assert.throws(
+      () => createCatscoOaTools({ appBaseUrl, fetchImpl: async () => { throw new Error('unused'); } }),
+      (error) => error instanceof OaToolHostError
+        && error.code === 'INVALID_HOST_CONFIG'
+        && error.status === 400
+        && !String(error.stack).includes(SECRET),
+      `expected URL to be rejected: ${String(appBaseUrl)}`
+    );
   }
 
-  const longSecret = `too-short-but-recognisable-${'k'.repeat(8)}`;
-  const invalidKeys = [
-    undefined,
-    null,
-    1234567890123456789012345678901234,
-    '',
-    'short-key',
-    'x'.repeat(31),
-    `${longSecret}\n`,
-    `${'a'.repeat(16)} ${'b'.repeat(16)}`,
-    ` ${'a'.repeat(32)}`
-  ];
-  for (const apiKey of invalidKeys) {
+  // No options at all defaults to the local entry port.
+  assert.doesNotThrow(() => createCatscoOaTools());
+});
+
+test('explicit apiKey or other unsupported config is rejected without echoing the secret', () => {
+  for (const config of [
+    { apiKey: SECRET },
+    { apiKey: 'k'.repeat(32) },
+    { agentKey: SECRET },
+    { token: SECRET },
+    { headers: { authorization: SECRET } }
+  ]) {
     assert.throws(
-      () => createCatscoOaTools({ appBaseUrl: APP_BASE, apiKey, fetchImpl: async () => { throw new Error('unused'); } }),
+      () => createCatscoOaTools({ appBaseUrl: LOCAL_BASE, ...config, fetchImpl: async () => { throw new Error('unused'); } }),
       (error) => {
         assert.ok(error instanceof OaToolHostError);
         assert.equal(error.code, 'INVALID_HOST_CONFIG');
         assert.equal(error.status, 400);
-        assert.match(error.message, /服务接入密钥配置不正确/);
         const text = `${error.message}\n${error.stack ?? ''}\n${JSON.stringify(error)}`;
-        assert.ok(!text.includes('recognisable'), 'the rejected key must not be echoed');
-        assert.ok(!text.includes('kkkkkkkk'), 'the rejected key must not be echoed');
+        assert.ok(!text.includes(SECRET), 'the rejected secret must not be echoed');
+        assert.doesNotMatch(text, /apiKey|agentKey|token/);
         return true;
-      },
-      `expected apiKey to be rejected: ${String(apiKey)}`
+      }
     );
   }
-
-  // Exactly 32 non-whitespace characters is the minimum accepted length.
-  assert.doesNotThrow(() => createCatscoOaTools({
-    appBaseUrl: APP_BASE,
-    apiKey: 'k'.repeat(32),
-    fetchImpl: async () => { throw new Error('unused'); }
-  }));
+  for (const fetchImpl of [null, 'fetch', 1, {}]) {
+    assert.throws(
+      () => createCatscoOaTools({ appBaseUrl: LOCAL_BASE, fetchImpl }),
+      (error) => error instanceof OaToolHostError && error.code === 'INVALID_HOST_CONFIG'
+    );
+  }
 });
 
-test('listTools is service-Agent only: fixed URLs, X-OA-Agent-Key header, no cookie, no browser request', async () => {
+test('listTools reads local /me then manifests with fixed URLs and no auth headers', async () => {
   const { adapter, calls } = recordingAdapter();
 
   assert.equal(adapter.listTools.length, 0, 'listTools must not accept a user/browser context');
   const tools = await adapter.listTools();
 
   assert.deepEqual(tools.map((tool) => tool.name), [
-    'oa_agent_info',
-    'oa_current_user',
+    'oa_entry_info',
     'oa_catalog_list_sources',
     'oa_catalog_search_items',
     'oa_catalog_create_source',
@@ -367,64 +395,63 @@ test('listTools is service-Agent only: fixed URLs, X-OA-Agent-Key header, no coo
     'oa_orders_update_order',
     'oa_orders_batch_create_orders'
   ]);
+  // Agent identity tools must not be exposed at all.
+  assert.ok(!tools.some((tool) => tool.name === 'oa_agent_info'));
+  assert.ok(!tools.some((tool) => tool.name === 'oa_current_user'));
   assertNoCredentialSchemaLeak(tools);
-  // Unprefixed, double-prefixed and path-injection manifest entries must be dropped.
+
+  // Unprefixed, double-prefixed and path-injection manifest entries are dropped.
   assert.ok(!tools.some((tool) => tool.name === 'delete_everything'));
   assert.ok(!tools.some((tool) => tool.name.includes('/')));
   assert.ok(!tools.some((tool) => tool.name === 'oa_orders_oa_orders_search_orders'));
-  // created_by_uid is business attribution for agent-entered orders, not authentication.
+
+  const search = tools.find((tool) => tool.name === 'oa_orders_search_orders');
+  assert.deepEqual(Object.keys(search.inputSchema.properties).sort(), ['created_by_uid', 'dry_run', 'query']);
+  assert.deepEqual(search.inputSchema.required, ['query']);
+  assert.equal(search.inputSchema.properties.created_by_uid.type, 'integer');
   const batch = tools.find((tool) => tool.name === 'oa_orders_batch_create_orders');
-  assert.ok(batch.inputSchema.properties.created_by_uid, 'order schemas may carry created_by_uid attribution');
+  assert.ok(batch.inputSchema.properties.created_by_uid);
   assert.ok(batch.inputSchema.properties.created_by_name);
 
-  assert.deepEqual(calls.map((call) => [pathOf(call.url), call.method]), [
-    ['/app42/api/ai/me', 'GET'],
-    ['/app42/api/ai/catalog', 'GET'],
-    ['/app42/api/ai/orders', 'GET']
-  ]);
-  assert.deepEqual(calls.map((call) => call.url), [
-    'https://oa.example.test/app42/api/ai/me',
-    'https://oa.example.test/app42/api/ai/catalog',
-    'https://oa.example.test/app42/api/ai/orders'
+  assert.deepEqual(calls.map((call) => [call.url, call.method]), [
+    [`${LOCAL_BASE}api/ai/me`, 'GET'],
+    [`${LOCAL_BASE}api/ai/catalog`, 'GET'],
+    [`${LOCAL_BASE}api/ai/orders`, 'GET']
   ]);
   for (const call of calls) {
     assert.equal(new URL(call.url).search, '');
-    assert.equal(call.method, 'GET');
+    assert.equal(new URL(call.url).hash, '');
     assert.equal(call.body, undefined);
     assert.equal(call.redirect, 'error');
     assert.equal(call.cache, 'no-store');
     assert.ok(call.signal instanceof AbortSignal);
-    assert.equal(call.headers.get('x-oa-agent-key'), AGENT_KEY);
-    assert.equal(call.headers.get('accept'), 'application/json');
-    // The gateway must not see user credentials from a browser session.
-    assert.equal(call.headers.get('cookie'), null);
-    assert.equal(call.headers.get('authorization'), null, 'apiKey must not travel in Authorization');
-    assert.equal(call.headers.get('x-user-uid'), null);
-    assert.equal(call.headers.get('content-type'), null);
+    assertNoAuthHeaders(call);
   }
 });
 
-test('oa_agent_info and the legacy oa_current_user alias return Agent identity and accept no arguments', async () => {
+test('oa_entry_info returns only mode and permissions, never agent id, config or employee data', async () => {
   const { adapter, calls } = recordingAdapter();
 
-  for (const name of ['oa_agent_info', 'oa_current_user']) {
-    const result = await adapter.execute(name, {});
-    assert.deepEqual(result, { data: adminIdentity });
-  }
-  assert.deepEqual(calls.map((call) => [pathOf(call.url), call.method]), [
-    ['/app42/api/ai/me', 'GET'],
-    ['/app42/api/ai/me', 'GET']
-  ]);
+  const result = await adapter.execute('oa_entry_info', {});
+  assert.deepEqual(result, {
+    data: {
+      mode: 'local_entry',
+      permissions: {
+        catalog: { read: true, manage: true },
+        orders: { read: true, create: true }
+      }
+    }
+  });
+  const serialized = JSON.stringify(result);
+  assert.ok(!serialized.includes(SECRET));
+  assert.doesNotMatch(serialized, /agent|service_agent|employee|uid|display_name|kind|apiKey|token/i);
 
-  // Descriptions must make the Agent ≠ employee distinction explicit for the model.
-  const { adapter: fresh } = recordingAdapter();
-  const tools = await fresh.listTools();
-  const info = tools.find((tool) => tool.name === 'oa_agent_info');
-  assert.match(info.description, /服务 Agent/);
-  assert.match(info.description, /并非当前员工/);
-  const alias = tools.find((tool) => tool.name === 'oa_current_user');
-  assert.match(alias.description, /并非当前员工/);
-  assert.deepEqual(alias.inputSchema, { type: 'object', properties: {}, additionalProperties: false });
+  const tools = await adapter.listTools();
+  const info = tools.find((tool) => tool.name === 'oa_entry_info');
+  assert.match(info.description, /本机/);
+  assert.match(info.description, /不代表任何浏览器登录员工/);
+  assert.deepEqual(info.inputSchema, { type: 'object', properties: {}, additionalProperties: false });
+  assert.ok(!tools.some((tool) => /agent/i.test(tool.name) || /agent/i.test(tool.description)));
 
   const before = calls.length;
   for (const args of [
@@ -433,13 +460,29 @@ test('oa_agent_info and the legacy oa_current_user alias return Agent identity a
     { cookie: 'session=bob' },
     { authorization: 'Bearer bob' },
     { token: 'bob-token' },
-    { apiKey: OTHER_KEY },
+    { apiKey: SECRET },
     { currentUserRequest: { headers: { cookie: 'session=bob' } } }
   ]) {
-    const error = await rejectsWith(adapter.execute('oa_agent_info', args), 'VALIDATION_ERROR', 400);
+    const error = await rejectsWith(adapter.execute('oa_entry_info', args), 'VALIDATION_ERROR', 400);
     assert.match(error.message, /不接受任何参数/);
   }
   assert.equal(calls.length, before, 'rejected arguments must never reach OA');
+});
+
+test('an unexpected /me mode is rejected without falling back to a browser session', async () => {
+  for (const data of [
+    { kind: 'service_agent', agent_id: SECRET, permissions: { orders: { read: true } } },
+    { kind: 'employee', uid: 'u-alice', permissions: { catalog: { read: true } } },
+    { mode: 'remote', permissions: { catalog: { read: true } } },
+    null,
+    'local_entry'
+  ]) {
+    const { adapter, calls } = recordingAdapter({ handler: () => jsonResponse({ data }) });
+    const error = await rejectsWith(adapter.listTools(), 'OA_UNAVAILABLE', 503);
+    assert.ok(!error.message.includes(SECRET));
+    assert.equal(calls.length, 1, 'no retry and no second request');
+    assertNoAuthHeaders(calls[0]);
+  }
 });
 
 test('tool lists follow permissions independently: orders-only, catalog-only and no permissions', async () => {
@@ -447,8 +490,7 @@ test('tool lists follow permissions independently: orders-only, catalog-only and
     const { adapter, calls } = recordingAdapter({ handler: ordersHandler });
     const tools = await adapter.listTools();
     assert.deepEqual(tools.map((tool) => tool.name), [
-      'oa_agent_info',
-      'oa_current_user',
+      'oa_entry_info',
       'oa_orders_search_orders',
       'oa_orders_get_order',
       'oa_orders_list_references',
@@ -456,11 +498,10 @@ test('tool lists follow permissions independently: orders-only, catalog-only and
       'oa_orders_update_order',
       'oa_orders_batch_create_orders'
     ]);
-    assert.ok(tools.every((tool) => tool.name === 'oa_agent_info' || tool.name === 'oa_current_user' || tool.name.startsWith('oa_orders_')));
     assertNoCredentialSchemaLeak(tools);
     assert.deepEqual(calls.map((call) => [pathOf(call.url), call.method]), [
-      ['/app42/api/ai/me', 'GET'],
-      ['/app42/api/ai/orders', 'GET']
+      ['/api/ai/me', 'GET'],
+      ['/api/ai/orders', 'GET']
     ]);
   }
 
@@ -468,16 +509,15 @@ test('tool lists follow permissions independently: orders-only, catalog-only and
     const { adapter, calls } = recordingAdapter({ handler: catalogHandler });
     const tools = await adapter.listTools();
     assert.deepEqual(tools.map((tool) => tool.name), [
-      'oa_agent_info',
-      'oa_current_user',
+      'oa_entry_info',
       'oa_catalog_list_sources',
       'oa_catalog_search_items',
       'oa_catalog_create_source',
       'oa_catalog_upsert_items'
     ]);
     assert.deepEqual(calls.map((call) => [pathOf(call.url), call.method]), [
-      ['/app42/api/ai/me', 'GET'],
-      ['/app42/api/ai/catalog', 'GET']
+      ['/api/ai/me', 'GET'],
+      ['/api/ai/catalog', 'GET']
     ]);
   }
 
@@ -488,7 +528,7 @@ test('tool lists follow permissions independently: orders-only, catalog-only and
         : jsonResponse({ error: { code: 'FORBIDDEN', message: 'no access' } }, 403))
     });
     const tools = await adapter.listTools();
-    assert.deepEqual(tools.map((tool) => tool.name), ['oa_agent_info', 'oa_current_user']);
+    assert.deepEqual(tools.map((tool) => tool.name), ['oa_entry_info']);
     assert.equal(calls.length, 1, 'no permission means no manifest requests');
   }
 
@@ -503,8 +543,7 @@ test('tool lists follow permissions independently: orders-only, catalog-only and
     });
     const tools = await adapter.listTools();
     assert.deepEqual(tools.map((tool) => tool.name), [
-      'oa_agent_info',
-      'oa_current_user',
+      'oa_entry_info',
       'oa_orders_search_orders',
       'oa_orders_get_order',
       'oa_orders_list_references',
@@ -523,19 +562,21 @@ test('tool lists are not cached: permissions are re-read on every listTools call
     }
   });
 
-  assert.deepEqual((await adapter.listTools()).map((tool) => tool.name), ['oa_agent_info', 'oa_current_user']);
+  assert.deepEqual((await adapter.listTools()).map((tool) => tool.name), ['oa_entry_info']);
   identity = ordersOnlyIdentity;
   const later = await adapter.listTools();
   assert.ok(later.some((tool) => tool.name === 'oa_orders_batch_create_orders'));
   assert.equal(calls.filter((call) => pathOf(call.url).endsWith('/api/ai/me')).length, 2);
 });
 
-test('execute rejects unknown tools and malformed arguments before any fetch', async () => {
+test('execute rejects unknown tools, agent tools and malformed arguments before any fetch', async () => {
   const { adapter, fetchCount } = noFetchAdapter();
 
   for (const name of [
     'delete_everything',
     'oa_delete_everything',
+    'oa_agent_info',
+    'oa_current_user',
     'oa_catalog_delete_everything',
     'oa_catalog_',
     'oa_catalog_../../api/ai/me',
@@ -554,6 +595,8 @@ test('execute rejects unknown tools and malformed arguments before any fetch', a
   ]) {
     await rejectsWith(adapter.execute(name, {}), 'UNKNOWN_TOOL', 400);
   }
+  await rejectsWith(adapter.execute(undefined, {}), 'UNKNOWN_TOOL', 400);
+  await rejectsWith(adapter.execute(123, {}), 'UNKNOWN_TOOL', 400);
 
   for (const args of [undefined, null, [], 'query', 1, true]) {
     await rejectsWith(adapter.execute('oa_catalog_search_items', args), 'VALIDATION_ERROR', 400);
@@ -572,37 +615,32 @@ test('execute has no context parameter: a legacy browser/cookie context is ignor
 
   assert.equal(adapter.execute.length, 2, 'execute(name, args) must not accept a per-user context');
   const result = await adapter.execute('oa_catalog_search_items', { query: '阀门' }, legacyContext);
-  const legacyIdentity = await adapter.execute('oa_current_user', {}, legacyContext);
+  const identity = await adapter.execute('oa_entry_info', {}, legacyContext);
 
   assert.deepEqual(result, { data: { surface: 'catalog', tool: 'search_items', arguments: { query: '阀门' } } });
-  assert.deepEqual(legacyIdentity, { data: adminIdentity });
+  assert.equal(identity.data.mode, 'local_entry');
   assert.equal(calls.length, 2);
 
   const [search, me] = calls;
-  assert.equal(search.url, 'https://oa.example.test/app42/api/ai/catalog');
+  assert.equal(search.url, `${LOCAL_BASE}api/ai/catalog`);
   assert.equal(search.method, 'POST');
-  assert.equal(me.url, 'https://oa.example.test/app42/api/ai/me');
-  for (const call of calls) {
-    assert.equal(call.headers.get('x-oa-agent-key'), AGENT_KEY);
-    assert.equal(call.headers.get('cookie'), null, 'browser cookies must never be forwarded');
-    assert.equal(call.headers.get('authorization'), null, 'user Authorization must never be forwarded');
-    assert.equal(call.headers.get('x-user-uid'), null);
-  }
+  assert.equal(me.url, `${LOCAL_BASE}api/ai/me`);
+  for (const call of calls) assertNoAuthHeaders(call);
 });
 
-test('fixed URL/method/headers cannot be overridden by model arguments; args apiKey is only server-validated', async () => {
-  const { adapter, calls } = recordingAdapter({ appBaseUrl: 'https://oa.example.test/app42' });
+test('fixed URL/method/headers cannot be overridden by model arguments', async () => {
+  const { adapter, calls } = recordingAdapter();
   const modelArguments = {
     query: '阀门',
     tool: 'create_source',
     path: '/api/ai/me',
-    url: 'https://attacker.example/steal',
-    appBaseUrl: 'https://attacker.example/',
+    url: 'http://127.0.0.1:43107/api/ai/me',
+    appBaseUrl: 'http://127.0.0.1:9999/',
     endpoint: '../../api/ai/me',
     method: 'DELETE',
     redirect: 'follow',
-    headers: { cookie: 'session=attacker', 'x-oa-agent-key': OTHER_KEY },
-    apiKey: OTHER_KEY,
+    headers: { cookie: 'session=attacker', authorization: 'Bearer x' },
+    apiKey: SECRET,
     token: 'attacker-token'
   };
 
@@ -611,22 +649,20 @@ test('fixed URL/method/headers cannot be overridden by model arguments; args api
   assert.deepEqual(result, { data: { surface: 'catalog', tool: 'search_items', arguments: modelArguments } });
   assert.equal(calls.length, 1);
   const call = calls[0];
-  assert.equal(call.url, 'https://oa.example.test/app42/api/ai/catalog');
-  assert.equal(new URL(call.url).origin, 'https://oa.example.test');
+  assert.equal(call.url, `${LOCAL_BASE}api/ai/catalog`);
+  assert.equal(new URL(call.url).origin, 'http://127.0.0.1:43107');
   assert.equal(new URL(call.url).search, '');
-  assert.equal(new URL(call.url).pathname, '/app42/api/ai/catalog');
+  assert.equal(new URL(call.url).pathname, '/api/ai/catalog');
   assert.equal(call.method, 'POST');
   assert.equal(call.redirect, 'error');
   assert.equal(call.cache, 'no-store');
-  assert.equal(call.headers.get('x-oa-agent-key'), AGENT_KEY, 'only the configured service key is used');
-  assert.equal(call.headers.get('cookie'), null);
-  assert.equal(call.headers.get('authorization'), null);
+  assertNoAuthHeaders(call);
   const body = JSON.parse(call.body);
   assert.equal(body.tool, 'search_items', 'arguments cannot replace the selected tool');
   assert.deepEqual(body.arguments, modelArguments);
 });
 
-test('oa_orders_batch_create_orders maps to the fixed orders path with the configured Agent key', async () => {
+test('oa_orders_batch_create_orders maps to the fixed orders path without auth', async () => {
   const { adapter, calls } = recordingAdapter();
   const batchArguments = {
     orders: [{ customer_name: '客户 A', items: [] }],
@@ -640,77 +676,57 @@ test('oa_orders_batch_create_orders maps to the fixed orders path with the confi
   assert.deepEqual(result, { data: { surface: 'orders', tool: 'batch_create_orders', arguments: batchArguments } });
   assert.equal(calls.length, 1);
   const call = calls[0];
-  assert.equal(call.url, 'https://oa.example.test/app42/api/ai/orders');
+  assert.equal(call.url, `${LOCAL_BASE}api/ai/orders`);
   assert.equal(call.method, 'POST');
   assert.equal(call.redirect, 'error');
   assert.equal(call.cache, 'no-store');
-  assert.equal(call.headers.get('x-oa-agent-key'), AGENT_KEY);
-  assert.equal(call.headers.get('cookie'), null);
-  assert.equal(call.headers.get('authorization'), null);
+  assertNoAuthHeaders(call);
   assert.equal(call.headers.get('content-type'), 'application/json');
   assert.deepEqual(JSON.parse(call.body), { tool: 'batch_create_orders', arguments: batchArguments });
 });
 
-test('OA 401 becomes AGENT_AUTH_REQUIRED with an administrator instruction, no login prompt and no cookie fallback', async () => {
-  const secret = 'SUPER-SECRET-raw-gateway-detail';
+test('default configuration targets http://127.0.0.1:3101/ and sends no auth', async () => {
+  const calls = [];
+  const adapter = createCatscoOaTools({
+    fetchImpl: async (url, init) => {
+      calls.push({ url: String(url), init, headers: new Headers(init.headers), method: init.method, credentials: init.credentials });
+      return jsonResponse({ data: entryIdentity });
+    }
+  });
+  const result = await adapter.execute('oa_entry_info', {});
+  assert.equal(result.data.mode, 'local_entry');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${DEFAULT_BASE}api/ai/me`);
+  assert.equal(calls[0].method, 'GET');
+  assertNoAuthHeaders({ ...calls[0], headers: calls[0].headers });
+});
+
+test('401/403 become a generic 503 with no login prompt, secret or cookie fallback, and no retry', async () => {
+  for (const status of [401, 403]) {
+    const { adapter, calls } = recordingAdapter({
+      handler: () => jsonResponse({ error: { code: 'FORBIDDEN', message: SECRET }, detail: SECRET }, status)
+    });
+
+    const listError = await rejectsWith(adapter.listTools(), 'OA_UNAVAILABLE', 503);
+    const executeError = await rejectsWith(adapter.execute('oa_catalog_search_items', { query: 'x' }), 'OA_UNAVAILABLE', 503);
+
+    for (const error of [listError, executeError]) {
+      assert.equal(error.message, '本机 OA 入口未就绪或拒绝了请求，请确认本机代录服务已启动。');
+      assert.doesNotMatch(error.message, /请登录|请提供|Cookie|Token|Key|Agent|UID/i);
+      assert.ok(!error.message.includes(SECRET));
+      assert.ok(!String(error.stack).includes(SECRET));
+    }
+    // No retry and no fallback to any browser session: exactly one request per call.
+    assert.equal(calls.length, 2);
+    for (const call of calls) assertNoAuthHeaders(call);
+  }
+});
+
+test('raw fetch failures become a generic 503 without leaking URL, key or cause', async () => {
   const { adapter, calls } = recordingAdapter({
-    handler: () => new Response(JSON.stringify({ error: { code: 'UNAUTHORIZED', message: `send Cookie=${secret}` } }), {
-      status: 401,
-      headers: { 'content-type': 'application/json' }
-    })
-  });
-
-  const listError = await rejectsWith(adapter.listTools(), 'AGENT_AUTH_REQUIRED', 401);
-  const executeError = await rejectsWith(adapter.execute('oa_catalog_search_items', { query: 'x' }), 'AGENT_AUTH_REQUIRED', 401);
-
-  for (const error of [listError, executeError]) {
-    assert.equal(error.message, AGENT_AUTH_MESSAGE);
-    assert.match(error.message, /管理员配置服务接入/);
-    assert.match(error.message, /无需用户登录浏览器/);
-    assert.doesNotMatch(error.message, /请登录|请提供|请输入|请发送|Cookie|Token|UID/i);
-    assert.ok(!error.message.includes(secret));
-    assert.ok(!String(error.stack).includes(secret));
-  }
-  // No retry, no fallback to any browser session: exactly one request per call.
-  assert.equal(calls.length, 2);
-  for (const call of calls) {
-    assert.equal(call.headers.get('cookie'), null);
-    assert.equal(call.headers.get('authorization'), null);
-    assert.equal(call.headers.get('x-oa-agent-key'), AGENT_KEY);
-  }
-});
-
-test('a non service-Agent /me payload is rejected as AGENT_AUTH_REQUIRED, not treated as an employee', async () => {
-  const { adapter } = recordingAdapter({
-    handler: () => jsonResponse({
-      data: { kind: 'employee', uid: 'u-alice', name: 'Alice', permissions: { catalog: { read: true } } }
-    })
-  });
-
-  const error = await rejectsWith(adapter.listTools(), 'AGENT_AUTH_REQUIRED', 401);
-  assert.equal(error.message, AGENT_AUTH_MESSAGE);
-});
-
-test('OA 403 is a generic FORBIDDEN and the raw response details are not disclosed', async () => {
-  const secret = 'RAW-FORBIDDEN-DETAILS';
-  const { adapter } = recordingAdapter({
-    handler: () => jsonResponse({ error: { code: 'FORBIDDEN', message: secret, stack: secret }, detail: secret }, 403)
-  });
-
-  const executeError = await rejectsWith(adapter.execute('oa_catalog_create_source', { name: 'X' }), 'FORBIDDEN', 403);
-  assert.match(executeError.message, /没有该操作权限/);
-  assert.ok(!executeError.message.includes(secret));
-  assert.ok(!String(executeError.stack).includes(secret));
-
-  const listError = await rejectsWith(adapter.listTools(), 'FORBIDDEN', 403);
-  assert.ok(!listError.message.includes(secret));
-});
-
-test('raw fetch failures carrying the Agent key become a generic 503 without leaking key or cause', async () => {
-  const { adapter } = recordingAdapter({
     handler: () => {
-      throw Object.assign(new Error(`connect failed X-OA-Agent-Key: ${AGENT_KEY}`), {
-        cause: new Error(AGENT_KEY),
+      throw Object.assign(new Error(`connect failed at ${LOCAL_BASE} token=${SECRET}`), {
+        cause: new Error(SECRET),
         code: 'ECONNREFUSED'
       });
     }
@@ -718,39 +734,42 @@ test('raw fetch failures carrying the Agent key become a generic 503 without lea
 
   const error = await rejectsWith(adapter.execute('oa_catalog_search_items', { query: 'x' }), 'OA_UNAVAILABLE', 503);
 
-  assert.match(error.message, /无法连接 OA/);
+  assert.match(error.message, /无法连接本机 OA 入口/);
   assert.match(error.message, /勿盲目重复提交/);
-  assert.doesNotMatch(error.message, /ECONNREFUSED/);
+  assert.doesNotMatch(error.message, /ECONNREFUSED|127\.0\.0\.1|43107/);
   const serialized = `${error.message}\n${error.stack ?? ''}\n${JSON.stringify(error)}`;
-  assert.ok(!serialized.includes(AGENT_KEY), 'the Agent key must not leak through errors');
-  assert.ok(!serialized.includes('svc-agent-key'));
+  assert.ok(!serialized.includes(SECRET), 'the raw failure must not leak through errors');
   assert.equal(error.cause, undefined, 'the raw fetch error must not be attached as a cause');
+  assert.equal(calls.length, 1, 'fetch failures are never retried');
 });
 
 test('OA 5xx, invalid JSON and malformed payloads map to generic 503/502 without leaking bodies', async () => {
   {
-    const { adapter } = recordingAdapter({ handler: () => new Response(`database exploded X-OA-Agent-Key=${AGENT_KEY}`, { status: 500 }) });
+    const { adapter, calls } = recordingAdapter({
+      handler: () => new Response(`database exploded ${SECRET}`, { status: 500 })
+    });
     const error = await rejectsWith(adapter.execute('oa_catalog_upsert_items', { items: [] }), 'OA_UNAVAILABLE', 503);
-    assert.ok(!error.message.includes(AGENT_KEY));
+    assert.ok(!error.message.includes(SECRET));
+    assert.equal(calls.length, 1);
   }
 
   {
     const { adapter } = recordingAdapter({
-      handler: () => new Response(`not-json ${AGENT_KEY}`, { status: 200, headers: { 'content-type': 'text/plain' } })
+      handler: () => new Response(`not-json ${SECRET}`, { status: 200, headers: { 'content-type': 'text/plain' } })
     });
-    const error = await rejectsWith(adapter.execute('oa_agent_info', {}), 'INVALID_OA_RESPONSE', 502);
-    assert.ok(!error.message.includes(AGENT_KEY));
+    const error = await rejectsWith(adapter.execute('oa_entry_info', {}), 'INVALID_OA_RESPONSE', 502);
+    assert.ok(!error.message.includes(SECRET));
   }
 
   {
     const { adapter } = recordingAdapter({ handler: () => jsonResponse({ ok: true }) });
-    await rejectsWith(adapter.execute('oa_agent_info', {}), 'INVALID_OA_RESPONSE', 502);
+    await rejectsWith(adapter.execute('oa_entry_info', {}), 'INVALID_OA_RESPONSE', 502);
   }
 
   {
     const { adapter } = recordingAdapter({
       handler: ({ url }) => (pathOf(url).endsWith('/api/ai/me')
-        ? jsonResponse({ data: adminIdentity })
+        ? jsonResponse({ data: entryIdentity })
         : jsonResponse({ data: { tools: 'not-an-array' } }))
     });
     const error = await rejectsWith(adapter.listTools(), 'INVALID_OA_RESPONSE', 502);
@@ -759,24 +778,58 @@ test('OA 5xx, invalid JSON and malformed payloads map to generic 503/502 without
 });
 
 test('structured business errors keep only code/message/path and drop extra response fields', async () => {
-  const secret = 'DO-NOT-LEAK';
   const { adapter } = recordingAdapter({
     handler: () => jsonResponse({
-      error: { code: 'VALIDATION_ERROR', message: 'query 不能为空', path: 'arguments.query', stack: secret, cookie: secret },
-      data: secret,
-      trace: secret
+      error: { code: 'VALIDATION_ERROR', message: 'query 不能为空', path: 'arguments.query', stack: SECRET, cookie: SECRET },
+      data: SECRET,
+      trace: SECRET
     }, 400)
   });
 
   const result = await adapter.execute('oa_catalog_search_items', {});
   assert.deepEqual(result, { error: { code: 'VALIDATION_ERROR', message: 'query 不能为空', path: 'arguments.query' } });
-  assert.ok(!JSON.stringify(result).includes(secret));
+  assert.ok(!JSON.stringify(result).includes(SECRET));
+});
+
+test('default transport uses plain loopback HTTP without browser or auth headers', async () => {
+  const seen = [];
+  const server = createServer((req, res) => {
+    seen.push({ url: req.url, method: req.method, headers: req.headers });
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      data: { mode: 'local_entry', permissions: { catalog: { read: true }, orders: { read: true, create: false } } }
+    }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  try {
+    const adapter = createCatscoOaTools({ appBaseUrl: `http://127.0.0.1:${address.port}/` });
+    const result = await adapter.execute('oa_entry_info', {});
+    assert.equal(result.data.mode, 'local_entry');
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].url, '/api/ai/me');
+    assert.equal(seen[0].method, 'GET');
+
+    const names = Object.keys(seen[0].headers).map((name) => name.toLowerCase());
+    for (const forbidden of [
+      'cookie', 'authorization', 'x-oa-agent-key', 'x-api-key', 'origin',
+      'referer', 'x-forwarded-for', 'x-forwarded-host', 'x-real-ip', 'forwarded',
+      'sec-fetch-mode', 'sec-fetch-site', 'sec-fetch-dest', 'sec-purpose', 'purpose'
+    ]) {
+      assert.ok(!names.includes(forbidden), `${forbidden} must never be sent`);
+    }
+    assert.equal(seen[0].headers.accept, 'application/json');
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 test('successful data, including null data, is returned as { data }; non-structured errors fall back safely', async () => {
   {
     const { adapter } = recordingAdapter({ handler: () => jsonResponse({ data: null }) });
-    assert.deepEqual(await adapter.execute('oa_agent_info', {}), { data: null });
+    assert.deepEqual(await adapter.execute('oa_catalog_search_items', { query: 'x' }), { data: null });
   }
 
   {

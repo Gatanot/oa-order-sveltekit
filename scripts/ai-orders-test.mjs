@@ -1,10 +1,12 @@
 /**
- * 集成测试：共享服务 Agent 模式的订单工具（/api/ai/orders）。
+ * 集成测试：本机无密钥代录入口的订单工具（独立 build-local 服务）。
  *
- * 临时数据库 + 随机端口 + 只接受虚构 Cookie 的 mock Artifact 网关，真实启动 build 产物
- * （NODE_ENV=production，关闭 OA_TEST_AUTH_BYPASS）。AI 只带 X-OA-Agent-Key，创建人必须是
- * 员工档案 UID；订单归属员工而非执行 Agent。覆盖预览、幂等、批量原子事务、归属重排、
- * 审计、校验与“员工网页仍只看自己/参与订单”。finally 关闭服务/网关并删除临时目录。
+ * 临时数据库 + 随机端口 + 只接受虚构 Cookie 的 mock Artifact 网关。网页 build 与本机入口
+ * 共享同一个 DATABASE_PATH：网页只负责员工/普通订单权限验证，本机入口用 node:http/适配器
+ * 调用，无密钥、无 Cookie。创建人必须是员工档案 UID；订单归属员工，而不是执行代录的本机进程。
+ * 覆盖预览、幂等、批量原子事务、归属重排、审计 actor_uid=null/actor_name=''、
+ * order_entry_requests 全局 request_key、校验与“员工网页仍只看自己/参与订单”。
+ * finally 关闭服务/网关并删除临时目录。
  *
  * 运行：node scripts/ai-orders-test.mjs
  */
@@ -33,18 +35,18 @@ const ACTIVE_STAFF = [CREATOR, DESIGNER, PLANNER, FINANCE, MANAGER, OWNER, UNREL
 const COOKIE = { admin: 'user=A', creator: 'user=B', designer: 'user=C', unrelated: 'user=D' };
 const VIEWER = new Map([['A', ADMIN], ['B', CREATOR], ['C', DESIGNER], ['D', UNRELATED]]);
 
-const TEST_KEY = 'oa-ai-orders-test-key-' + '0123456789abcdef'.repeat(2);
 const APP_ID = 'oa-ai-orders';
-const AGENT_ID = 'shared-test';
 const CUSTOMER_ID = 'cust-ai-orders';
 const PROJECT_ID = 'proj-ai-orders';
 const QUOTE_ITEM_ID = 'quote-ai-orders';
 const COST_ITEM_ID = 'cost-ai-orders';
 const directory = mkdtempSync(join(tmpdir(), 'oa-ai-orders-'));
 const databasePath = join(directory, 'oa.db');
+const localEntryPath = join(process.cwd(), 'build-local', 'server.js');
 
 let mock;
 let app;
+let localApp;
 let adapter;
 const gatewayRequests = [];
 
@@ -83,6 +85,7 @@ function startMockGateway() {
   });
 }
 
+/** 网页 build：只用于普通员工/订单权限；不配置任何 AI 密钥 env。 */
 async function startApp(gatewayOrigin) {
   const port = await freePort();
   const origin = `http://localhost:${port}`;
@@ -90,9 +93,6 @@ async function startApp(gatewayOrigin) {
     ...process.env,
     NODE_ENV: 'production',
     OA_TEST_AUTH_BYPASS: '',
-    OA_AI_SERVICE_KEY: TEST_KEY,
-    OA_AI_SERVICE_ID: AGENT_ID,
-    OA_AI_SERVICE_NAME: '共享测试 Agent',
     ARTIFACT_APP_ID: APP_ID,
     ARTIFACT_GATEWAY_ORIGIN: gatewayOrigin,
     ORIGIN: origin,
@@ -106,14 +106,48 @@ async function startApp(gatewayOrigin) {
   child.stdout.on('data', (chunk) => { instance.logs += chunk; });
   child.stderr.on('data', (chunk) => { instance.logs += chunk; });
   for (let index = 0; index < 100; index++) {
-    if (child.exitCode !== null) throw new Error(`OA 服务提前退出（code ${child.exitCode}）\n${instance.logs}`);
+    if (child.exitCode !== null) throw new Error(`OA 网页服务提前退出（code ${child.exitCode}）\n${instance.logs}`);
     try {
       const response = await fetch(`${origin}/api/whoami`);
       if (response.status === 200) return instance;
     } catch { /* 端口尚未就绪 */ }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error(`OA 服务启动超时\n${instance.logs}`);
+  throw new Error(`OA 网页服务启动超时\n${instance.logs}`);
+}
+
+/** 独立本机入口：OA_LOCAL_PORT=0 让系统分配端口，并从 stdout 解析实际 loopback 地址。 */
+function startLocalEntry() {
+  const env = { ...process.env, NODE_ENV: 'production', DATABASE_PATH: databasePath, OA_LOCAL_PORT: '0' };
+  delete env.OA_TEST_UID;
+  delete env.OA_TEST_AUTH_BYPASS;
+  const child = spawn(process.execPath, [localEntryPath], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const instance = { child, origin: '', logs: '' };
+  child.stdout.on('data', (chunk) => { instance.logs += chunk; });
+  child.stderr.on('data', (chunk) => { instance.logs += chunk; });
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`本机入口启动超时\n${instance.logs}`));
+    }, 10000);
+    const check = () => {
+      const match = /local entry listening on (http:\/\/127\.0\.0\.1:\d+)/.exec(instance.logs);
+      if (!match || instance.origin) return;
+      instance.origin = match[1];
+      clearTimeout(timer);
+      resolve(instance);
+    };
+    child.stdout.on('data', check);
+    child.once('exit', (code) => {
+      if (instance.origin) return;
+      clearTimeout(timer);
+      reject(new Error(`本机入口提前退出（code ${code}）\n${instance.logs}`));
+    });
+    child.once('error', (reason) => {
+      clearTimeout(timer);
+      reject(reason);
+    });
+  });
 }
 
 async function request(origin, path, { method = 'GET', headers = {}, json } = {}) {
@@ -164,12 +198,27 @@ async function rejectsWith(promise, code, status) {
   });
 }
 
+/** 本机代录审计：actor 不是员工、也不是任何固定管理员。 */
+function assertLocalActor(audit) {
+  assert.equal(audit.actor_uid, null, '本机代录审计 actor_uid 必须为 null');
+  assert.equal(audit.actor_name, '', '本机代录审计 actor_name 必须为空串');
+  for (const key of ['agent_id', 'channel', 'tool']) {
+    assert.ok(!Object.hasOwn(JSON.parse(audit.detail_json), key), `审计 detail 不应包含 ${key}`);
+  }
+}
+
 function waitForExit(child, timeoutMs = 5000) {
   if (!child || child.exitCode !== null) return Promise.resolve();
   return new Promise((resolve) => {
     const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
     child.once('exit', () => { clearTimeout(timer); resolve(); });
   });
+}
+
+async function stopApp(instance) {
+  if (!instance?.child) return;
+  if (instance.child.exitCode === null) instance.child.kill('SIGTERM');
+  await waitForExit(instance.child);
 }
 
 /** 测试数据全部写入临时数据库：客户、项目、多角色员工与报价/成本条目。 */
@@ -217,23 +266,33 @@ try {
   app = await startApp(gatewayOrigin);
   const origin = app.origin;
 
-  // 1) 用网页 admin Cookie 初始化数据库，再写入测试数据；之后所有 AI 请求都不应访问网关。
+  // 1) 用网页 admin Cookie 初始化数据库，再写入测试数据；之后本机入口与本机请求都不经过网关。
   let response = await request(origin, '/api/orders', { headers: { cookie: COOKIE.admin } });
   assert.equal(response.status, 200, JSON.stringify(response.data));
   seedDatabase();
-  adapter = createCatscoOaTools({ appBaseUrl: `${origin}/`, apiKey: TEST_KEY });
-  const gatewayBeforeAi = gatewayRequests.length;
+  localApp = await startLocalEntry();
+  adapter = createCatscoOaTools({ appBaseUrl: `${localApp.origin}/` });
+  const gatewayBeforeLocal = gatewayRequests.length;
 
-  const info = await adapter.execute('oa_agent_info', {});
-  assert.equal(info.data.kind, 'service_agent');
-  assert.equal(info.data.agent_id, AGENT_ID);
+  // 2) 本机入口身份只有 mode 与权限，不返回 Agent ID、显示名或员工身份。
+  const info = await adapter.execute('oa_entry_info', {});
+  assert.deepEqual(info.data, {
+    mode: 'local_entry',
+    permissions: { catalog: { read: true, manage: true }, orders: { read: true, create: true } }
+  });
+  const identityText = JSON.stringify(info);
+  for (const key of ['agent_id', 'agentId', 'display_name', 'kind', 'uid', 'username', 'role']) {
+    assert.doesNotMatch(identityText, new RegExp(`"${key}"`), `本机入口不应返回 ${key}`);
+  }
   const toolNames = (await adapter.listTools()).map((tool) => tool.name);
-  for (const name of ['oa_orders_create_order', 'oa_orders_batch_create_orders', 'oa_orders_update_order', 'oa_orders_list_references']) {
+  for (const name of ['oa_entry_info', 'oa_orders_create_order', 'oa_orders_batch_create_orders', 'oa_orders_update_order', 'oa_orders_list_references']) {
     assert.ok(toolNames.includes(name), `缺少工具 ${name}: ${toolNames}`);
   }
-  console.log('PASS 服务 Agent 身份 shared-test，订单工具清单可用');
+  assert.ok(!toolNames.includes('oa_agent_info'));
+  assert.ok(!toolNames.includes('oa_current_user'));
+  console.log('PASS 本机入口无密钥身份仅为 local_entry，工具清单可用');
 
-  // 2) 员工参考数据：所有 active 且非 pending 的多角色员工，可按 role 过滤。
+  // 3) 员工参考数据：所有 active 且非 pending 的多角色员工，可按 role 过滤。
   const references = await ok('list_references', { resource: 'employees', limit: 100 });
   assert.equal(references.total, ACTIVE_STAFF.length, JSON.stringify(references));
   assert.deepEqual(references.items.map((item) => item.role).sort(),
@@ -248,7 +307,7 @@ try {
   expectError(await call('list_references', { resource: 'employees', role: 'pending' }), 'VALIDATION_ERROR', 'arguments.role');
   console.log('PASS list_references 返回全部在职非 pending 员工，role 过滤正确');
 
-  // 3) 创建预览必须显式 created_by_uid，且归属员工而非服务 Agent。
+  // 4) 创建预览必须显式 created_by_uid，且归属员工而非本机执行进程。
   let beforeOrders = orderCount();
   let beforeAudit = auditCount();
   const missingCreator = orderPayload();
@@ -264,14 +323,14 @@ try {
   assert.equal(preview.order.id, undefined);
   assert.equal(preview.order.created_by_uid, CREATOR.uid);
   assert.equal(preview.order.created_by, CREATOR.name);
-  assert.notEqual(preview.order.created_by_uid, -1, '创建人不能是服务执行者');
+  assert.notEqual(preview.order.created_by_uid, -1, '创建人不能是本机执行进程');
   assert.equal(preview.order.quote_amount, '25.00');
   assert.equal(preview.order.cost_amount, '5.00');
   assert.equal(orderCount(), beforeOrders);
   assert.equal(auditCount(), beforeAudit);
   console.log('PASS 创建预览强制 created_by_uid，归属员工且不落库');
 
-  // 4) 正式创建：订单归属员工，审计 actor_uid=null、detail.agent_id=shared-test。
+  // 5) 正式创建：订单归属员工，审计 actor_uid=null/actor_name=''，detail 只有业务归属。
   beforeOrders = orderCount();
   beforeAudit = auditCount();
   const created = await ok('create_order', createArgs({}, 'AI-ORDER-K1', false));
@@ -289,17 +348,27 @@ try {
   assert.equal(orderCount(), beforeOrders + 1);
   assert.equal(auditCount(), beforeAudit + 1);
   let audit = lastOrderAudit();
-  assert.equal(audit.actor_uid, null);
+  assertLocalActor(audit);
   assert.equal(audit.action, 'create');
   assert.equal(audit.entity_id, orderId);
   let detail = JSON.parse(audit.detail_json);
-  assert.equal(detail.channel, 'ai_service');
-  assert.equal(detail.agent_id, AGENT_ID);
-  assert.equal(detail.tool, 'create_order');
-  assert.equal(detail.created_by_uid, CREATOR.uid);
-  console.log('PASS 真实创建归属 AI创建者，审计 actor_uid=null 且带 agent_id');
+  assert.deepEqual(detail, { created_by_uid: CREATOR.uid });
+  assert.notEqual(audit.actor_uid, created.order.created_by_uid, '归属员工不能被冒充为审计执行者');
+  assert.notEqual(audit.actor_name, created.order.created_by, '归属员工姓名不能被冒充为审计执行者');
+  console.log('PASS 真实创建归属 AI创建者，审计 actor 为空且 detail 仅业务 created_by_uid');
 
-  // 5) 同一 Agent 同 key 同内容重放，不新增订单/审计；不同内容 409。
+  // 6) 幂等表是全局 order_entry_requests(request_key)，不含 Agent 维度。
+  const idempotency = withDb((db) => ({
+    columns: db.prepare('PRAGMA table_info(order_entry_requests)').all(),
+    row: db.prepare('SELECT request_key,request_hash,order_id FROM order_entry_requests WHERE request_key=?').get('AI-ORDER-K1')
+  }));
+  assert.deepEqual(idempotency.columns.map((column) => column.name).sort(), ['order_id', 'request_hash', 'request_key']);
+  assert.equal(idempotency.columns.find((column) => column.name === 'request_key').pk, 1, 'request_key 必须是全局主键');
+  assert.ok(!idempotency.columns.some((column) => /agent/i.test(column.name)), '幂等表不应包含 Agent 维度');
+  assert.equal(idempotency.row.order_id, orderId);
+  console.log('PASS 幂等表 order_entry_requests 使用全局 request_key，无 Agent 维度');
+
+  // 7) 同一 key 同内容重放，不新增订单/审计；不同内容 409。
   const afterCreateOrders = orderCount();
   const afterCreateAudit = auditCount();
   const replay = await ok('create_order', createArgs({}, 'AI-ORDER-K1', false));
@@ -313,24 +382,28 @@ try {
   assert.equal(auditCount(), afterCreateAudit);
   console.log('PASS 幂等重放不写审计；同 key 不同内容返回 409');
 
-  // 6) 服务 Agent 可查询全部订单，并局部更新 / 重新归属，保留未传字段。
+  // 8) 本机入口可查询全部订单，并局部更新 / 重新归属，保留未传字段。
   const allOrders = await ok('search_orders', { limit: 100 });
   assert.equal(allOrders.total, orderCount());
   assert.ok(allOrders.items.some((item) => item.id === orderId));
   let view = await ok('get_order', { order_id: orderId });
+  const noteRevision = view.revision;
   let updated = await ok('update_order', {
-    order_id: orderId, expected_revision: view.revision, changes: { note: '服务代理更新' }, dry_run: false
+    order_id: orderId, expected_revision: noteRevision, changes: { note: '本机代录更新' }, dry_run: false
   });
-  assert.equal(updated.order.note, '服务代理更新');
+  assert.equal(updated.order.note, '本机代录更新');
   assert.equal(updated.order.contact, '联系人甲');
   assert.equal(updated.order.customer_department, '市场部');
   assert.equal(updated.order.created_by_uid, CREATOR.uid, '未重新归属时仍属于原创建人');
   assert.equal(updated.order.products.length, 1);
   audit = lastOrderAudit();
-  assert.equal(audit.actor_uid, null);
+  assertLocalActor(audit);
+  assert.equal(audit.action, 'update');
   detail = JSON.parse(audit.detail_json);
-  assert.equal(detail.agent_id, AGENT_ID);
-  assert.equal(detail.tool, 'update_order');
+  assert.deepEqual(Object.keys(detail).sort(), ['created_by_uid', 'fields', 'from_revision']);
+  assert.deepEqual(detail.fields, ['note']);
+  assert.equal(detail.from_revision, noteRevision);
+  assert.equal(detail.created_by_uid, CREATOR.uid);
 
   const staleRevision = updated.order.revision;
   const reassigned = await ok('update_order', {
@@ -338,19 +411,22 @@ try {
   });
   assert.equal(reassigned.order.created_by_uid, DESIGNER.uid);
   assert.equal(reassigned.order.created_by, DESIGNER.name);
-  assert.equal(reassigned.order.note, '服务代理更新', '重新归属不得清空其他字段');
+  assert.equal(reassigned.order.note, '本机代录更新', '重新归属不得清空其他字段');
   assert.equal(reassigned.order.contact, '联系人甲');
   assert.equal(reassigned.order.products.length, 1);
   audit = lastOrderAudit();
-  assert.equal(audit.actor_uid, null);
-  assert.equal(JSON.parse(audit.detail_json).agent_id, AGENT_ID);
+  assertLocalActor(audit);
+  detail = JSON.parse(audit.detail_json);
+  assert.deepEqual(Object.keys(detail).sort(), ['created_by_uid', 'fields', 'from_revision']);
+  assert.deepEqual(detail.fields, ['created_by_uid']);
+  assert.equal(detail.created_by_uid, DESIGNER.uid);
   expectError(await call('update_order', {
     order_id: orderId, expected_revision: staleRevision, changes: { note: '过期修改' }, dry_run: false
   }), 'REVISION_CONFLICT');
-  assert.equal((await ok('get_order', { order_id: orderId })).note, '服务代理更新');
-  console.log('PASS Agent 全量查询/编辑，重新归属保留字段，过期 revision 409');
+  assert.equal((await ok('get_order', { order_id: orderId })).note, '本机代录更新');
+  console.log('PASS 本机入口全量查询/编辑，重新归属保留字段，过期 revision 409');
 
-  // 7) 更新侧校验：非法创建人、错误岗位、受保护字段、金额/日期/明细，均不写审计。
+  // 9) 更新侧校验：非法创建人、错误岗位、受保护字段、金额/日期/明细，均不写审计。
   const locked = await ok('get_order', { order_id: orderId });
   beforeAudit = auditCount();
   for (const [label, changes, path] of [
@@ -374,7 +450,7 @@ try {
   assert.equal(auditCount(), beforeAudit, '非法更新不得写审计');
   console.log('PASS 更新非法创建人/岗位/受保护字段/金额日期全部拒绝且不写审计');
 
-  // 8) 创建侧校验：创建人、岗位、金额日期、外键、受保护字段。
+  // 10) 创建侧校验：创建人、岗位、金额日期、外键、受保护字段。
   beforeOrders = orderCount();
   beforeAudit = auditCount();
   const invalidCreates = [
@@ -404,7 +480,7 @@ try {
   assert.equal(auditCount(), beforeAudit);
   console.log('PASS 创建非法创建人/岗位/金额日期/外键/受保护字段全部拒绝且不落库');
 
-  // 9) 批量预览不写；真实批量逐单归属多员工，审计逐单记录，重放安全。
+  // 11) 批量预览不写；真实批量逐单归属多员工，审计逐单记录，重放安全。
   beforeOrders = orderCount();
   beforeAudit = auditCount();
   const batchPreviewEntries = [
@@ -432,14 +508,14 @@ try {
   assert.equal(orderCount(), beforeOrders + 2);
   assert.equal(auditCount(), beforeAudit + 2);
   const batchIds = batchCreated.items.map((item) => item.order.id);
-  const batchAudits = withDb((db) => db.prepare(`SELECT actor_uid,detail_json FROM audit_logs
+  const batchAudits = withDb((db) => db.prepare(`SELECT actor_uid,actor_name,detail_json FROM audit_logs
     WHERE entity_type='order' AND entity_id IN (?,?)`).all(...batchIds));
   assert.equal(batchAudits.length, 2);
   for (const row of batchAudits) {
-    assert.equal(row.actor_uid, null);
+    assertLocalActor(row);
     const batchDetail = JSON.parse(row.detail_json);
-    assert.equal(batchDetail.agent_id, AGENT_ID);
-    assert.equal(batchDetail.tool, 'batch_create_orders');
+    assert.deepEqual(Object.keys(batchDetail), ['created_by_uid']);
+    assert.ok([CREATOR.uid, FINANCE.uid].includes(batchDetail.created_by_uid));
   }
   const batchReplay = await ok('batch_create_orders', { entries: batchEntries, dry_run: false });
   assert.ok(batchReplay.items.every((item) => item.replayed === true));
@@ -448,7 +524,7 @@ try {
   assert.equal(auditCount(), beforeAudit + 2);
   console.log('PASS batch 预览不写；真实批量多员工逐单归属；重放不新增订单/审计');
 
-  // 10) 批量重复 key、坏行、1–50 上限。
+  // 12) 批量重复 key、坏行、1–50 上限。
   beforeOrders = orderCount();
   beforeAudit = auditCount();
   expectError(await call('batch_create_orders', {
@@ -478,7 +554,7 @@ try {
   expectError(await call('batch_create_orders', { entries: [] }), 'VALIDATION_ERROR', 'arguments.entries');
   console.log('PASS batch 拒绝重复 key/坏行/空批量/超过 50 条，坏行全部回滚');
 
-  // 11) 真实事务：中途数据库失败时已写入条目全部回滚，幂等键也未消费。
+  // 13) 真实事务：中途数据库失败时已写入条目全部回滚，幂等键也未消费。
   beforeOrders = orderCount();
   beforeAudit = auditCount();
   withDb((db) => db.exec(`CREATE TRIGGER fail_atomic_batch BEFORE INSERT ON orders_simple
@@ -500,10 +576,10 @@ try {
   assert.equal(orderCount(), beforeOrders + 1);
   console.log('PASS batch 真实事务中途失败全部回滚，幂等键未被消费');
 
-  // 12) AI 请求全程没有访问 Artifact 网关。
-  assert.equal(gatewayRequests.length, gatewayBeforeAi, 'AI 请求不应访问 Artifact gateway');
+  // 14) 本机请求全程没有访问 Artifact 网关。
+  assert.equal(gatewayRequests.length, gatewayBeforeLocal, '本机入口请求不应访问 Artifact gateway');
 
-  // 13) 员工网页仍只能看到自己创建/参与的订单，且 finance 等全量视角不受 Agent 影响。
+  // 15) 员工网页仍只能看到自己创建/参与的订单，且 finance 等全量视角不受本机入口影响。
   const totalOrders = orderCount();
   for (const [cookie, employee] of [[COOKIE.creator, CREATOR], [COOKIE.designer, DESIGNER], [COOKIE.unrelated, UNRELATED]]) {
     response = await request(origin, '/api/orders', { headers: { cookie } });
@@ -523,16 +599,15 @@ try {
     assert.equal(gatewayRequest.app, APP_ID);
     assert.match(gatewayRequest.cookie, /^(|user=[A-D])$/, `网关只应收到虚构 Cookie，实际：${gatewayRequest.cookie}`);
   }
-  assert.ok(gatewayRequests.length > gatewayBeforeAi, '网页 Cookie 请求应已由网关校验');
+  assert.ok(gatewayRequests.length > gatewayBeforeLocal, '网页 Cookie 请求应已由网关校验');
 } catch (error) {
   console.error('集成测试失败：', error);
-  if (app?.logs) console.error('--- OA 服务日志 ---\n' + app.logs);
+  if (app?.logs) console.error('--- OA 网页服务日志 ---\n' + app.logs);
+  if (localApp?.logs) console.error('--- 本机入口日志 ---\n' + localApp.logs);
   process.exitCode = 1;
 } finally {
-  if (app?.child) {
-    if (app.child.exitCode === null) app.child.kill('SIGTERM');
-    await waitForExit(app.child);
-  }
+  await stopApp(localApp);
+  await stopApp(app);
   if (mock) {
     await new Promise((resolve) => mock.close(resolve));
     mock.closeAllConnections?.();
