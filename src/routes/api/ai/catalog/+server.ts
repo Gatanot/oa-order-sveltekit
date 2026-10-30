@@ -8,12 +8,12 @@ const headers = { 'Cache-Control': 'no-store' };
 const forbidden = () => json({ error: { code: 'FORBIDDEN', message: '当前业务身份无资料库操作权限' } }, { status: 403, headers });
 
 export const GET: RequestHandler = async ({ locals }) => {
-  const identity = await locals.getCurrentIdentity();
+  const identity = await locals.getAiIdentity();
   if (!hasAnyRole(identity, catalogViewRoles)) return forbidden();
   return json({ data: {
-    version: 1,
-    description: '报价/成本库试用工具。以可信宿主绑定的当前登录用户执行；AI 只提交业务参数，不提供凭据或 UID。dry_run 默认 true；false 为实际提交。',
-    identity: { mode: 'current_user', supplied_by: 'trusted_host', model_can_select_user: false },
+    version: 2,
+    description: '报价/成本库服务工具。由管理员授权的共享 Agent 执行，不依赖员工浏览器登录。dry_run 默认 true；false 为实际提交。',
+    identity: { mode: 'service_agent', supplied_by: 'service_key' },
     request: { tool: '工具名称', arguments: '符合 inputSchema 的 JSON 对象' },
     currency: 'CNY', money_unit: 'yuan',
     tools: catalogTools
@@ -21,7 +21,7 @@ export const GET: RequestHandler = async ({ locals }) => {
 };
 
 export const POST: RequestHandler = async (event) => {
-  const identity = await event.locals.getCurrentIdentity();
+  const identity = await event.locals.getAiIdentity();
   if (!identity || !hasAnyRole(identity, catalogViewRoles)) return forbidden();
   try {
     const request = await body(event);

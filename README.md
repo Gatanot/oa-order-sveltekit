@@ -69,13 +69,13 @@ Smoke 测试覆盖无登录访问、资料库导入/沿用、项目和订单写�
 
 ## AI 接口试用
 
-- `GET /api/ai/me`：获取可信登录身份（UID、姓名、有效业务角色、资料库及订单权限）。
+- `GET /api/ai/me`：获取当前服务 Agent 信息（不是浏览器登录员工），需 `X-OA-Agent-Key`。
 - `GET /api/ai/catalog`：获取报价/成本库工具定义及 JSON Schema。
 - `POST /api/ai/catalog`：执行资料库查询、条目搜索、新建来源、批量新增/更新；写入默认只预览，显式 `dry_run: false` 才提交。
-- `GET/POST /api/ai/orders`：订单搜索、详情、填单参考数据、预览/创建、带版本校验的局部修改；不开放删除和结款，见 [订单工具说明](docs/ai-order-tools.md)。
-- Catsco 可信宿主适配器：`src/lib/server/catsco-oa-tools.js`，AI 只提交业务参数，宿主按本次会话自动绑定当前用户，模型不接触任何认证信息。
+- `GET/POST /api/ai/orders`：订单搜索、详情、参考数据、单笔/批量代录、带版本校验的局部修改与重新归属。Agent 可逐单提供 `created_by_uid`、设计/策划人员等信息；不开放删除和结款，见 [订单工具说明](docs/ai-order-tools.md)。
+- 云端服务适配器：`src/lib/server/catsco-oa-tools.js`，使用固定 `appBaseUrl` 和运行环境中的服务 `apiKey`；不再接收 `currentUserRequest`，不读取员工浏览器信息。CLI：`node scripts/ai-catalog-tool.mjs me|tools|call`。
 
-所有操作以发起调用的当前登录用户执行，沿用 Artifact 验证及现有角色授权；不支持模型指定 UID，不回退到全局用户。缺少会话时提示登录，不要求向 AI 提供凭据。Catsco 侧工具注册/当前用户会话转发仍需接线联调，不能仅凭聊天窗口已登录就认为自动接通。本期不是 MCP 服务。旧 CLI 降为人工本地调试（需显式设置 `OA_DEV_CLI=1`）。详见 [AI 工具调用说明](docs/ai-catalog-tools.md)。
+v2 已改为管理员授权的共享服务 Agent 模式，**AI 接口不再使用员工身份分发**。管理员配置 `OA_AI_SERVICE_KEY`（至少32字符）和稳定的 `OA_AI_SERVICE_ID`，工具执行器自动带 `X-OA-Agent-Key`。未配置默认关闭，浏览器 Cookie 不作为 AI 接口认证。服务执行者与订单归属员工分别审计；普通网页的 Artifact 登录和权限不变。批量 Excel 由云端 Agent 解析并调用结构化批量接口，本期不直接上传 Excel。外层 Artifact 网关仍需允许云端机器访问并透传服务头，不能假设绕过网关登录。配置与注意事项见 [AI 服务接入说明](docs/ai-catalog-tools.md)。
 
 ## 数据与备份
 

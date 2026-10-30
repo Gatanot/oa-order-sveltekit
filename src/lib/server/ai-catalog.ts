@@ -1,5 +1,6 @@
 import { getOrderDb, createCatalogSource, importCatalog, moneyToCents, addAuditLog } from '$lib/server/order-db';
 import type { CurrentIdentity } from '$lib/server/identity';
+import { auditActor, auditDetail } from '$lib/server/ai-service';
 
 const textSchema = { type: 'string', maxLength: 2000 };
 const kindSchema = { type: 'string', enum: ['quote', 'cost'] };
@@ -103,7 +104,7 @@ export function runCatalogTool(tool: string, input: unknown, identity: CurrentId
       if (db.prepare('SELECT 1 FROM catalog_sources WHERE kind=? AND owner_name=?').get(libraryKind, owner)) throw new CatalogToolError('CONFLICT', '同类型同公司资料库已存在，请先查询并使用现有 source_id', 409);
       if (preview) return { dry_run: true, source: { kind: libraryKind, owner_name: owner } };
       const created = createCatalogSource({ kind: libraryKind, owner_name: owner, source_method: 'ai_tool' }) as Source;
-      addAuditLog({ actorUid: identity.uid, actorName: identity.displayName, action: 'create', entityType: 'catalog_source', entityId: created.id, detail: { channel: 'ai_tool', tool } });
+      addAuditLog({ ...auditActor(identity), action: 'create', entityType: 'catalog_source', entityId: created.id, detail: { ...auditDetail(identity), tool } });
       return { dry_run: false, source: created };
     })();
   }
@@ -152,8 +153,8 @@ export function runCatalogTool(tool: string, input: unknown, identity: CurrentId
       });
       const result = { dry_run: preview, source_id: source.id, kind: source.kind, inserted, updated, rows, currency: 'CNY', money_unit: 'yuan', warning: '按自然键整行写入；未提供的可选文本/金额字段将清空/置零。预览不保留数据，也不锁定版本，提交时会重新校验。' };
       if (!preview) {
-        importCatalog(rows, source.id, { actorUid: identity.uid, actorName: identity.displayName, replace: false });
-        addAuditLog({ actorUid: identity.uid, actorName: identity.displayName, action: 'ai_catalog_upsert', entityType: 'catalog_source', entityId: source.id, detail: { channel: 'ai_tool', tool, inserted, updated } });
+        importCatalog(rows, source.id, { ...auditActor(identity), replace: false });
+        addAuditLog({ ...auditActor(identity), action: 'ai_catalog_upsert', entityType: 'catalog_source', entityId: source.id, detail: { ...auditDetail(identity), tool, inserted, updated } });
       }
       return result;
     })();

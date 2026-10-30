@@ -1,28 +1,59 @@
 /**
- * 供 Catsco 可信服务端/工具宿主导入的适配器，不是模型可执行的独立 CLI。
- * createCatscoOaTools 的配置与每次调用的 currentUserRequest 必须由宿主注入，
- * 绝不能来自模型参数。只转发当前请求的 Cookie/Authorization 到固定 OA 应用，
- * 并由 OA -> Artifact 网关验证；不会信任 UID、角色或普通用户身份头。
+ * 供 Catsco 可信服务端/工具宿主使用的「服务 Agent」适配器，不是模型可执行的独立 CLI。
+ *
+ * 接入身份是运维在服务端配置里固定的 OA 服务 Agent：appBaseUrl 与 apiKey 只能由宿主的
+ * 服务端配置注入，绝不能来自模型参数、工具 schema 或聊天消息。请求只携带
+ * X-OA-Agent-Key（刻意不用 Authorization，避免被平台网关当作终端用户凭据吞掉），
+ * 不转发 Cookie/Authorization，也不读取任何浏览器会话。
+ *
+ * 模型只能提交工具名与业务参数；OA 每次重新校验 Agent 密钥、Agent 状态与权限。
+ * apiKey 不进入工具定义，不写入错误信息，也不随原始异常向外泄露。
  * 本文件无 SvelteKit 依赖，方便部署到宿主；放在 server/ 防止打包到前端。
  */
 
 /** @typedef {{ name: string, description: string, inputSchema: Record<string, unknown> }} ToolDefinition */
-/** @typedef {{ currentUserRequest: Request }} UserContext 当前用户请求，由可信宿主按调用注入，不进入模型 schema。 */
+/** @typedef {{ catalog?: boolean | { read?: boolean, manage?: boolean }, orders?: boolean | { read?: boolean, create?: boolean } }} AgentPermissions */
+/** @typedef {{ kind?: string, agent_id?: string, display_name?: string, permissions?: AgentPermissions }} AgentIdentity */
+
+const MIN_API_KEY_LENGTH = 32;
 
 const catalogNames = new Set(['list_sources', 'search_items', 'create_source', 'upsert_items']);
-const orderNames = new Set(['search_orders', 'get_order', 'list_references', 'create_order', 'update_order']);
+const orderNames = new Set(['search_orders', 'get_order', 'list_references', 'create_order', 'update_order', 'batch_create_orders']);
 const catalogPrefix = 'oa_catalog_';
 const ordersPrefix = 'oa_orders_';
-const loginMessage = '未取得当前 Catsco 用户的有效登录上下文，请登录并重新发起操作；不要向 AI 提供 Cookie、Token 或 UID 作为认证。';
+
+const agentAuthMessage = 'OA 服务接入未通过验证：服务 Agent 密钥缺失、无效或已停用。请联系管理员配置服务接入，无需用户登录浏览器。';
+const agentForbiddenMessage = '服务 Agent 没有该操作权限，或该接入已停用/待开通。';
+const genericUnavailableMessage = '无法连接 OA，请稍后重试。写入可能已完成，请先查询结果，勿盲目重复提交。';
 
 /**
- * 每个工具族（catalog/orders）有独立的服务端 manifest 与固定子路径；
+ * 每个工具族（catalog/orders）有独立的固定子路径；
  * 前缀与允许列表必须同时匹配，模型提供的 name 不能改写路径或工具。
  */
 const toolRoutes = [
   { prefix: catalogPrefix, names: catalogNames, path: 'api/ai/catalog' },
   { prefix: ordersPrefix, names: orderNames, path: 'api/ai/orders' }
 ];
+
+/** 服务 Agent 自身信息工具：无参数，返回服务端配置的 Agent 身份与权限，不代表任何员工。 */
+const agentInfoTool = Object.freeze({
+  name: 'oa_agent_info',
+  description: '查询当前 OA 服务 Agent 自身信息：agent_id、显示名称与资料库/订单工具权限。这是服务 Agent 身份，并非当前员工；不接受任何参数，也不涉及浏览器登录。',
+  inputSchema: Object.freeze({ type: 'object', properties: {}, additionalProperties: false })
+});
+
+/**
+ * 兼容旧宿主的别名，减少一次性 breaking；语义已改为「服务 Agent 信息」。
+ * 若宿主可以升级，优先使用 oa_agent_info。
+ */
+const agentInfoAliasTool = Object.freeze({
+  name: 'oa_current_user',
+  description: '兼容别名，返回与 oa_agent_info 相同的服务 Agent 信息。注意：当前服务 Agent 并非当前员工，也不代表任何浏览器登录用户；不接受任何参数。',
+  inputSchema: Object.freeze({ type: 'object', properties: {}, additionalProperties: false })
+});
+
+/** @type {Set<string>} */
+const agentToolNames = new Set([agentInfoTool.name, agentInfoAliasTool.name]);
 
 export class OaToolHostError extends Error {
   /** @param {string} code @param {string} message @param {number} [status] */
@@ -35,35 +66,22 @@ export class OaToolHostError extends Error {
 }
 
 /**
- * appBaseUrl 为运维配置的固定 OA 应用根地址（包含 /<应用ID>/），不是模型参数。
- * currentUserRequest 必须包含网关可验证的用户会话，而不是 bot 的系统身份。
- * 若 Catsco 只提供 UID，不能在此生成身份；应由平台先提供受支持的会话传递机制。
- * @param {{ appBaseUrl: string, fetchImpl?: typeof globalThis.fetch }} options
+ * appBaseUrl 与 apiKey 都是运维配置，不是模型参数。
+ * apiKey 只保留在闭包中，不写入工具定义、日志或错误对象。
+ * @param {{ appBaseUrl: string, apiKey: string, fetchImpl?: typeof globalThis.fetch }} options
  */
-export function createCatscoOaTools({ appBaseUrl, fetchImpl = globalThis.fetch }) {
-  const base = new URL(appBaseUrl.endsWith('/') ? appBaseUrl : `${appBaseUrl}/`);
-  if (!['https:', 'http:'].includes(base.protocol) || base.username || base.password || base.search || base.hash) {
-    throw new OaToolHostError('INVALID_HOST_CONFIG', 'OA 应用地址配置不正确');
-  }
-  if (base.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(base.hostname)) {
-    throw new OaToolHostError('INVALID_HOST_CONFIG', '远程 OA 应用必须使用 HTTPS');
-  }
+export function createCatscoOaTools({ appBaseUrl, apiKey, fetchImpl = globalThis.fetch } = /** @type {any} */ ({})) {
+  const base = parseBaseUrl(appBaseUrl);
+  const agentKey = parseApiKey(apiKey);
 
   /**
-   * 不缓存响应、用户、凭据或工具列表；不把上一次调用的身份留给下一个用户。
-   * @param {UserContext} context @param {string} path @param {Record<string, unknown>} [body]
+   * 固定地址、固定请求头；不接受模型改路径、方法或请求头。
+   * 不缓存响应、Agent 身份或工具列表。
+   * @param {string} path @param {Record<string, unknown>} [body]
    */
-  async function send(context, path, body) {
-    const request = context?.currentUserRequest;
-    if (!(request instanceof Request)) throw new OaToolHostError('LOGIN_REQUIRED', loginMessage, 401);
-    const cookie = request.headers.get('cookie');
-    const authorization = request.headers.get('authorization');
-    if (!cookie && !authorization) throw new OaToolHostError('LOGIN_REQUIRED', loginMessage, 401);
-
-    // 不转发任意请求头/Origin/Host，也不使用 X-User-UID 等自报身份。
-    const headers = new Headers({ Accept: 'application/json' });
-    if (cookie) headers.set('cookie', cookie);
-    if (authorization) headers.set('authorization', authorization);
+  async function send(path, body) {
+    const headers = new Headers({ Accept: 'application/json', 'X-OA-Agent-Key': agentKey });
+    // 不转发 Cookie/Authorization/Origin/Host，也不使用 X-User-UID 等自报身份头。
     if (body) headers.set('content-type', 'application/json');
     let response;
     try {
@@ -73,11 +91,12 @@ export function createCatscoOaTools({ appBaseUrl, fetchImpl = globalThis.fetch }
         redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(15000)
       });
     } catch {
-      // 不返回原始异常，避免 fetch 错误中包含请求头、响应体或地址等宿主信息。
-      throw new OaToolHostError('OA_UNAVAILABLE', '无法连接 OA，请稍后重试。写入可能已完成，请先查询结果，勿盲目重复提交。', 503);
+      // 不保留原始异常，避免 fetch 错误（可能含地址、请求头或密钥）被宿主转发给模型。
+      throw new OaToolHostError('OA_UNAVAILABLE', genericUnavailableMessage, 503);
     }
-    if (response.status === 401) throw new OaToolHostError('LOGIN_REQUIRED', loginMessage, 401);
-    if (response.status === 403) throw new OaToolHostError('FORBIDDEN', '当前用户没有该操作权限，或账号已停用/待开通。', 403);
+    // 服务 Agent 校验失败时不回退到 Cookie/浏览器会话，也不提示用户登录。
+    if (response.status === 401) throw new OaToolHostError('AGENT_AUTH_REQUIRED', agentAuthMessage, 401);
+    if (response.status === 403) throw new OaToolHostError('FORBIDDEN', agentForbiddenMessage, 403);
     if (response.status >= 500) throw new OaToolHostError('OA_UNAVAILABLE', 'OA 暂时不可用，请稍后重试。', 503);
     /** @type {{ data?: unknown, error?: {code?: unknown, message?: unknown, path?: unknown} }} */
     let payload;
@@ -98,30 +117,29 @@ export function createCatscoOaTools({ appBaseUrl, fetchImpl = globalThis.fetch }
   }
 
   /**
-   * 宿主在可信执行环境中按当前会话获取可注册工具，不把 context 交给模型。
-   * @param {UserContext} context
+   * 只读取服务 Agent 身份与权限，catalog/orders 清单各自独立按权限加载。
    * @returns {Promise<ToolDefinition[]>}
    */
-  async function listTools(context) {
-    // 身份工具始终可注册；资料库/订单 manifest 按各自权限分别加载。
-    const me = await send(context, 'api/ai/me');
-    const identity = /** @type {{permissions?: {catalog?: {read?: boolean}, orders?: {read?: boolean, create?: boolean}}} | undefined} */ (me.data);
+  async function listTools() {
+    const me = await send('api/ai/me');
+    const identity = /** @type {AgentIdentity | undefined} */ (me.data);
+    // 明确要求服务 Agent 身份，避免把员工会话或错误配置当成服务接入。
+    if (!identity || typeof identity !== 'object' || identity.kind !== 'service_agent') {
+      throw new OaToolHostError('AGENT_AUTH_REQUIRED', agentAuthMessage, 401);
+    }
+    // Agent 自身信息工具始终可用，且明确标注不是当前员工。
     /** @type {ToolDefinition[]} */
-    const tools = [{
-      name: 'oa_current_user',
-      description: '查询本次调用对应的 Catsco 当前登录用户、OA 角色、资料库与订单权限。不接受身份参数，不要求用户提供凭据。',
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false }
-    }];
-    // catalog 与 orders 权限互相独立：缺少其中一个不会阻止加载另一个 manifest。
-    if (identity?.permissions?.catalog?.read) {
-      const result = await send(context, 'api/ai/catalog');
+    const tools = [{ ...agentInfoTool }, { ...agentInfoAliasTool }];
+    const permissions = identity.permissions ?? {};
+    // 权限互相独立：缺少 catalog 权限不会阻止加载 orders 清单，反之亦然。
+    if (hasReadPermission(permissions.catalog)) {
+      const result = await send('api/ai/catalog');
       appendManifestTools(tools, result, catalogNames, catalogPrefix);
     }
-    const orders = /** @type {{read?: boolean, create?: boolean} | undefined} */ (identity?.permissions?.orders);
-    if (orders?.read) {
-      const result = await send(context, 'api/ai/orders');
-      // create_order 需要额外创建权限；update_order 是否出现由服务端 manifest 按身份决定（参与者也可更新）。
-      appendManifestTools(tools, result, orderNames, ordersPrefix, (name) => name !== 'create_order' || orders.create === true);
+    if (hasReadPermission(permissions.orders)) {
+      const result = await send('api/ai/orders');
+      // 创建类工具需要额外 create 权限；其余工具是否出现仍由服务端 manifest 按 Agent 状态决定。
+      appendManifestTools(tools, result, orderNames, ordersPrefix, (name) => !needsCreate(name) || canCreate(permissions.orders));
     }
     return tools;
   }
@@ -141,27 +159,83 @@ export function createCatscoOaTools({ appBaseUrl, fetchImpl = globalThis.fetch }
   }
 
   /**
-   * 模型仅提供 name 和 arguments；context 是宿主每次调用绑定的独立参数。
-   * 旧工具列表不构成授权，OA 每次重新验证会话、员工状态和权限。
-   * @param {string} name @param {unknown} args @param {UserContext} context
+   * 模型只提供 name 和 args；没有第三个 context 参数，也没有 Cookie 或浏览器会话。
+   * 旧工具列表不构成授权，OA 每次重新验证服务 Agent 与权限。
+   * @param {string} name @param {unknown} args
    */
-  async function execute(name, args, context) {
+  async function execute(name, args) {
     if (!args || typeof args !== 'object' || Array.isArray(args)) {
       throw new OaToolHostError('VALIDATION_ERROR', '工具参数必须是 JSON 对象');
     }
-    if (name === 'oa_current_user') {
-      if (Object.keys(args).length) throw new OaToolHostError('VALIDATION_ERROR', '当前用户由会话确定，不接受任何身份参数');
-      return send(context, 'api/ai/me');
+    if (agentToolNames.has(name)) {
+      if (Object.keys(args).length) throw new OaToolHostError('VALIDATION_ERROR', '服务 Agent 信息由服务端配置确定，不接受任何参数');
+      return send('api/ai/me');
     }
     // 前缀+允许列表精确映射到固定子路径；不使用模型参数拼接 URL 或工具名。
     for (const route of toolRoutes) {
       if (!name.startsWith(route.prefix)) continue;
       const tool = name.slice(route.prefix.length);
       if (!route.names.has(tool)) break;
-      return send(context, route.path, { tool, arguments: args });
+      // arguments 原样转交：即使模型塞入 apiKey/token/cookie 等字段，也只由 OA 服务端严格校验。
+      return send(route.path, { tool, arguments: args });
     }
     throw new OaToolHostError('UNKNOWN_TOOL', '未知 OA 工具');
   }
 
   return { listTools, execute };
+}
+
+/** @param {unknown} value */
+function hasReadPermission(value) {
+  if (value === true) return true;
+  return Boolean(value && typeof value === 'object' && /** @type {{read?: unknown}} */ (value).read === true);
+}
+
+/** @param {unknown} value */
+function canCreate(value) {
+  if (value === true) return true;
+  return Boolean(value && typeof value === 'object' && /** @type {{create?: unknown}} */ (value).create === true);
+}
+
+/** @param {string} name */
+function needsCreate(name) {
+  return name === 'create_order' || name === 'batch_create_orders';
+}
+
+/**
+ * 固定 OA 应用根地址：不允许内嵌凭据、查询串或片段；远程必须 HTTPS。
+ * @param {unknown} appBaseUrl
+ */
+function parseBaseUrl(appBaseUrl) {
+  let base;
+  try {
+    if (typeof appBaseUrl !== 'string' || !appBaseUrl) throw new Error('missing');
+    base = new URL(appBaseUrl.endsWith('/') ? appBaseUrl : `${appBaseUrl}/`);
+  } catch {
+    throw new OaToolHostError('INVALID_HOST_CONFIG', 'OA 应用地址配置不正确');
+  }
+  if (!['https:', 'http:'].includes(base.protocol) || base.username || base.password || base.search || base.hash) {
+    throw new OaToolHostError('INVALID_HOST_CONFIG', 'OA 应用地址配置不正确');
+  }
+  if (base.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(base.hostname)) {
+    throw new OaToolHostError('INVALID_HOST_CONFIG', '远程 OA 应用必须使用 HTTPS');
+  }
+  return base;
+}
+
+/**
+ * 服务 Agent 密钥来自服务端配置，至少 32 字符且不含空白或换行（防头注入）。
+ * 校验失败只返回通用错误，绝不回显密钥内容。
+ * @param {unknown} apiKey
+ */
+function parseApiKey(apiKey) {
+  if (
+    typeof apiKey !== 'string'
+    || apiKey.length < MIN_API_KEY_LENGTH
+    || /\s/.test(apiKey)
+    || /[\u0000-\u001f\u007f]/.test(apiKey)
+  ) {
+    throw new OaToolHostError('INVALID_HOST_CONFIG', 'OA 服务接入密钥配置不正确，请联系管理员检查服务端配置');
+  }
+  return apiKey;
 }

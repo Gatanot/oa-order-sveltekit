@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { getOrderDb, getOrderById, createOrder, updateOrder, setOrderEmployees, resolveOrderEmployeeUid, moneyToCents, addAuditLog } from '$lib/server/order-db';
-import { hasAnyRole, orderCreateRoles, orderManageRoles, orderViewAllRoles, getEmployeeDisplayName, type CurrentIdentity } from '$lib/server/identity';
+import { employeeRoles, hasAnyRole, orderCreateRoles, orderManageRoles, orderViewAllRoles, getEmployeeDisplayName, type CurrentIdentity } from '$lib/server/identity';
+import { auditActor, auditDetail, type AiServiceIdentity } from '$lib/server/ai-service';
 
 const textSchema = { type: 'string', maxLength: 2000 };
 const dateSchema = { type: 'string', format: 'date', description: 'YYYY-MM-DD' };
@@ -11,17 +12,21 @@ const lineFields = { name: textSchema, catalog_id: { type: ['string', 'null'] },
 const productsSchema = { type: 'array', description: '全量产品明细；替换时必须携带要保留的 unit/specification/remark，未填分别默认项/空/空。输出 subtotal 是只读字段，不要回传。', minItems: 1, maxItems: 100, items: objectSchema({ ...lineFields, specification: textSchema, remark: textSchema }, ['name', 'quantity', 'unit_price']) };
 const costsSchema = { type: 'array', description: '全量成本明细；空数组清空成本。未填 unit/vendor 默认项/空。输出 subtotal 是只读字段，不要回传。', maxItems: 100, items: objectSchema({ ...lineFields, vendor: textSchema }, ['name', 'quantity', 'unit_price']) };
 const orderFields = {
-  project_id: textSchema, order_date: dateSchema, delivery_date: { ...textSchema, description: 'YYYY-MM-DD，空字符串清除交付日期' },
+  project_id: textSchema,
+  created_by_uid: { type: 'integer', minimum: 1, description: '创建人归属员工 UID。服务代理创建时必填；员工必须已开通在职，姓名由员工档案确定，不接受 created_by 文本。' },
+  order_date: dateSchema, delivery_date: { ...textSchema, description: 'YYYY-MM-DD，空字符串清除交付日期' },
   contact: textSchema, customer_department: textSchema, execution_company: textSchema, note: textSchema,
   designer_uid: { type: ['integer', 'null'], minimum: 1 }, planner_uid: { type: ['integer', 'null'], minimum: 1 },
   products: productsSchema, costs: costsSchema
 };
+const orderCreateSchema = objectSchema(orderFields, ['project_id', 'created_by_uid', 'products']);
 export const orderTools = [
   { name: 'search_orders', description: '分页搜索当前用户可见订单。普通用户仅能看自己创建/参与的订单，返回金额为元字符串。', inputSchema: objectSchema({ ...pagingSchema, q: textSchema, project_id: textSchema, status: { type: 'string', enum: ['已提交', '已完成'] }, order_date_from: dateSchema, order_date_to: dateSchema }) },
   { name: 'get_order', description: '读取订单明细、可编辑状态和 revision。不可见和不存在统一返回 ORDER_NOT_FOUND。', inputSchema: objectSchema({ order_id: textSchema }, ['order_id']) },
-  { name: 'list_references', description: '分页搜索客户、项目、可指派在职设计/策划人员、执行公司。人员 UID 仅用于指派，不代表调用者身份。', inputSchema: objectSchema({ resource: { type: 'string', enum: ['customers', 'projects', 'employees', 'execution_companies'] }, q: textSchema, customer_id: textSchema, ...pagingSchema }, ['resource']) },
-  { name: 'create_order', description: '创建订单，默认仅预览。正式提交必须 dry_run=false 并提供 1–80 字符 idempotency_key；同一用户同 key 同内容可安全重试，不同内容冲突。创建人/状态由服务端确定。明细价格显式填入，不自动取资料库最新价。', inputSchema: objectSchema({ order: objectSchema(orderFields, ['project_id', 'products']), idempotency_key: { type: 'string', minLength: 1, maxLength: 80 }, dry_run: { type: 'boolean', default: true } }, ['order']) },
-  { name: 'update_order', description: '局部修改订单，未提供字段保持原值。products/costs 若提供则全量替换；UID 显式 null 清除指派。不接受创建人/结款/状态。必须提供 get_order 的 expected_revision；数据变化返回 REVISION_CONFLICT。默认仅预览。', inputSchema: objectSchema({ order_id: textSchema, expected_revision: textSchema, changes: { ...objectSchema(orderFields), minProperties: 1 }, dry_run: { type: 'boolean', default: true } }, ['order_id', 'expected_revision', 'changes']) }
+  { name: 'list_references', description: '分页搜索客户、项目、所有在职已开通员工（可按 role 筛选）、执行公司。人员 UID 仅用于订单归属/指派，不代表服务身份。', inputSchema: objectSchema({ resource: { type: 'string', enum: ['customers', 'projects', 'employees', 'execution_companies'] }, q: textSchema, customer_id: textSchema, role: { type: 'string', enum: [...employeeRoles] }, ...pagingSchema }, ['resource']) },
+  { name: 'create_order', description: '创建订单，默认仅预览。必须通过 order.created_by_uid 指定归属员工（已开通在职，不限岗位，姓名取自员工档案），不接受 created_by 文本。正式提交必须 dry_run=false 并提供 1–80 字符 idempotency_key；同一服务代理同 key 同内容可安全重试，不同内容冲突。状态由服务端确定。明细价格显式填入，不自动取资料库最新价。', inputSchema: objectSchema({ order: orderCreateSchema, idempotency_key: { type: 'string', minLength: 1, maxLength: 80 }, dry_run: { type: 'boolean', default: true } }, ['order']) },
+  { name: 'batch_create_orders', description: '批量创建 1–50 个订单，默认仅预览。一个外层 immediate 事务原子执行，任一条失败全部回滚；正式提交每条必须提供互不重复的 idempotency_key。每条复用 create_order 的校验与幂等规则，错误 path 会带 entries 索引。预览不写入。', inputSchema: objectSchema({ entries: { type: 'array', minItems: 1, maxItems: 50, items: objectSchema({ order: orderCreateSchema, idempotency_key: { type: 'string', minLength: 1, maxLength: 80 } }, ['order']) }, dry_run: { type: 'boolean', default: true } }, ['entries']) },
+  { name: 'update_order', description: '局部修改订单，未提供字段保持原值。products/costs 若提供则全量替换；UID 显式 null 清除指派。可用 created_by_uid 重新归属创建人，姓名自动取自员工档案；未提供时保留原归属与姓名快照。不接受 created_by 文本/结款/状态。必须提供 get_order 的 expected_revision；数据变化返回 REVISION_CONFLICT。默认仅预览。', inputSchema: objectSchema({ order_id: textSchema, expected_revision: textSchema, changes: { ...objectSchema(orderFields), minProperties: 1 }, dry_run: { type: 'boolean', default: true } }, ['order_id', 'expected_revision', 'changes']) }
 ];
 export class OrderToolError extends Error {
   constructor(public code: string, message: string, public status = 400, public path?: string) { super(message); }
@@ -64,7 +69,33 @@ function stable(value: unknown): unknown {
 const yuan = (cents: unknown) => (Number(cents) / 100).toFixed(2);
 function isParticipant(row: Record<string, any>, uid: number) { return row.created_by_uid === uid || row.designer_uid === uid || row.planner_uid === uid; }
 export function orderPermissions(identity: CurrentIdentity) {
+  // 服务代理是受信任的共享集成身份，角色固定 admin，因此拥有全部订单能力。
+  if (isServiceAgent(identity)) return { read: true, create: true, view_all: true, manage_all: true, edit_scope: 'all' as const };
   return { read: identity.active && identity.role !== 'pending', create: hasAnyRole(identity, orderCreateRoles), view_all: hasAnyRole(identity, orderViewAllRoles), manage_all: hasAnyRole(identity, orderManageRoles), edit_scope: hasAnyRole(identity, orderManageRoles) ? 'all' : 'participating' };
+}
+/** 共享服务代理身份由 ai-service 构造；legacy 为浏览器绑定的当前用户。 */
+function isServiceAgent(identity: CurrentIdentity): identity is AiServiceIdentity {
+  return (identity as Partial<AiServiceIdentity>).kind === 'service_agent';
+}
+/**
+ * 解析订单创建人归属。服务代理必须显式提供员工档案 UID，不接受姓名文本；
+ * legacy 当前用户身份只能以本人为创建人。
+ */
+function resolveCreator(identity: CurrentIdentity, uid: unknown, path: string): { uid: number; name: string } {
+  const service = isServiceAgent(identity);
+  if (uid === undefined || uid === null) {
+    if (service) invalid(path, '服务代理创建订单必须提供 created_by_uid（员工档案 UID），不接受 created_by 姓名文本');
+    return { uid: identity.uid, name: identity.displayName };
+  }
+  if (!Number.isSafeInteger(uid) || Number(uid) < 1) invalid(path, 'created_by_uid 必须是正整数员工 UID');
+  const value = Number(uid);
+  if (!service) {
+    if (value !== identity.uid) throw new OrderToolError('FORBIDDEN', '当前用户身份只能以本人作为创建人', 403, path);
+    return { uid: identity.uid, name: identity.displayName };
+  }
+  const row = getOrderDb().prepare('SELECT catsco_uid,display_name FROM employees WHERE catsco_uid=? AND active=1 AND role<>\'pending\'').get(value) as { catsco_uid: number; display_name: string } | undefined;
+  if (!row) invalid(path, 'created_by_uid 必须是已开通的在职员工（active=1 且非 pending），不限岗位');
+  return { uid: row.catsco_uid, name: row.display_name };
 }
 function access(id: string, identity: CurrentIdentity, edit = false) {
   const row = getOrderById(id);
@@ -119,12 +150,12 @@ function lines(value: unknown, type: 'products' | 'costs', path: string): Record
     return result;
   });
 }
-function normalizeOrder(input: Record<string, unknown>, path: string, existing?: Record<string, any>) {
+function normalizeOrder(input: Record<string, unknown>, path: string, identity: CurrentIdentity, existing?: Record<string, any>) {
   allowed(input, Object.keys(orderFields), path);
   if (existing && !Object.keys(input).length) invalid(path, '至少提供一个修改字段');
   const order: Record<string, any> = {};
   // 更新仅覆盖显式给出的字段，绕开旧网页 PATCH 未传字段被清空的语义。
-  for (const key of ['project_id', 'order_date', 'delivery_date', 'contact', 'customer_department', 'execution_company', 'note', 'designer_uid', 'planner_uid', 'designer', 'planner', 'products', 'costs', 'status', 'payment_status', 'created_by']) {
+  for (const key of ['project_id', 'order_date', 'delivery_date', 'contact', 'customer_department', 'execution_company', 'note', 'designer_uid', 'planner_uid', 'designer', 'planner', 'products', 'costs', 'status', 'payment_status', 'created_by', 'created_by_uid']) {
     if (existing && existing[key] !== undefined) order[key] = existing[key];
   }
   for (const key of ['project_id', 'contact', 'customer_department', 'execution_company', 'note']) {
@@ -133,6 +164,14 @@ function normalizeOrder(input: Record<string, unknown>, path: string, existing?:
   if (!getOrderDb().prepare('SELECT 1 FROM projects_simple WHERE id=?').get(order.project_id)) invalid(`${path}.project_id`, '项目不存在，请先查询项目参考数据');
   if (!existing || Object.hasOwn(input, 'order_date')) order.order_date = input.order_date === undefined ? new Date().toISOString().slice(0, 10) : date(input.order_date, `${path}.order_date`);
   if (!existing || Object.hasOwn(input, 'delivery_date')) order.delivery_date = input.delivery_date === undefined ? '' : date(input.delivery_date, `${path}.delivery_date`, true);
+  // 创建人归属：创建必填（legacy 可默认本人）；更新省略则保留原 UID 与原始姓名快照。
+  if (!existing) {
+    const creator = resolveCreator(identity, input.created_by_uid, `${path}.created_by_uid`);
+    order.created_by_uid = creator.uid; order.created_by = creator.name;
+  } else if (Object.hasOwn(input, 'created_by_uid') && input.created_by_uid !== existing.created_by_uid) {
+    const creator = resolveCreator(identity, input.created_by_uid, `${path}.created_by_uid`);
+    order.created_by_uid = creator.uid; order.created_by = creator.name;
+  }
   for (const role of ['designer', 'planner'] as const) {
     const key = `${role}_uid`;
     if (!existing || Object.hasOwn(input, key)) {
@@ -168,7 +207,7 @@ function previewOrder(order: Record<string, any>) {
   return result;
 }
 function listReferences(data: Record<string, unknown>) {
-  allowed(data, ['resource', 'q', 'customer_id', 'limit', 'offset']);
+  allowed(data, ['resource', 'q', 'customer_id', 'role', 'limit', 'offset']);
   const resource = str(data.resource, 'arguments.resource', true);
   const q = str(data.q, 'arguments.q');
   const { limit, offset } = pagination(data);
@@ -179,14 +218,108 @@ function listReferences(data: Record<string, unknown>) {
     from = 'projects_simple p JOIN customers_simple c ON c.id=p.customer_id';
     columns = 'p.id,p.name,p.customer_id,c.name AS customer_name,p.status'; sort = 'p.name,p.id';
     if (data.customer_id !== undefined) { where.push('p.customer_id=?'); values.push(str(data.customer_id, 'arguments.customer_id', true)); }
-  } else if (resource === 'employees') { from = 'employees'; columns = 'catsco_uid,display_name,department,role'; sort = 'display_name,catsco_uid'; where.push("active=1 AND role IN ('designer','planner')"); }
+  } else if (resource === 'employees') { from = 'employees'; columns = 'catsco_uid,display_name,department,role'; sort = 'display_name,catsco_uid'; where.push("active=1 AND role<>'pending'"); }
   else if (resource === 'execution_companies') { from = 'execution_companies'; columns = 'id,name'; sort = 'name,id'; }
   else invalid('arguments.resource', '不支持的参考数据类型');
   if (data.customer_id !== undefined && resource !== 'projects') invalid('arguments.customer_id', '该筛选仅适用于项目');
+  if (data.role !== undefined) {
+    if (resource !== 'employees') invalid('arguments.role', '该筛选仅适用于员工');
+    const role = str(data.role, 'arguments.role', true);
+    if (!(employeeRoles as readonly string[]).includes(role)) invalid('arguments.role', '不支持的员工岗位');
+    where.push('role=?'); values.push(role);
+  }
   if (q) { where.push(`instr(lower(${resource === 'employees' ? 'display_name' : resource === 'projects' ? 'p.name' : 'name'}),lower(?))>0`); values.push(q); }
   const clause = where.length ? ` WHERE ${where.join(' AND ')}` : '';
   const db = getOrderDb();
   return { items: db.prepare(`SELECT ${columns} FROM ${from}${clause} ORDER BY ${sort} LIMIT ? OFFSET ?`).all(...values, limit, offset), total: (db.prepare(`SELECT COUNT(*) AS n FROM ${from}${clause}`).get(...values) as { n: number }).n, limit, offset };
+}
+
+type CreateReplay = { request_hash: string; order_id: string };
+type IdempotencyTable = { table: string; column: string; value: string | number };
+/** 服务代理使用独立幂等表，避免与旧 uid=-1 命名空间冲突；legacy 保持旧表。 */
+function idempotencyTable(identity: CurrentIdentity): IdempotencyTable {
+  if (isServiceAgent(identity)) {
+    if (!identity.agentId) throw new OrderToolError('FORBIDDEN', '服务代理身份缺少 agent_id', 403);
+    return { table: 'ai_service_order_requests', column: 'agent_id', value: identity.agentId };
+  }
+  return { table: 'ai_order_requests', column: 'actor_uid', value: identity.uid };
+}
+function findReplay(identity: CurrentIdentity, key: string): CreateReplay | undefined {
+  const { table, column, value } = idempotencyTable(identity);
+  const db = getOrderDb();
+  // 只读取已存在的表：预览和重放不创建表、不写订单、不写审计。
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) return undefined;
+  return db.prepare(`SELECT request_hash,order_id FROM ${table} WHERE ${column}=? AND request_key=?`).get(value, key) as CreateReplay | undefined;
+}
+function rememberCreate(identity: CurrentIdentity, key: string, requestHash: string, orderId: string) {
+  const { table, column, value } = idempotencyTable(identity);
+  const db = getOrderDb();
+  if (table === 'ai_service_order_requests') {
+    db.exec('CREATE TABLE IF NOT EXISTS ai_service_order_requests(agent_id TEXT NOT NULL,request_key TEXT NOT NULL,request_hash TEXT NOT NULL,order_id TEXT NOT NULL,PRIMARY KEY(agent_id,request_key))');
+  } else {
+    db.exec('CREATE TABLE IF NOT EXISTS ai_order_requests(actor_uid INTEGER NOT NULL,request_key TEXT NOT NULL,request_hash TEXT NOT NULL,order_id TEXT NOT NULL,PRIMARY KEY(actor_uid,request_key))');
+  }
+  db.prepare(`INSERT INTO ${table}(${column},request_key,request_hash,order_id) VALUES(?,?,?,?)`).run(value, key, requestHash, orderId);
+}
+/** create_order 与 batch_create_orders 共用的创建实现；调用方必须已开启事务。 */
+function createOrderWithin(data: Record<string, unknown>, identity: CurrentIdentity, path: string, dry: boolean, tool: string) {
+  const rawOrder = obj(data.order, `${path}.order`);
+  const key = str(data.idempotency_key, `${path}.idempotency_key`, !dry);
+  if (key.length > 80) invalid(`${path}.idempotency_key`, '幂等键最长 80 字符');
+  const requestHash = hash(stable(rawOrder));
+  if (key) {
+    const replay = findReplay(identity, key);
+    if (replay) {
+      if (replay.request_hash !== requestHash) throw new OrderToolError('IDEMPOTENCY_CONFLICT', '同一幂等键不能用于不同订单内容', 409, `${path}.idempotency_key`);
+      const previous = getOrderById(replay.order_id);
+      if (!previous) throw new OrderToolError('IDEMPOTENCY_CONFLICT', '此请求已创建的订单已删除，不能用同一键重新创建', 409, `${path}.idempotency_key`);
+      // 重放只读：不写订单、不改变归属、不写审计。
+      return { dry_run: dry, replayed: true, order: publicOrder(access(replay.order_id, identity), identity) };
+    }
+  }
+  const order = normalizeOrder(rawOrder, `${path}.order`, identity);
+  order.status = '已提交'; order.payment_status = '未结款';
+  if (dry) return { dry_run: true, replayed: false, order: previewOrder(order) };
+  const created = createOrder(order);
+  setOrderEmployees(String(created.id), order.created_by_uid, order.designer_uid, order.planner_uid);
+  if (key) rememberCreate(identity, key, requestHash, String(created.id));
+  addAuditLog({
+    ...auditActor(identity), action: 'create', entityType: 'order', entityId: String(created.id),
+    detail: { ...auditDetail(identity), tool, created_by_uid: order.created_by_uid }
+  });
+  return { dry_run: false, replayed: false, order: publicOrder(access(String(created.id), identity), identity) };
+}
+function batchCreateOrders(data: Record<string, unknown>, identity: CurrentIdentity) {
+  allowed(data, ['entries', 'dry_run']);
+  if (!Array.isArray(data.entries) || data.entries.length < 1 || data.entries.length > 50) invalid('arguments.entries', 'entries 必须是 1–50 条数组');
+  const dry = preview(data);
+  const entries = data.entries;
+  const db = getOrderDb();
+  const execute = () => {
+    const seen = new Set<string>();
+    const prepared = entries.map((raw, index) => {
+      const path = `arguments.entries[${index}]`;
+      const entry = obj(raw, path);
+      allowed(entry, ['order', 'idempotency_key'], path);
+      const key = str(entry.idempotency_key, `${path}.idempotency_key`, !dry);
+      if (key.length > 80) invalid(`${path}.idempotency_key`, '幂等键最长 80 字符');
+      if (key) {
+        if (seen.has(key)) invalid(`${path}.idempotency_key`, '同一批次内幂等键不能重复');
+        seen.add(key);
+      }
+      return { path, entry };
+    });
+    if (dry) {
+      const items = prepared.map(({ path, entry }) => createOrderWithin(entry, identity, path, true, 'batch_create_orders'));
+      return { dry_run: true, items, total: items.length };
+    }
+    // 正式写入前先用预览模式验证全部条目，任一条失败则不进入任何写入。
+    for (const { path, entry } of prepared) createOrderWithin(entry, identity, path, true, 'batch_create_orders');
+    const items = prepared.map(({ path, entry }) => createOrderWithin(entry, identity, path, false, 'batch_create_orders'));
+    return { dry_run: false, items, total: items.length };
+  };
+  // 正式写入使用唯一外层 immediate 事务：任一条失败全部回滚；预览不写。
+  return dry ? db.transaction(execute)() : db.transaction(execute).immediate();
 }
 
 export function runOrderTool(tool: string, input: unknown, identity: CurrentIdentity) {
@@ -221,32 +354,11 @@ export function runOrderTool(tool: string, input: unknown, identity: CurrentIden
     if (!hasAnyRole(identity, orderCreateRoles)) throw new OrderToolError('FORBIDDEN', '没有创建订单权限', 403);
     allowed(data, ['order', 'idempotency_key', 'dry_run']);
     const dry = preview(data);
-    const rawOrder = obj(data.order, 'arguments.order');
-    const key = str(data.idempotency_key, 'arguments.idempotency_key', !dry);
-    if (key.length > 80) invalid('arguments.idempotency_key', '幂等键最长 80 字符');
-    const requestHash = hash(stable(rawOrder));
-    return db.transaction(() => {
-      // 独立于网页的全局幂等键，避免跨用户读取或改写订单归属。
-      const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='ai_order_requests'").get();
-      if (key && exists) {
-        const replay = db.prepare('SELECT request_hash,order_id FROM ai_order_requests WHERE actor_uid=? AND request_key=?').get(identity.uid, key) as { request_hash: string; order_id: string } | undefined;
-        if (replay) {
-          if (replay.request_hash !== requestHash) throw new OrderToolError('IDEMPOTENCY_CONFLICT', '同一幂等键不能用于不同订单内容', 409);
-          const previous = getOrderById(replay.order_id);
-          if (!previous) throw new OrderToolError('IDEMPOTENCY_CONFLICT', '此请求已创建的订单已删除，不能用同一键重新创建', 409);
-          return { dry_run: dry, replayed: true, order: publicOrder(access(replay.order_id, identity), identity) };
-        }
-      }
-      const order = normalizeOrder(rawOrder, 'arguments.order');
-      order.created_by = identity.displayName; order.status = '已提交'; order.payment_status = '未结款';
-      if (dry) return { dry_run: true, order: { ...previewOrder(order), created_by_uid: identity.uid } };
-      db.exec('CREATE TABLE IF NOT EXISTS ai_order_requests(actor_uid INTEGER NOT NULL,request_key TEXT NOT NULL,request_hash TEXT NOT NULL,order_id TEXT NOT NULL,PRIMARY KEY(actor_uid,request_key))');
-      const created = createOrder(order);
-      setOrderEmployees(String(created.id), identity.uid, order.designer_uid, order.planner_uid);
-      db.prepare('INSERT INTO ai_order_requests(actor_uid,request_key,request_hash,order_id) VALUES(?,?,?,?)').run(identity.uid, key, requestHash, created.id);
-      addAuditLog({ actorName: identity.displayName, actorUid: identity.uid, action: 'create', entityType: 'order', entityId: String(created.id), detail: { channel: 'ai_tool', tool } });
-      return { dry_run: false, replayed: false, order: publicOrder(access(String(created.id), identity), identity) };
-    }).immediate();
+    return db.transaction(() => createOrderWithin(data, identity, 'arguments', dry, 'create_order')).immediate();
+  }
+  if (tool === 'batch_create_orders') {
+    if (!hasAnyRole(identity, orderCreateRoles)) throw new OrderToolError('FORBIDDEN', '没有创建订单权限', 403);
+    return batchCreateOrders(data, identity);
   }
   if (tool === 'update_order') {
     allowed(data, ['order_id', 'expected_revision', 'changes', 'dry_run']);
@@ -257,14 +369,17 @@ export function runOrderTool(tool: string, input: unknown, identity: CurrentIden
       const existing = access(id, identity, true);
       if (!existing.created_by_uid) throw new OrderToolError('ORDER_CREATOR_UID_MISSING', '订单缺少原创建人 UID，需人工处理', 409);
       if (expected !== revision(id)) throw new OrderToolError('REVISION_CONFLICT', '订单已变化，请重新读取详情后决定修改', 409);
-      const order = normalizeOrder(obj(data.changes, 'arguments.changes'), 'arguments.changes', existing);
-      // 保留不可编辑的原始姓名快照，不能因hydrate显示名变化覆盖。
-      const original = db.prepare('SELECT created_by FROM orders_simple WHERE id=?').get(id) as { created_by: string };
-      order.created_by = original.created_by;
+      const changes = obj(data.changes, 'arguments.changes');
+      const order = normalizeOrder(changes, 'arguments.changes', identity, existing);
+      // 未重新归属时保留不可编辑的原始姓名快照，不能因 hydrate 显示名变化覆盖。
+      if (!Object.hasOwn(changes, 'created_by_uid') || changes.created_by_uid === existing.created_by_uid) {
+        const original = db.prepare('SELECT created_by FROM orders_simple WHERE id=?').get(id) as { created_by: string };
+        order.created_by = original.created_by;
+      }
       if (dry) return { dry_run: true, order_id: id, expected_revision: expected, order: { ...previewOrder(order), id, revision: expected, can_edit: true } };
       updateOrder(id, order);
-      setOrderEmployees(id, existing.created_by_uid, order.designer_uid, order.planner_uid);
-      addAuditLog({ actorName: identity.displayName, actorUid: identity.uid, action: 'update', entityType: 'order', entityId: id, detail: { channel: 'ai_tool', tool, fields: Object.keys(obj(data.changes, 'arguments.changes')), from_revision: expected } });
+      setOrderEmployees(id, order.created_by_uid, order.designer_uid, order.planner_uid);
+      addAuditLog({ ...auditActor(identity), action: 'update', entityType: 'order', entityId: id, detail: { ...auditDetail(identity), tool, fields: Object.keys(changes), from_revision: expected, created_by_uid: order.created_by_uid } });
       return { dry_run: false, order: publicOrder(getOrderById(id)!, identity) };
     }).immediate();
   }

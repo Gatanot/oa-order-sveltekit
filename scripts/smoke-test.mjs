@@ -11,7 +11,10 @@ const directory = mkdtempSync(join(tmpdir(), 'oa-order-test-'));
 const databasePath = join(directory, 'oa.db');
 const port = 4300 + Math.floor(Math.random() * 500);
 const origin = `http://127.0.0.1:${port}`;
-const server = spawn(process.execPath, ['build'], { env: { ...process.env, DATABASE_PATH: databasePath, NODE_ENV: 'test', OA_TEST_AUTH_BYPASS: '1', PORT: String(port), ORIGIN: origin }, stdio: ['ignore', 'pipe', 'pipe'] });
+// 固定的虚构服务 Agent 凭据：仅用于 smoke test，不对应任何真实密钥。
+const AI_SERVICE_KEY = 'smoke-ai-service-key-0123456789abcdef0123456789abcdef';
+const AI_SERVICE_ID = 'smoke-agent';
+const server = spawn(process.execPath, ['build'], { env: { ...process.env, DATABASE_PATH: databasePath, NODE_ENV: 'test', OA_TEST_AUTH_BYPASS: '1', OA_AI_SERVICE_KEY: AI_SERVICE_KEY, OA_AI_SERVICE_ID: AI_SERVICE_ID, PORT: String(port), ORIGIN: origin }, stdio: ['ignore', 'pipe', 'pipe'] });
 let logs = '';
 server.stdout.on('data', (chunk) => { logs += chunk; });
 server.stderr.on('data', (chunk) => { logs += chunk; });
@@ -34,6 +37,8 @@ async function waitForServer(targetOrigin = origin, readLogs = () => logs, child
 
 async function request(path, { json, ...options } = {}) {
   const headers = new Headers(options.headers);
+  // AI 路由只接受服务 Agent 密钥；业务接口不带该请求头。
+  if (path.startsWith('/api/ai/') && !headers.has('x-oa-agent-key')) headers.set('x-oa-agent-key', AI_SERVICE_KEY);
   if (json !== undefined) headers.set('content-type', 'application/json');
   if (options.body instanceof FormData) headers.set('origin', origin);
   const response = await fetch(`${origin}${path}`, { ...options, headers, body: json === undefined ? options.body : JSON.stringify(json), redirect: 'manual' });
@@ -42,7 +47,7 @@ async function request(path, { json, ...options } = {}) {
   return { response, data };
 }
 
-/** 以当前管理员身份调用 AI 小工具：统一 POST /api/ai/catalog 的 {tool,arguments} 请求体。 */
+/** 以服务 Agent 密钥调用 AI 小工具：统一 POST /api/ai/catalog 的 {tool,arguments} 请求体。 */
 async function aiCall(tool, args) {
   return request('/api/ai/catalog', { method: 'POST', json: { tool, arguments: args } });
 }
@@ -95,6 +100,7 @@ function readDb(assertions) {
 
 async function requestOn(base, path, { json, ...options } = {}) {
   const headers = new Headers(options.headers);
+  // 刻意不注入 X-OA-Agent-Key：用于验证 AI 路由拒绝浏览器身份与无密钥请求。
   if (json !== undefined) headers.set('content-type', 'application/json');
   if (options.body instanceof FormData) headers.set('origin', base);
   const response = await fetch(`${base}${path}`, { ...options, headers, body: json === undefined ? options.body : JSON.stringify(json), redirect: 'manual' });
@@ -127,6 +133,7 @@ async function withAnonymousServer(assertions) {
   const anonymousEnv = { ...process.env, DATABASE_PATH: databasePath, NODE_ENV: 'test', PORT: String(anonymousPort), ORIGIN: anonymousOrigin, ARTIFACT_APP_ID: '' };
   delete anonymousEnv.OA_TEST_AUTH_BYPASS;
   delete anonymousEnv.OA_TEST_UID;
+  delete anonymousEnv.OA_AI_SERVICE_KEY;
   const anonymousServer = spawn(process.execPath, ['build'], { env: anonymousEnv, stdio: ['ignore', 'pipe', 'pipe'] });
   anonymousServer.stdout.on('data', (chunk) => { anonymousLogs += chunk; });
   anonymousServer.stderr.on('data', (chunk) => { anonymousLogs += chunk; });
@@ -150,6 +157,11 @@ try {
   result = await request('/admin');
   assert.equal(result.response.status, 200, '系统管理员可通过网址直接进入 admin 页面');
   assert.match(Buffer.from(result.data).toString(), /我的额外业务身份/);
+  // 浏览器测试身份旁路只影响网页/业务接口：缺少 X-OA-Agent-Key 时浏览器身份也拿不到 AI 权限。
+  const browserAiMe = await requestOn(origin, '/api/ai/me');
+  assert.equal(browserAiMe.response.status, 401, '浏览器测试身份无 Agent 密钥不能读取 AI 身份');
+  const browserAiCatalog = await requestOn(origin, '/api/ai/catalog');
+  assert.equal(browserAiCatalog.response.status, 401, '浏览器测试身份无 Agent 密钥不能获取 AI 工具清单');
   result = await request('/orders');
   assert.equal(result.response.headers.get('cache-control'), 'no-store', '页面 HTML 不应缓存');
   assert.doesNotMatch(Buffer.from(result.data).toString(), /href="\/admin"|管理员入口/, '工作台导航不应出现 admin 入口');
@@ -167,18 +179,15 @@ try {
   assert.equal(result.response.status, 200, '财务身份可以导出订单');
   result = await request('/api/catalog/sources', { method: 'POST', json: { kind: 'cost', owner_name: '财务身份验证库', source_file: 'finance-check.csv' } });
   assert.equal(result.response.status, 403, '财务不能新增/导入报价成本库');
-  // AI 小工具需与页面/接口权限一致：财务只能读身份，不能读工具清单也不能调用工具。
-  result = await request('/api/ai/me');
-  assert.equal(result.response.status, 200, JSON.stringify(result.data));
-  assert.equal(result.data.data.role, 'finance', 'AI 身份接口应反映管理员额外业务身份');
-  assert.equal(result.data.data.active, true);
-  assert.deepEqual(result.data.data.permissions.catalog, { read: false, manage: false }, '财务默认不应有资料库 AI 权限');
-  const financeAiList = await request('/api/ai/catalog');
-  assert.equal(financeAiList.response.status, 403, '财务不能获取 AI 工具清单');
-  const financeAiUpsert = await aiCall('search_items', { kind: 'cost', q: 'AI-SMOKE' });
-  assert.equal(financeAiUpsert.response.status, 403, '财务不能调用 AI 小工具');
-  const financeAiCreate = await aiCall('create_source', { kind: 'cost', owner_name: 'AI-SMOKE-财务越权库', dry_run: false });
-  assert.equal(financeAiCreate.response.status, 403, '财务不能通过 AI 新建资料库');
+  // AI 路由只认服务 Agent 密钥，与网页/业务身份完全分离：财务额外身份无密钥一律 401。
+  result = await requestOn(origin, '/api/ai/me');
+  assert.equal(result.response.status, 401, '财务额外身份无 Agent 密钥不能读取 AI 身份');
+  const financeAiList = await requestOn(origin, '/api/ai/catalog');
+  assert.equal(financeAiList.response.status, 401, '财务额外身份无 Agent 密钥不能获取 AI 工具清单');
+  const financeAiUpsert = await requestOn(origin, '/api/ai/catalog', { method: 'POST', json: { tool: 'search_items', arguments: { kind: 'cost', q: 'AI-SMOKE' } } });
+  assert.equal(financeAiUpsert.response.status, 401, '财务额外身份无 Agent 密钥不能调用 AI 小工具');
+  const financeAiCreate = await requestOn(origin, '/api/ai/catalog', { method: 'POST', json: { tool: 'create_source', arguments: { kind: 'cost', owner_name: 'AI-SMOKE-财务越权库', dry_run: false } } });
+  assert.equal(financeAiCreate.response.status, 401, '财务额外身份无 Agent 密钥不能通过 AI 新建资料库');
   assert.equal(readDb((db) => db.prepare("SELECT COUNT(*) FROM catalog_sources WHERE owner_name='AI-SMOKE-财务越权库'").pluck().get()), 0, '被拒绝的 AI 调用不应写入资料库');
   const clearExtraIdentity = new FormData();
   result = await request('/admin?/clearExtraIdentity', { method: 'POST', body: clearExtraIdentity });
@@ -461,16 +470,19 @@ try {
     assert.deepEqual(migrated.prepare('PRAGMA foreign_key_check').all(), []);
   });
 
-  // AI 小工具：身份/工具清单、默认预览不写库、金额元口径、重复与跨库防护、校验错误与原子性。
+  // AI 小工具：服务 Agent 身份/工具清单、默认预览不写库、金额元口径、重复与跨库防护、校验错误与原子性。
   // 所有测试数据均使用 "AI-SMOKE-" 前缀，避免影响其他断言。
   result = await request('/api/ai/me');
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
-  assert.equal(result.data.data.uid, 826, 'AI 身份接口应返回当前登录 UID');
-  assert.equal(result.data.data.username, 'catsco');
-  assert.ok(result.data.data.displayName, 'AI 身份接口应返回展示姓名');
-  assert.equal(result.data.data.role, 'admin');
-  assert.equal(result.data.data.active, true);
-  assert.deepEqual(result.data.data.permissions.catalog, { read: true, manage: true }, '管理员应可读写资料库');
+  assert.equal(result.data.data.kind, 'service_agent', 'AI 身份接口应返回服务 Agent');
+  assert.equal(result.data.data.agent_id, 'smoke-agent', 'AI 身份接口应返回配置的服务 Agent ID');
+  assert.ok(result.data.data.display_name, 'AI 身份接口应返回展示名称');
+  assert.equal(result.data.data.uid, undefined, 'AI 身份不再绑定浏览器登录 UID');
+  assert.equal(result.data.data.username, undefined, 'AI 身份不再返回浏览器用户名');
+  assert.equal(result.data.data.role, undefined, 'AI 身份不再返回员工角色');
+  assert.equal(result.data.data.active, undefined, 'AI 身份不再返回员工启用状态');
+  assert.deepEqual(result.data.data.permissions.catalog, { read: true, manage: true }, '服务 Agent 应可读写资料库');
+  assert.equal(result.data.data.permissions.orders.read, true, '服务 Agent 应可读取订单');
   result = await request('/api/ai/catalog');
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
   const aiToolNames = result.data.data.tools.map((tool) => tool.name);
@@ -775,26 +787,26 @@ try {
     assert.ok(result.data.data.some((item) => item.attachment_kind === 'design' && item.file_name === 'design.png'), '设计图应以 design 附件保存');
   });
 
-  // AI 小工具鉴权：待开通与未登录身份都不能读取身份/清单或调用工具。
+  // AI 小工具鉴权：无 Agent 密钥时，待开通浏览器身份与未登录请求同样只能得到 401。
   await withIdentityServer(1099, async (base) => {
     let result = await requestOn(base, '/api/ai/me');
-    assert.equal(result.response.status, 403, '待开通身份不能读取 AI 身份信息');
+    assert.equal(result.response.status, 401, '待开通身份无 Agent 密钥不能读取 AI 身份信息');
     result = await requestOn(base, '/api/ai/catalog');
-    assert.equal(result.response.status, 403, '待开通身份不能获取 AI 工具清单');
+    assert.equal(result.response.status, 401, '待开通身份无 Agent 密钥不能获取 AI 工具清单');
     result = await requestOn(base, '/api/ai/catalog', { method: 'POST', json: { tool: 'search_items', arguments: { kind: 'cost', q: 'AI-SMOKE' } } });
-    assert.equal(result.response.status, 403, '待开通身份不能调用 AI 小工具');
+    assert.equal(result.response.status, 401, '待开通身份无 Agent 密钥不能调用 AI 小工具');
   }, '/api/employees', [403]);
 
   await withAnonymousServer(async (base) => {
     let result = await requestOn(base, '/api/ai/me');
-    assert.equal(result.response.status, 401, '未登录不能读取 AI 身份信息');
+    assert.equal(result.response.status, 401, '未登录且无 Agent 密钥不能读取 AI 身份信息');
     result = await requestOn(base, '/api/ai/catalog');
-    assert.equal(result.response.status, 401, '未登录不能获取 AI 工具清单');
+    assert.equal(result.response.status, 401, '未登录且无 Agent 密钥不能获取 AI 工具清单');
     result = await requestOn(base, '/api/ai/catalog', { method: 'POST', json: { tool: 'create_source', arguments: { kind: 'cost', owner_name: 'AI-SMOKE-未登录库' } } });
-    assert.equal(result.response.status, 401, '未登录不能调用 AI 小工具');
+    assert.equal(result.response.status, 401, '未登录且无 Agent 密钥不能调用 AI 小工具');
   });
 
-  console.log('Smoke test passed: public workbench, catalog import/copy, creator snapshots, order totals, independent attachments, order-linked reimbursements, reimbursement filters/state machine, voucher idempotency, aligned exports, employee management authorization, execution company management, AI catalog tools authorization/preview/money/conflict handling, audit and v18/v20/v21/v23/v27 migrations.');
+  console.log('Smoke test passed: public workbench, catalog import/copy, creator snapshots, order totals, independent attachments, order-linked reimbursements, reimbursement filters/state machine, voucher idempotency, aligned exports, employee management authorization, execution company management, AI service-key auth and catalog tools preview/money/conflict handling, audit and v18/v20/v21/v23/v27 migrations.');
 } finally {
   server.kill('SIGTERM');
   await new Promise((resolve) => { server.once('exit', resolve); setTimeout(resolve, 1000); });
