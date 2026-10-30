@@ -786,6 +786,13 @@ export function canEmployeeAccessOrder(id: string, uid: number): boolean {
   return Boolean(getOrderDb().prepare('SELECT 1 FROM orders_simple WHERE id=? AND (created_by_uid=? OR designer_uid=? OR planner_uid=?)').get(id, uid, uid, uid));
 }
 
+/** 按 ID 读取完整订单；调用方必须先进行行级权限检查。 */
+export function getOrderById(id: string): Record<string, any> | undefined {
+  const row = getOrderDb().prepare(`SELECT o.*,c.name AS customer_name,p.name AS project_name
+    FROM orders_simple o JOIN customers_simple c ON c.id=o.customer_id JOIN projects_simple p ON p.id=o.project_id WHERE o.id=?`).get(id) as Record<string, unknown> | undefined;
+  return row ? hydrateOrder(row) : undefined;
+}
+
 export function listOrders(): Array<Record<string, any>> {
   const rows = getOrderDb().prepare(`SELECT o.*, c.name AS customer_name, c.contact AS customer_contact, p.name AS project_name, p.owner AS project_owner FROM orders_simple o JOIN customers_simple c ON c.id=o.customer_id JOIN projects_simple p ON p.id=o.project_id ORDER BY o.order_date DESC,o.created_at DESC`).all() as Array<Record<string, unknown>>;
   return rows.map(hydrateOrder);

@@ -55,9 +55,14 @@ export const handle: Handle = async ({ event, resolve }) => {
   const routeId = event.route.id || '';
   if (routeId.startsWith('/api/') && routeId !== '/api/whoami') {
     const current = await event.locals.getCurrentIdentity();
-    if (!current) return json({ error: { code: 'UNAUTHORIZED', message: '请通过 Catsco 登录' } }, { status: 401 });
+    const isAiRequest = routeId.startsWith('/api/ai/');
+    const authHeaders = isAiRequest ? { 'Cache-Control': 'no-store' } : undefined;
+    if (!current) return json({ error: {
+      code: isAiRequest ? 'LOGIN_REQUIRED' : 'UNAUTHORIZED',
+      message: isAiRequest ? '未取得当前 Catsco 用户身份，请登录后重新发起操作；无需向 AI 提供凭据' : '请通过 Catsco 登录'
+    } }, { status: 401, headers: authHeaders });
     if (current.role !== 'admin' && (!current.active || current.role === 'pending')) {
-      return json({ error: { code: 'FORBIDDEN', message: '账户待管理员开通' } }, { status: 403 });
+      return json({ error: { code: 'FORBIDDEN', message: '账户待管理员开通或已停用' } }, { status: 403, headers: authHeaders });
     }
     const method = event.request.method;
     const isOrderExport = routeId === '/api/orders/export' && !hasAnyRole(current, orderExportRoles);

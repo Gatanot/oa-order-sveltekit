@@ -67,6 +67,16 @@ Smoke 测试覆盖无登录访问、资料库导入/沿用、项目和订单写�
 | `/reimbursements/review` | 报销审核队列，财务/老板/管理人员/管理员可见，审核者不能处理本人报销 |
 | `/catalog` | 报价库与成本库，可查看该页面的身份（管理员/管理人员/老板/执行）均可新增、导入和维护 |
 
+## AI 接口试用
+
+- `GET /api/ai/me`：获取可信登录身份（UID、姓名、有效业务角色、资料库及订单权限）。
+- `GET /api/ai/catalog`：获取报价/成本库工具定义及 JSON Schema。
+- `POST /api/ai/catalog`：执行资料库查询、条目搜索、新建来源、批量新增/更新；写入默认只预览，显式 `dry_run: false` 才提交。
+- `GET/POST /api/ai/orders`：订单搜索、详情、填单参考数据、预览/创建、带版本校验的局部修改；不开放删除和结款，见 [订单工具说明](docs/ai-order-tools.md)。
+- Catsco 可信宿主适配器：`src/lib/server/catsco-oa-tools.js`，AI 只提交业务参数，宿主按本次会话自动绑定当前用户，模型不接触任何认证信息。
+
+所有操作以发起调用的当前登录用户执行，沿用 Artifact 验证及现有角色授权；不支持模型指定 UID，不回退到全局用户。缺少会话时提示登录，不要求向 AI 提供凭据。Catsco 侧工具注册/当前用户会话转发仍需接线联调，不能仅凭聊天窗口已登录就认为自动接通。本期不是 MCP 服务。旧 CLI 降为人工本地调试（需显式设置 `OA_DEV_CLI=1`）。详见 [AI 工具调用说明](docs/ai-catalog-tools.md)。
+
 ## 数据与备份
 
 SQLite 默认位于 `data/oa.db`，附件默认位于数据库同级 `attachments/`。数据库和附件必须成对备份。应用启动时在事务内升级 schema；当前版本为 **v27**，报价库与成本库拆分为 `catalog_quote_items`/`catalog_cost_items` 两张表（报价含税/不含税双价），订单行分别外键到对应库并移除 `orders_simple.catalog_id`。此前的 v20 移除了旧版登录表和用户 ID 关联；v21 至 v26 为增量字段与权限结构调整。

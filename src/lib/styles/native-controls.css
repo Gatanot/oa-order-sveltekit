@@ -66,6 +66,18 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   opacity: .62;
 }
 
+/* 日期控件保持各内核自己默认的 display（Chromium/Firefox: inline-block，WebKit: inline-flex）。
+   样式层为了排布会把输入框统一改成 display:block，但 WebKit（Safari）在 block 下会把日期文字
+   顶在输入框顶部、下方留出大片空白（左右仍是左对齐）；revert 回浏览器默认值即可恢复原生垂直居中。
+   第一行是不支持 revert 的旧浏览器回退（inline-block 在各内核下同样能垂直居中）。 */
+input[type="date"],
+.form-grid input[type="date"],
+.drawer-filter-grid input[type="date"],
+.project-modal-body label input[type="date"] {
+  display: inline-block;
+  display: revert;
+}
+
 input::placeholder,
 textarea::placeholder {
   color: #96a2b3;

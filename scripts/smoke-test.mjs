@@ -17,15 +17,16 @@ server.stdout.on('data', (chunk) => { logs += chunk; });
 server.stderr.on('data', (chunk) => { logs += chunk; });
 let fixturePortOffset = 0;
 
-async function waitForServer(targetOrigin = origin, readLogs = () => logs, child = server) {
+async function waitForServer(targetOrigin = origin, readLogs = () => logs, child = server, probePath = '/orders', readyStatuses = null) {
   for (let index = 0; index < 80; index++) {
     // 进程已退出时立即失败并带上日志，避免迁移/启动错误只表现为 8 秒超时。
     if (child.exitCode !== null) throw new Error(`服务器已退出（code ${child.exitCode}）\n${readLogs()}`);
     let response;
-    try { response = await fetch(`${targetOrigin}/orders`); } catch { /* 端口未就绪，重试 */ }
-    if (response?.ok) return;
-    // 服务已能响应但返回 5xx，说明迁移/初始化失败，立即失败而不是空等 8 秒。
-    if (response && response.status >= 500) throw new Error(`服务器启动失败（HTTP ${response.status}）\n${readLogs()}`);
+    try { response = await fetch(`${targetOrigin}${probePath}`); } catch { /* 端口未就绪，重试 */ }
+    // 部分身份（待开通/未登录）本就无法拿到 2xx，按预期状态码判断是否已可响应。
+    if (response && (readyStatuses ? readyStatuses.includes(response.status) : response.ok)) return;
+    // 服务已能响应但返回非预期 5xx，说明迁移/初始化失败，立即失败而不是空等 8 秒。
+    if (response && !readyStatuses && response.status >= 500) throw new Error(`服务器启动失败（HTTP ${response.status}）\n${readLogs()}`);
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(`服务器启动超时\n${readLogs()}`);
@@ -39,6 +40,11 @@ async function request(path, { json, ...options } = {}) {
   const contentType = response.headers.get('content-type') || '';
   const data = contentType.includes('json') ? await response.json() : await response.arrayBuffer();
   return { response, data };
+}
+
+/** 以当前管理员身份调用 AI 小工具：统一 POST /api/ai/catalog 的 {tool,arguments} 请求体。 */
+async function aiCall(tool, args) {
+  return request('/api/ai/catalog', { method: 'POST', json: { tool, arguments: args } });
 }
 
 /** 复制当前数据库为旧版本 fixture，启动一次服务触发迁移，再用只读连接断言结果。 */
@@ -77,6 +83,16 @@ async function withMigratedFixture(name, legacyVersion, prepare, assertions) {
   }
 }
 
+/** 只读连接做数据库断言，避免影响被测服务持有的写连接。 */
+function readDb(assertions) {
+  const connection = new Database(databasePath, { readonly: true });
+  try {
+    return assertions(connection);
+  } finally {
+    connection.close();
+  }
+}
+
 async function requestOn(base, path, { json, ...options } = {}) {
   const headers = new Headers(options.headers);
   if (json !== undefined) headers.set('content-type', 'application/json');
@@ -88,7 +104,7 @@ async function requestOn(base, path, { json, ...options } = {}) {
 }
 
 /** 以指定员工 UID 启动一次服务，用于验证非管理员的员工管理授权。 */
-async function withIdentityServer(uid, assertions) {
+async function withIdentityServer(uid, assertions, probePath = '/orders', readyStatuses = null) {
   const identityPort = port + 900 + fixturePortOffset++;
   const identityOrigin = `http://127.0.0.1:${identityPort}`;
   let identityLogs = '';
@@ -96,10 +112,29 @@ async function withIdentityServer(uid, assertions) {
   identityServer.stdout.on('data', (chunk) => { identityLogs += chunk; });
   identityServer.stderr.on('data', (chunk) => { identityLogs += chunk; });
   try {
-    await waitForServer(identityOrigin, () => identityLogs, identityServer);
+    await waitForServer(identityOrigin, () => identityLogs, identityServer, probePath, readyStatuses);
     await assertions(identityOrigin);
   } finally {
     identityServer.kill('SIGTERM');
+  }
+}
+
+/** 不注入测试身份启动一次服务，用于验证未登录时 AI 接口由 hooks 直接返回 401。 */
+async function withAnonymousServer(assertions) {
+  const anonymousPort = port + 1200 + fixturePortOffset++;
+  const anonymousOrigin = `http://127.0.0.1:${anonymousPort}`;
+  let anonymousLogs = '';
+  const anonymousEnv = { ...process.env, DATABASE_PATH: databasePath, NODE_ENV: 'test', PORT: String(anonymousPort), ORIGIN: anonymousOrigin, ARTIFACT_APP_ID: '' };
+  delete anonymousEnv.OA_TEST_AUTH_BYPASS;
+  delete anonymousEnv.OA_TEST_UID;
+  const anonymousServer = spawn(process.execPath, ['build'], { env: anonymousEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+  anonymousServer.stdout.on('data', (chunk) => { anonymousLogs += chunk; });
+  anonymousServer.stderr.on('data', (chunk) => { anonymousLogs += chunk; });
+  try {
+    await waitForServer(anonymousOrigin, () => anonymousLogs, anonymousServer, '/api/employees', [401]);
+    await assertions(anonymousOrigin);
+  } finally {
+    anonymousServer.kill('SIGTERM');
   }
 }
 
@@ -132,6 +167,19 @@ try {
   assert.equal(result.response.status, 200, '财务身份可以导出订单');
   result = await request('/api/catalog/sources', { method: 'POST', json: { kind: 'cost', owner_name: '财务身份验证库', source_file: 'finance-check.csv' } });
   assert.equal(result.response.status, 403, '财务不能新增/导入报价成本库');
+  // AI 小工具需与页面/接口权限一致：财务只能读身份，不能读工具清单也不能调用工具。
+  result = await request('/api/ai/me');
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  assert.equal(result.data.data.role, 'finance', 'AI 身份接口应反映管理员额外业务身份');
+  assert.equal(result.data.data.active, true);
+  assert.deepEqual(result.data.data.permissions.catalog, { read: false, manage: false }, '财务默认不应有资料库 AI 权限');
+  const financeAiList = await request('/api/ai/catalog');
+  assert.equal(financeAiList.response.status, 403, '财务不能获取 AI 工具清单');
+  const financeAiUpsert = await aiCall('search_items', { kind: 'cost', q: 'AI-SMOKE' });
+  assert.equal(financeAiUpsert.response.status, 403, '财务不能调用 AI 小工具');
+  const financeAiCreate = await aiCall('create_source', { kind: 'cost', owner_name: 'AI-SMOKE-财务越权库', dry_run: false });
+  assert.equal(financeAiCreate.response.status, 403, '财务不能通过 AI 新建资料库');
+  assert.equal(readDb((db) => db.prepare("SELECT COUNT(*) FROM catalog_sources WHERE owner_name='AI-SMOKE-财务越权库'").pluck().get()), 0, '被拒绝的 AI 调用不应写入资料库');
   const clearExtraIdentity = new FormData();
   result = await request('/admin?/clearExtraIdentity', { method: 'POST', body: clearExtraIdentity });
   assert.equal(result.response.status, 200, '管理员可通过 admin 页面移除额外身份');
@@ -413,6 +461,142 @@ try {
     assert.deepEqual(migrated.prepare('PRAGMA foreign_key_check').all(), []);
   });
 
+  // AI 小工具：身份/工具清单、默认预览不写库、金额元口径、重复与跨库防护、校验错误与原子性。
+  // 所有测试数据均使用 "AI-SMOKE-" 前缀，避免影响其他断言。
+  result = await request('/api/ai/me');
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  assert.equal(result.data.data.uid, 826, 'AI 身份接口应返回当前登录 UID');
+  assert.equal(result.data.data.username, 'catsco');
+  assert.ok(result.data.data.displayName, 'AI 身份接口应返回展示姓名');
+  assert.equal(result.data.data.role, 'admin');
+  assert.equal(result.data.data.active, true);
+  assert.deepEqual(result.data.data.permissions.catalog, { read: true, manage: true }, '管理员应可读写资料库');
+  result = await request('/api/ai/catalog');
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  const aiToolNames = result.data.data.tools.map((tool) => tool.name);
+  for (const name of ['list_sources', 'search_items', 'create_source', 'upsert_items']) assert.ok(aiToolNames.includes(name), `工具清单应包含 ${name}`);
+  const upsertTool = result.data.data.tools.find((tool) => tool.name === 'upsert_items');
+  assert.ok(upsertTool?.inputSchema?.properties?.rows ?? upsertTool?.parameters?.properties?.rows, '工具清单应下发行参数');
+
+  // create_source：默认 dry_run 只预览，显式 dry_run=false 才写入；重复来源返回 409。
+  result = await aiCall('create_source', { kind: 'cost', owner_name: 'AI-SMOKE-厂商甲' });
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  assert.equal(result.data.data.dry_run, true, 'create_source 默认应只预览');
+  assert.equal(readDb((db) => db.prepare("SELECT COUNT(*) FROM catalog_sources WHERE owner_name='AI-SMOKE-厂商甲'").pluck().get()), 0, '预览不应写入资料库');
+  result = await aiCall('create_source', { kind: 'cost', owner_name: 'AI-SMOKE-厂商甲', dry_run: false });
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  assert.equal(result.data.data.dry_run, false, '显式提交应返回写入结果');
+  const aiCostSourceId = result.data.data.source.id;
+  assert.ok(aiCostSourceId, '写入应返回 source_id');
+  result = await aiCall('create_source', { kind: 'cost', owner_name: 'AI-SMOKE-厂商甲', dry_run: false });
+  assert.equal(result.response.status, 409, '重复来源必须拒绝');
+  assert.equal(result.data.error?.code, 'CONFLICT');
+
+  // upsert_items：默认预览不写库；提交后金额按元存储，搜索返回元字符串而不是放大的分。
+  const aiCostRows = [{ category: 'AI-SMOKE-成本类', name: 'AI-SMOKE-喷画', specification: 'AI-SMOKE-规格', unit: 'sqm', cost_unit: '12.34', cost_unit_excl_tax: '10.92', tax_rate: '13%' }];
+  result = await aiCall('upsert_items', { source_id: aiCostSourceId, rows: aiCostRows });
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  assert.equal(result.data.data.dry_run, true, 'upsert_items 默认应只预览');
+  assert.equal(result.data.data.inserted, 1);
+  assert.equal(result.data.data.money_unit, 'yuan');
+  assert.equal(result.data.data.rows[0].cost_unit, '12.34', '预览金额应为元字符串');
+  assert.equal(readDb((db) => db.prepare("SELECT COUNT(*) AS count FROM catalog_cost_items WHERE source_id=? AND name='AI-SMOKE-喷画'").get(aiCostSourceId).count), 0, '预览不应写入条目');
+  result = await aiCall('upsert_items', { source_id: aiCostSourceId, rows: aiCostRows, dry_run: false });
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  assert.equal(result.data.data.dry_run, false);
+  assert.equal(result.data.data.inserted, 1);
+  assert.equal(result.data.data.rows[0].cost_unit, '12.34', '返回的金额应为元字符串');
+  assert.equal(readDb((db) => db.prepare("SELECT cost_unit,cost_unit_excl_tax,supplier_name FROM catalog_cost_items WHERE source_id=? AND name='AI-SMOKE-喷画'").get(aiCostSourceId).cost_unit), 1234, '库内应以分存储 12.34 元');
+  result = await aiCall('search_items', { kind: 'cost', source_id: aiCostSourceId, q: 'AI-SMOKE-喷画' });
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  assert.equal(result.data.data.money_unit, 'yuan');
+  assert.equal(result.data.data.items.length, 1);
+  assert.equal(result.data.data.items[0].cost_unit, '12.34', '搜索返回的金额不应放大 100 倍');
+  assert.equal(result.data.data.items[0].cost_unit_excl_tax, '10.92');
+  assert.equal(result.data.data.items[0].supplier_name, 'AI-SMOKE-厂商甲', '成本条目供应商应取资料库名称');
+
+  // 按自然键更新同一行，不新增重复条目。
+  result = await aiCall('upsert_items', { source_id: aiCostSourceId, rows: [{ ...aiCostRows[0], cost_unit: '20.00' }], dry_run: false });
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  assert.equal(result.data.data.updated, 1, '同自然键应更新而非新增');
+  assert.equal(result.data.data.inserted, 0);
+  result = await aiCall('search_items', { kind: 'cost', source_id: aiCostSourceId, q: 'AI-SMOKE-喷画' });
+  assert.equal(result.data.data.items.length, 1, '更新后不应产生重复条目');
+  assert.equal(result.data.data.items[0].cost_unit, '20.00');
+
+  // 批量写入的原子性：任意一行非法则整批不落库。
+  result = await aiCall('upsert_items', { source_id: aiCostSourceId, dry_run: false, rows: [
+    { category: 'AI-SMOKE-原子性', name: 'AI-SMOKE-合法行', cost_unit: '1.00' },
+    { category: 'AI-SMOKE-原子性', name: 'AI-SMOKE-非法行', cost_unit: '1.234' }
+  ] });
+  assert.equal(result.response.status, 400, '非法金额应被拒绝');
+  assert.equal(result.data.error?.path, 'arguments.rows[1].cost_unit');
+  assert.equal(readDb((db) => db.prepare("SELECT COUNT(*) FROM catalog_cost_items WHERE name IN ('AI-SMOKE-合法行','AI-SMOKE-非法行')").pluck().get()), 0, '批量失败时不得写入任何行');
+
+  // 错误字段、错误金额、未知工具、企图通过 supplier_name 指定厂商（跨库自然键）均被拒绝。
+  result = await aiCall('upsert_items', { source_id: aiCostSourceId, dry_run: false, rows: [{ name: 'AI-SMOKE-越权字段', cost_unit: '1.00', supplier_name: 'AI-SMOKE-其他厂商' }] });
+  assert.equal(result.response.status, 400, '不接受 AI 指定供应商');
+  assert.equal(result.data.error?.path, 'arguments.rows[0].supplier_name');
+  result = await aiCall('upsert_items', { source_id: aiCostSourceId, dry_run: false, rows: [{ name: 'AI-SMOKE-错误金额', cost_unit: '-1' }] });
+  assert.equal(result.response.status, 400, '负金额应被拒绝');
+  assert.equal(result.data.error?.path, 'arguments.rows[0].cost_unit');
+  result = await aiCall('upsert_items', { source_id: aiCostSourceId, dry_run: false, rows: [{ name: 'AI-SMOKE-数字金额', cost_unit: 12.34 }] });
+  assert.equal(result.response.status, 400, '金额必须是字符串');
+  result = await aiCall('upsert_items', { source_id: aiCostSourceId, dry_run: false, rows: [{ name: 'AI-SMOKE-null金额', cost_unit: null }] });
+  assert.equal(result.response.status, 400, 'null 不得被转换成零价格');
+  result = await aiCall('upsert_items', { source_id: aiCostSourceId, dry_run: false, rows: [{ name: 'AI-SMOKE-缺价' }] });
+  assert.equal(result.response.status, 400, '缺少含税单价应被拒绝');
+  // uid 只能来自 hooks 解析的登录身份，请求体中的 uid 必须拒绝。
+  result = await aiCall('create_source', { kind: 'cost', owner_name: 'AI-SMOKE-UID库', uid: 1004 });
+  assert.equal(result.response.status, 400, '请求体中的 uid 必须拒绝');
+  assert.equal(result.data.error?.path, 'arguments.uid');
+  result = await aiCall('upsert_items', { source_id: aiCostSourceId, dry_run: false, rows: [{ name: 'AI-SMOKE-UID行', cost_unit: '1.00', uid: 1004 }] });
+  assert.equal(result.response.status, 400, '行内 uid 必须拒绝');
+  assert.equal(result.data.error?.path, 'arguments.rows[0].uid');
+  assert.equal(readDb((db) => db.prepare("SELECT COUNT(*) FROM catalog_cost_items WHERE name IN ('AI-SMOKE-UID行') OR category='AI-SMOKE-UID库'").pluck().get()), 0, '被拒绝的请求不能写入');
+  assert.equal(readDb((db) => db.prepare("SELECT COUNT(*) FROM catalog_sources WHERE owner_name='AI-SMOKE-UID库'").pluck().get()), 0, '被拒绝的请求不能新建来源');
+  result = await aiCall('delete_everything', {});
+  assert.equal(result.response.status, 400, '未知工具应被拒绝');
+  assert.equal(result.data.error?.code, 'UNKNOWN_TOOL');
+
+  // 跨库自然键：另一成本库不能通过 upsert 挪走已有条目。
+  // 历史导入的条目可能带其他供应商名称，因此直接落一条属于厂商甲、供应商写“厂商乙”的旧条目。
+  result = await aiCall('create_source', { kind: 'cost', owner_name: 'AI-SMOKE-厂商乙', dry_run: false });
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  const aiOtherCostSourceId = result.data.data.source.id;
+  const aiLegacyDb = new Database(databasePath);
+  aiLegacyDb.prepare(`INSERT INTO catalog_cost_items(id,source_id,active,item_no,category,name,specification,unit,supplier_name,cost_unit,cost_unit_excl_tax,tax_rate,min_quantity,remark,source_file,source_sheet,source_type,raw_data,created_at)
+    VALUES(?,?,1,'1',?,?,?,?,'AI-SMOKE-厂商乙',?,0,'','','','','','supplier_cost','{}',?)`)
+    .run('ai-smoke-cross-source', aiCostSourceId, 'AI-SMOKE-跨库类', 'AI-SMOKE-跨库条目', 'AI-SMOKE-跨库规格', '项', 100, new Date().toISOString());
+  aiLegacyDb.close();
+  result = await aiCall('upsert_items', { source_id: aiOtherCostSourceId, dry_run: false, rows: [{ category: 'AI-SMOKE-跨库类', name: 'AI-SMOKE-跨库条目', specification: 'AI-SMOKE-跨库规格', unit: '项', cost_unit: '99.00' }] });
+  assert.equal(result.response.status, 409, '其他资料库不能覆盖既有条目的自然键');
+  assert.equal(result.data.error?.code, 'CROSS_SOURCE_CONFLICT');
+  assert.equal(result.data.error?.path, 'arguments.rows[0]');
+  const aiCrossItem = readDb((db) => db.prepare("SELECT source_id,cost_unit FROM catalog_cost_items WHERE id='ai-smoke-cross-source'").get());
+  assert.equal(aiCrossItem?.source_id, aiCostSourceId, '条目仍应属于原资料库');
+  assert.equal(aiCrossItem?.cost_unit, 100, '原条目金额不应被覆盖');
+
+  // 报价库：写入金额为元、客户强制取资料库名称，search 返回含税/不含税/限价字段。
+  result = await aiCall('create_source', { kind: 'quote', owner_name: 'AI-SMOKE-客户甲', dry_run: false });
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  const aiQuoteSourceId = result.data.data.source.id;
+  result = await aiCall('upsert_items', { source_id: aiQuoteSourceId, dry_run: false, rows: [{ category: 'AI-SMOKE-报价类', name: 'AI-SMOKE-报价项', unit: '项', price_incl_tax: '2468.00', price_excl_tax: '2184.07', max_quote_unit: '3000.00', estimated_quantity: 'AI-SMOKE-数量', project_name: 'AI-SMOKE-项目' }] });
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  assert.equal(result.data.data.rows[0].price_incl_tax, '2468.00');
+  result = await aiCall('search_items', { kind: 'quote', source_id: aiQuoteSourceId, q: 'AI-SMOKE-报价项' });
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  assert.equal(result.data.data.items[0].price_incl_tax, '2468.00', '报价含税单价不应放大 100 倍');
+  assert.equal(result.data.data.items[0].max_quote_unit, '3000.00');
+  assert.equal(result.data.data.items[0].customer_name, 'AI-SMOKE-客户甲');
+  result = await aiCall('search_items', { kind: 'cost', source_id: aiOtherCostSourceId, q: 'AI-SMOKE-喷画' });
+  assert.equal(result.data.data.items.length, 0, '其他资料库搜索不到不属于自己的条目');
+  result = await aiCall('list_sources', { kind: 'cost', q: 'AI-SMOKE-厂商' });
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  assert.ok(result.data.data.items.every((item) => item.owner_name.startsWith('AI-SMOKE-厂商')), '来源搜索应按名称过滤');
+  assert.ok(result.data.data.items.some((item) => item.owner_name === 'AI-SMOKE-厂商甲'), '来源搜索应包含已写入的成本库');
+  assert.ok(result.data.data.items.some((item) => item.owner_name === 'AI-SMOKE-厂商乙'), '来源搜索应包含新建的成本库');
+
   // 员工管理授权：管理人员与老板都不能改自己的身份/启用状态，也不能管理同级或更高级别。
   const identityDb = new Database(databasePath);
   const seededAt = new Date().toISOString();
@@ -591,7 +775,26 @@ try {
     assert.ok(result.data.data.some((item) => item.attachment_kind === 'design' && item.file_name === 'design.png'), '设计图应以 design 附件保存');
   });
 
-  console.log('Smoke test passed: public workbench, catalog import/copy, creator snapshots, order totals, independent attachments, order-linked reimbursements, reimbursement filters/state machine, voucher idempotency, aligned exports, employee management authorization, execution company management, audit and v18/v20/v21/v23/v27 migrations.');
+  // AI 小工具鉴权：待开通与未登录身份都不能读取身份/清单或调用工具。
+  await withIdentityServer(1099, async (base) => {
+    let result = await requestOn(base, '/api/ai/me');
+    assert.equal(result.response.status, 403, '待开通身份不能读取 AI 身份信息');
+    result = await requestOn(base, '/api/ai/catalog');
+    assert.equal(result.response.status, 403, '待开通身份不能获取 AI 工具清单');
+    result = await requestOn(base, '/api/ai/catalog', { method: 'POST', json: { tool: 'search_items', arguments: { kind: 'cost', q: 'AI-SMOKE' } } });
+    assert.equal(result.response.status, 403, '待开通身份不能调用 AI 小工具');
+  }, '/api/employees', [403]);
+
+  await withAnonymousServer(async (base) => {
+    let result = await requestOn(base, '/api/ai/me');
+    assert.equal(result.response.status, 401, '未登录不能读取 AI 身份信息');
+    result = await requestOn(base, '/api/ai/catalog');
+    assert.equal(result.response.status, 401, '未登录不能获取 AI 工具清单');
+    result = await requestOn(base, '/api/ai/catalog', { method: 'POST', json: { tool: 'create_source', arguments: { kind: 'cost', owner_name: 'AI-SMOKE-未登录库' } } });
+    assert.equal(result.response.status, 401, '未登录不能调用 AI 小工具');
+  });
+
+  console.log('Smoke test passed: public workbench, catalog import/copy, creator snapshots, order totals, independent attachments, order-linked reimbursements, reimbursement filters/state machine, voucher idempotency, aligned exports, employee management authorization, execution company management, AI catalog tools authorization/preview/money/conflict handling, audit and v18/v20/v21/v23/v27 migrations.');
 } finally {
   server.kill('SIGTERM');
   await new Promise((resolve) => { server.once('exit', resolve); setTimeout(resolve, 1000); });

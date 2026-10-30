@@ -1,6 +1,8 @@
 node_modules/
 .svelte-kit/
 build/
+# 本地业务数据、数据库备份与上传附件不得提交
+data/
 .env
 .env.*
 !.env.example
