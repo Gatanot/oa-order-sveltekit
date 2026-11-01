@@ -15,7 +15,7 @@ node build
 
 ## 数据库迁移
 
-应用启动时在 SQLite 事务中自动执行显式迁移。当前版本为 27：报价库与成本库拆分为 `catalog_quote_items`（含税/不含税单价、税率、限价）和 `catalog_cost_items`（成本单价、税率、供应商），订单行分别外键到对应库，并移除 `orders_simple.catalog_id`；旧 `catalog_items` 数据按来源类型迁入新表后删除。此前的 v20 会重建相关业务表并移除旧版 `users`、`sessions` 及其关联；v21 至 v26 为增量字段、权限与业务调整。
+应用启动时在 SQLite 事务中自动执行显式迁移。当前版本为 28：报价库与成本库拆分为 `catalog_quote_items`（统一价格、限价）和 `catalog_cost_items`（统一价格、供应商），价格默认按含税价处理；迁移移除不含税价与税率列并保留现有主价格，订单行分别外键到对应库，并移除 `orders_simple.catalog_id`；旧 `catalog_items` 数据按来源类型迁入新表后删除。此前的 v20 会重建相关业务表并移除旧版 `users`、`sessions` 及其关联；v21 至 v26 为增量字段、权限与业务调整。
 
 升级前先停止应用并备份数据库和附件目录；迁移失败时恢复备份后检查日志，不要手工删除业务表。
 

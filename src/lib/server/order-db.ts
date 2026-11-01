@@ -66,7 +66,7 @@ export function moneyToCents(value: unknown): number {
 function migrate(db: Database.Database) {
   db.exec('CREATE TABLE IF NOT EXISTS schema_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)');
   const version = db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").get() as { value: string } | undefined;
-  if (version?.value === '27' || version?.value === '26' || version?.value === '25' || version?.value === '24' || version?.value === '23' || version?.value === '22') return;
+  if (version?.value === '28' || version?.value === '27' || version?.value === '26' || version?.value === '25' || version?.value === '24' || version?.value === '23' || version?.value === '22') return;
   if (version?.value === '21') {
     db.exec(`ALTER TABLE orders_simple ADD COLUMN execution_company TEXT NOT NULL DEFAULT ''; UPDATE schema_meta SET value='22' WHERE key='order_app_version';`);
     return;
@@ -366,8 +366,7 @@ export function getOrderDb() {
     if (appVersion < 26) {
       instance.exec(`UPDATE orders_simple SET status='已提交' WHERE status <> '已完成'; UPDATE catalog_items SET source_type='customer_quote' WHERE source_type='enterprise_quote'; UPDATE schema_meta SET value='26' WHERE key='order_app_version';`);
     }
-    // v27：报价库/成本库彻底分表。catalog_quote_items 存客户报价（含税/不含税单价、税率、限价），
-    // catalog_cost_items 存厂商成本（成本单价、税率、供应商）；订单行分别外键到对应库，删除 orders_simple.catalog_id。
+    // v27：报价库/成本库分表；订单行分别外键到对应库，删除 orders_simple.catalog_id。
     if (appVersion < 27) {
       instance.pragma('foreign_keys = OFF');
       try {
@@ -487,6 +486,49 @@ export function getOrderDb() {
       const v27Violations = instance.pragma('foreign_key_check') as Array<Record<string, unknown>>;
       if (v27Violations.length) throw new Error(`v27 迁移后存在 ${v27Violations.length} 条外键异常`);
     }
+    if (appVersion < 28) {
+      instance.pragma('foreign_keys = OFF');
+      try {
+        instance.transaction(() => {
+          instance!.exec(`
+            CREATE TABLE catalog_quote_items_v28(
+              id TEXT PRIMARY KEY, source_id TEXT REFERENCES catalog_sources(id) ON DELETE SET NULL,
+              active INTEGER NOT NULL DEFAULT 1, item_no TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT '',
+              name TEXT NOT NULL, specification TEXT NOT NULL DEFAULT '', unit TEXT NOT NULL DEFAULT '项',
+              estimated_quantity TEXT NOT NULL DEFAULT '', price_incl_tax INTEGER NOT NULL DEFAULT 0,
+              max_price INTEGER NOT NULL DEFAULT 0, customer_name TEXT NOT NULL DEFAULT '', project_name TEXT NOT NULL DEFAULT '',
+              remark TEXT NOT NULL DEFAULT '', source_file TEXT NOT NULL DEFAULT '', source_sheet TEXT NOT NULL DEFAULT '',
+              source_type TEXT NOT NULL DEFAULT 'customer_quote', raw_data TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL,
+              UNIQUE(category,name,customer_name,project_name,specification,estimated_quantity)
+            );
+            INSERT INTO catalog_quote_items_v28 SELECT id,source_id,active,item_no,category,name,specification,unit,estimated_quantity,price_incl_tax,max_price,customer_name,project_name,remark,source_file,source_sheet,source_type,raw_data,created_at FROM catalog_quote_items;
+            DROP TABLE catalog_quote_items;
+            ALTER TABLE catalog_quote_items_v28 RENAME TO catalog_quote_items;
+            CREATE INDEX idx_catalog_quote_source ON catalog_quote_items(source_id,active);
+
+            CREATE TABLE catalog_cost_items_v28(
+              id TEXT PRIMARY KEY, source_id TEXT REFERENCES catalog_sources(id) ON DELETE SET NULL,
+              active INTEGER NOT NULL DEFAULT 1, item_no TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT '',
+              name TEXT NOT NULL, specification TEXT NOT NULL DEFAULT '', unit TEXT NOT NULL DEFAULT '项',
+              supplier_name TEXT NOT NULL DEFAULT '', cost_unit INTEGER NOT NULL DEFAULT 0,
+              min_quantity TEXT NOT NULL DEFAULT '', remark TEXT NOT NULL DEFAULT '', source_file TEXT NOT NULL DEFAULT '',
+              source_sheet TEXT NOT NULL DEFAULT '', source_type TEXT NOT NULL DEFAULT 'supplier_cost',
+              raw_data TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL,
+              UNIQUE(category,name,supplier_name,specification)
+            );
+            INSERT INTO catalog_cost_items_v28 SELECT id,source_id,active,item_no,category,name,specification,unit,supplier_name,cost_unit,min_quantity,remark,source_file,source_sheet,source_type,raw_data,created_at FROM catalog_cost_items;
+            DROP TABLE catalog_cost_items;
+            ALTER TABLE catalog_cost_items_v28 RENAME TO catalog_cost_items;
+            CREATE INDEX idx_catalog_cost_source ON catalog_cost_items(source_id,active);
+            UPDATE schema_meta SET value='28' WHERE key='order_app_version';
+          `);
+        })();
+      } finally {
+        instance.pragma('foreign_keys = ON');
+      }
+      const violations = instance.pragma('foreign_key_check') as Array<Record<string, unknown>>;
+      if (violations.length) throw new Error(`v28 迁移后存在 ${violations.length} 条外键异常`);
+    }
     importBundledExcel(instance);
   }
   return instance;
@@ -507,11 +549,11 @@ function importBundledExcel(db: Database.Database) {
   const dir = join(process.cwd(), 'excel');
   if (!existsSync(dir)) return;
   const files = ['【佛山广电集采价-AI测试版】2023年至2025年宣传广告活动资格标种类表报价表-广东省瑜鹏传媒科技有限公司(1).xls', '【供应商成本价-测试版】硕达2026年喷画结算价.xlsx'];
-  const upsertQuote = db.prepare(`INSERT INTO catalog_quote_items(id,source_id,active,item_no,category,name,specification,unit,estimated_quantity,price_incl_tax,price_excl_tax,tax_rate,max_price,customer_name,project_name,remark,source_file,source_sheet,source_type,raw_data,created_at)
-    VALUES(?,?,1,?,?,?,?,?,?,?,0,'',?,'','',?,?,?,?,?,?)
+  const upsertQuote = db.prepare(`INSERT INTO catalog_quote_items(id,source_id,active,item_no,category,name,specification,unit,estimated_quantity,price_incl_tax,max_price,customer_name,project_name,remark,source_file,source_sheet,source_type,raw_data,created_at)
+    VALUES(?,?,1,?,?,?,?,?,?,?,?,'','',?,?,?,?,?,?)
     ON CONFLICT(category,name,customer_name,project_name,specification,estimated_quantity) DO UPDATE SET source_id=excluded.source_id,active=1,item_no=excluded.item_no,unit=excluded.unit,price_incl_tax=excluded.price_incl_tax,max_price=excluded.max_price,remark=excluded.remark,source_file=excluded.source_file,source_sheet=excluded.source_sheet,source_type=excluded.source_type,raw_data=excluded.raw_data`);
-  const upsertCost = db.prepare(`INSERT INTO catalog_cost_items(id,source_id,active,item_no,category,name,specification,unit,supplier_name,cost_unit,cost_unit_excl_tax,tax_rate,min_quantity,remark,source_file,source_sheet,source_type,raw_data,created_at)
-    VALUES(?,?,1,?,?,?,?,?,?,?,0,'','',?,?,?,?,?,?)
+  const upsertCost = db.prepare(`INSERT INTO catalog_cost_items(id,source_id,active,item_no,category,name,specification,unit,supplier_name,cost_unit,min_quantity,remark,source_file,source_sheet,source_type,raw_data,created_at)
+    VALUES(?,?,1,?,?,?,?,?,?,?,'',?,?,?,?,?,?)
     ON CONFLICT(category,name,supplier_name,specification) DO UPDATE SET source_id=excluded.source_id,active=1,item_no=excluded.item_no,unit=excluded.unit,cost_unit=excluded.cost_unit,remark=excluded.remark,source_file=excluded.source_file,source_sheet=excluded.source_sheet,source_type=excluded.source_type,raw_data=excluded.raw_data`);
   const add = (row: Record<string, unknown>, meta: { file: string; sheet: string; type: string; no: string; category: string; sourceId: string; owner: string }) => {
     const name = text(row.name) || text(row.product_name);
@@ -642,13 +684,13 @@ export function createCatalogSource(data: Record<string, unknown>) {
       .run(id, kind, owner, text(data.source_file) || text(copySource?.source_file), copyFromId ? 'copy' : text(data.source_method) || 'manual', createdAt, createdAt, JSON.stringify(copyFromId ? { copied_from: copyFromId, copied_items: copyItems.length, copied_at: createdAt } : {}));
     if (copyItems.length) {
       if (kind === 'cost') {
-        const insertCost = db.prepare(`INSERT INTO catalog_cost_items(id,source_id,active,item_no,category,name,specification,unit,supplier_name,cost_unit,cost_unit_excl_tax,tax_rate,min_quantity,remark,source_file,source_sheet,source_type,raw_data,created_at)
-          VALUES(?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-        for (const item of copyItems) insertCost.run(uuid(), id, item.item_no, item.category, item.name, item.specification, item.unit, owner, item.cost_unit, item.cost_unit_excl_tax, item.tax_rate, item.min_quantity, item.remark, item.source_file, item.source_sheet, item.source_type, item.raw_data, createdAt);
+        const insertCost = db.prepare(`INSERT INTO catalog_cost_items(id,source_id,active,item_no,category,name,specification,unit,supplier_name,cost_unit,min_quantity,remark,source_file,source_sheet,source_type,raw_data,created_at)
+          VALUES(@id,@sourceId,1,@itemNo,@category,@name,@specification,@unit,@supplierName,@cost,@minQuantity,@remark,@sourceFile,@sourceSheet,@sourceType,@raw,@createdAt)`);
+        for (const item of copyItems) insertCost.run({ id: uuid(), sourceId: id, itemNo: item.item_no, category: item.category, name: item.name, specification: item.specification, unit: item.unit, supplierName: owner, cost: item.cost_unit, minQuantity: item.min_quantity, remark: item.remark, sourceFile: item.source_file, sourceSheet: item.source_sheet, sourceType: item.source_type, raw: item.raw_data, createdAt });
       } else {
-        const insertQuote = db.prepare(`INSERT INTO catalog_quote_items(id,source_id,active,item_no,category,name,specification,unit,estimated_quantity,price_incl_tax,price_excl_tax,tax_rate,max_price,customer_name,project_name,remark,source_file,source_sheet,source_type,raw_data,created_at)
-          VALUES(?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-        for (const item of copyItems) insertQuote.run(uuid(), id, item.item_no, item.category, item.name, item.specification, item.unit, item.estimated_quantity, item.price_incl_tax, item.price_excl_tax, item.tax_rate, item.max_price, owner, item.project_name, item.remark, item.source_file, item.source_sheet, item.source_type, item.raw_data, createdAt);
+        const insertQuote = db.prepare(`INSERT INTO catalog_quote_items(id,source_id,active,item_no,category,name,specification,unit,estimated_quantity,price_incl_tax,max_price,customer_name,project_name,remark,source_file,source_sheet,source_type,raw_data,created_at)
+          VALUES(@id,@sourceId,1,@itemNo,@category,@name,@specification,@unit,@estimatedQuantity,@price,@maxPrice,@customerName,@projectName,@remark,@sourceFile,@sourceSheet,@sourceType,@raw,@createdAt)`);
+        for (const item of copyItems) insertQuote.run({ id: uuid(), sourceId: id, itemNo: item.item_no, category: item.category, name: item.name, specification: item.specification, unit: item.unit, estimatedQuantity: item.estimated_quantity, price: item.price_incl_tax, maxPrice: item.max_price, customerName: owner, projectName: item.project_name, remark: item.remark, sourceFile: item.source_file, sourceSheet: item.source_sheet, sourceType: item.source_type, raw: item.raw_data, createdAt });
       }
     }
     // 客户报价库的公司名直接成为订单可选客户；成本库的 owner 是厂商，不写入客户表。
@@ -878,7 +920,7 @@ export function exportOrders(filters: Record<string, string>) {
       [`合同编号：${text(filters.contract) || '—'}`],
       [`甲方项目跟进人：${text(filters.followA) || '—'}`],
       [`乙方项目跟进人：${text(filters.followB) || '—'}   联系电话：${text(filters.contactPhone) || '—'}`],
-      ['序号', '产品名称', '单位', '数量', '规格和技术要求', '含税单价(元）', '小计（元）', '备注', ''],
+      ['序号', '产品名称', '单位', '数量', '规格和技术要求', '单价(元）', '小计（元）', '备注', ''],
     ];
     const categories = new Map<string, Array<Record<string, any>>>();
     for (const order of orders) {
@@ -1492,10 +1534,10 @@ export function importCatalog(rows: Array<Record<string, unknown>>, sourceId = '
   const source = sourceId ? db.prepare('SELECT * FROM catalog_sources WHERE id=?').get(sourceId) as Record<string, unknown> | undefined : undefined;
   if (sourceId && !source) throw new Error('资料库来源不存在');
   const kind = text(source?.kind) === 'cost' ? 'cost' : 'quote';
-  const insertQuote = db.prepare(`INSERT INTO catalog_quote_items(id,source_id,active,item_no,category,name,specification,unit,estimated_quantity,price_incl_tax,price_excl_tax,tax_rate,max_price,customer_name,project_name,remark,source_file,source_sheet,source_type,raw_data,created_at)
-    VALUES(?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(category,name,customer_name,project_name,specification,estimated_quantity) DO UPDATE SET source_id=excluded.source_id,active=1,item_no=excluded.item_no,unit=excluded.unit,price_incl_tax=excluded.price_incl_tax,price_excl_tax=excluded.price_excl_tax,tax_rate=excluded.tax_rate,max_price=excluded.max_price,remark=excluded.remark,source_file=excluded.source_file,source_sheet=excluded.source_sheet,source_type=excluded.source_type,raw_data=excluded.raw_data`);
-  const insertCost = db.prepare(`INSERT INTO catalog_cost_items(id,source_id,active,item_no,category,name,specification,unit,supplier_name,cost_unit,cost_unit_excl_tax,tax_rate,min_quantity,remark,source_file,source_sheet,source_type,raw_data,created_at)
-    VALUES(?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(category,name,supplier_name,specification) DO UPDATE SET source_id=excluded.source_id,active=1,item_no=excluded.item_no,unit=excluded.unit,cost_unit=excluded.cost_unit,cost_unit_excl_tax=excluded.cost_unit_excl_tax,tax_rate=excluded.tax_rate,min_quantity=excluded.min_quantity,remark=excluded.remark,source_file=excluded.source_file,source_sheet=excluded.source_sheet,source_type=excluded.source_type,raw_data=excluded.raw_data`);
+  const insertQuote = db.prepare(`INSERT INTO catalog_quote_items(id,source_id,active,item_no,category,name,specification,unit,estimated_quantity,price_incl_tax,max_price,customer_name,project_name,remark,source_file,source_sheet,source_type,raw_data,created_at)
+    VALUES(@id,@sourceId,1,@itemNo,@category,@name,@specification,@unit,@estimatedQuantity,@price,@maxPrice,@customerName,@projectName,@remark,@sourceFile,@sourceSheet,@sourceType,@raw,@createdAt) ON CONFLICT(category,name,customer_name,project_name,specification,estimated_quantity) DO UPDATE SET source_id=excluded.source_id,active=1,item_no=excluded.item_no,unit=excluded.unit,price_incl_tax=excluded.price_incl_tax,max_price=excluded.max_price,remark=excluded.remark,source_file=excluded.source_file,source_sheet=excluded.source_sheet,source_type=excluded.source_type,raw_data=excluded.raw_data`);
+  const insertCost = db.prepare(`INSERT INTO catalog_cost_items(id,source_id,active,item_no,category,name,specification,unit,supplier_name,cost_unit,min_quantity,remark,source_file,source_sheet,source_type,raw_data,created_at)
+    VALUES(@id,@sourceId,1,@itemNo,@category,@name,@specification,@unit,@supplierName,@cost,@minQuantity,@remark,@sourceFile,@sourceSheet,@sourceType,@raw,@createdAt) ON CONFLICT(category,name,supplier_name,specification) DO UPDATE SET source_id=excluded.source_id,active=1,item_no=excluded.item_no,unit=excluded.unit,cost_unit=excluded.cost_unit,min_quantity=excluded.min_quantity,remark=excluded.remark,source_file=excluded.source_file,source_sheet=excluded.source_sheet,source_type=excluded.source_type,raw_data=excluded.raw_data`);
   return db.transaction(() => {
     let count = 0;
     if (source && options.replace) {
@@ -1514,21 +1556,18 @@ export function importCatalog(rows: Array<Record<string, unknown>>, sourceId = '
       const sourceSheet = text(row.source_sheet);
       const sourceType = source ? String(source.kind === 'cost' ? 'supplier_cost' : 'customer_quote') : 'upload';
       const raw = JSON.stringify(row);
-      const taxRate = text(row.tax_rate || row['税率'] || '');
       const remark = text(row.remark || row.supplier_remark || row['备注'] || '');
       if (kind === 'cost') {
         const cost = row.cost_unit ?? row['成本'] ?? row['成本单价'] ?? row['含13%税单价(元）'] ?? 0;
-        const costExcl = row.cost_unit_excl_tax ?? row['不含税单价'] ?? row['不含税单价（元）'] ?? 0;
         const supplierName = text(row.supplier_name || row['供应商'] || row['厂商'] || (source ? owner : ''));
-        insertCost.run(uuid(), sourceId || null, itemNo, category, name, specification, unit, supplierName, excelMoney(cost), excelMoney(costExcl), taxRate, text(row.min_quantity || row['起订量'] || ''), remark, sourceFile, sourceSheet, sourceType, raw, now());
+        insertCost.run({ id: uuid(), sourceId: sourceId || null, itemNo, category, name, specification, unit, supplierName, cost: excelMoney(cost), minQuantity: text(row.min_quantity || row['起订量'] || ''), remark, sourceFile, sourceSheet, sourceType, raw, createdAt: now() });
       } else {
-        const quote = row.quote_unit ?? row.price_incl_tax ?? row['报价'] ?? row['报价单价'] ?? row['含税投标单价报价'] ?? row['含税单价（元）'] ?? row['含税单价'] ?? 0;
-        const quoteExcl = row.price_excl_tax ?? row['不含税单价'] ?? row['不含税单价（元）'] ?? 0;
+        const quote = row.unit_price ?? row.quote_unit ?? row.price_incl_tax ?? row['单价'] ?? row['报价'] ?? row['报价单价'] ?? row['含税投标单价报价'] ?? row['含税单价（元）'] ?? row['含税单价'] ?? 0;
         // 一个报价库对应一个客户：客户名统一取资料库来源名称，保证与订单客户列表、报价匹配口径一致。
         const customerName = text(source ? owner : (row.customer_name || row['客户'] || row['公司'] || row['企业']));
         const projectName = text(row.project_name || row['项目'] || row['项目名称'] || '');
         const estimatedQuantity = text(row.estimated_quantity || row['预估数量'] || '');
-        insertQuote.run(uuid(), sourceId || null, itemNo, category, name, specification, unit, estimatedQuantity, excelMoney(quote), excelMoney(quoteExcl), taxRate, excelMoney(row.max_quote_unit || row['含税最高单价限价'] || 0), customerName, projectName, remark, sourceFile, sourceSheet, sourceType, raw, now());
+        insertQuote.run({ id: uuid(), sourceId: sourceId || null, itemNo, category, name, specification, unit, estimatedQuantity, price: excelMoney(quote), maxPrice: excelMoney(row.max_quote_unit || row['最高单价限价'] || row['含税最高单价限价'] || 0), customerName, projectName, remark, sourceFile, sourceSheet, sourceType, raw, createdAt: now() });
       }
       count++;
     }

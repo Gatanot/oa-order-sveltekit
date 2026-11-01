@@ -67,7 +67,7 @@ kind 可选 quote（客户报价库）/cost（厂商成本库）；q 搜索公�
 {"tool":"search_items","arguments":{"kind":"cost","source_id":"资料库ID","q":"喷画"}}
 ```
 
-kind 必填，source_id 可选，q 搜索名称/分类/规格。金额全部为人民币元字符串，不混用旧网页API的整数分。报价字段price_incl_tax、price_excl_tax、max_quote_unit；成本cost_unit、cost_unit_excl_tax。
+kind 必填，source_id 可选，q 搜索名称/分类/规格。金额全部为人民币元字符串，不混用旧网页API的整数分。报价字段price_incl_tax（统一价格）、max_quote_unit；成本字段cost_unit（统一价格）。两者都按含税价格处理，不区分税率或不含税价。
 
 ```json
 {"tool":"create_source","arguments":{"kind":"cost","owner_name":"示例印刷厂"}}
@@ -76,13 +76,13 @@ kind 必填，source_id 可选，q 搜索名称/分类/规格。金额全部为�
 默认仅预览，加dry_run=false才提交。返回source.id，同类型同公司重复409，应查询复用。报价库公司名成为可选客户。
 
 ```json
-{"tool":"upsert_items","arguments":{"source_id":"成本库ID","rows":[{"name":"喷画","category":"广告制作","unit":"平方米","cost_unit":"12.34","cost_unit_excl_tax":"10.92","tax_rate":"13%","remark":"含安装"}]}}
+{"tool":"upsert_items","arguments":{"source_id":"成本库ID","rows":[{"name":"喷画","category":"广告制作","unit":"平方米","cost_unit":"12.34","remark":"含安装"}]}}
 ```
 
 - 默认预览，加dry_run=false写入；1–100行，非法行使全批失败。
-- 通用字段name必填，可选category/specification/unit/item_no/tax_rate/remark。unit默认项。
-- 成本显式cost_unit，可选cost_unit_excl_tax/min_quantity；报价显式price_incl_tax，可选price_excl_tax/max_quote_unit/project_name/estimated_quantity。
-- 非负元字符串最多两位小数；不按税率反算，可选金额省略置零。
+- 通用字段name必填，可选category/specification/unit/item_no/remark。unit默认项。
+- 成本显式cost_unit，可选min_quantity；报价显式price_incl_tax，可选max_quote_unit/project_name/estimated_quantity。
+- 所有金额为统一价格，按含税价理解；非负元字符串最多两位小数，可选金额省略置零。
 - 自然键成本=分类+名称+厂商+规格；报价=分类+名称+客户+项目+规格+预估数量。客户/厂商取source owner_name，不接受行内customer_name/supplier_name。
 - 同键整行更新，不是PATCH，省略字段清空/置零；改自然键新增，不是重命名。跨库冲突拒绝，不自动挪库。输出只读id等不要回传。
 - 预览不保存、不锁定版本；本期无删除、整库替换和数据库原始执行能力。

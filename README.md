@@ -18,7 +18,7 @@
 
 - 可刷新/分享的 `/orders`、订单详情/编辑、`/reimbursements`、`/catalog` 路由；
 - 订单筛选、排序、统计、字段显示、产品与成本（同名自动匹配厂商成本）、员工垫付、备注详情和 Excel/表格导出；
-- 客户报价库（`catalog_quote_items`，含税/不含税单价、税率、限价）与厂商成本库（`catalog_cost_items`，成本单价、税率、供应商）分表存储、来源新增/沿用、CSV/XLS/XLSX 服务端解析和替换导入；
+- 客户报价库（`catalog_quote_items`，统一价格、限价）与厂商成本库（`catalog_cost_items`，统一价格、供应商）分表存储、来源新增/沿用、CSV/XLS/XLSX 服务端解析和替换导入；
 - 报销“待审核 → 待打款 → 已报销”和“已打回 → 补传 → 待审核”状态机；
 - 批量审核/打回/付款、待付款汇总、幂等单据编号和单据归档；
 - 图片/PDF 魔数校验、10MB 限制和附件落盘存储；
@@ -87,6 +87,6 @@ Excel由同机程序解析后调用结构化批量接口；新增审计不写Age
 
 ## 数据与备份
 
-SQLite 默认位于 `data/oa.db`，附件默认位于数据库同级 `attachments/`。数据库和附件必须成对备份。应用启动时在事务内升级 schema；当前版本为 **v27**，报价库与成本库拆分为 `catalog_quote_items`/`catalog_cost_items` 两张表（报价含税/不含税双价），订单行分别外键到对应库并移除 `orders_simple.catalog_id`。此前的 v20 移除了旧版登录表和用户 ID 关联；v21 至 v26 为增量字段与权限结构调整。
+SQLite 默认位于 `data/oa.db`，附件默认位于数据库同级 `attachments/`。数据库和附件必须成对备份。应用启动时在事务内升级 schema；当前版本为 **v28**，报价库与成本库拆分为 `catalog_quote_items`/`catalog_cost_items` 两张表，价格统一按含税价处理并移除税率/不含税价列；订单行分别外键到对应库并移除 `orders_simple.catalog_id`。此前的 v20 移除了旧版登录表和用户 ID 关联；v21 至 v26 为增量字段与权限结构调整。
 
 详细生产部署、迁移、WAL 一致性备份和恢复说明见 [`docs/deployment.md`](docs/deployment.md)。

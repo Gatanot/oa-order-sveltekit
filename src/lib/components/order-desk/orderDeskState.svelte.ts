@@ -35,8 +35,6 @@ const apiFetch = (input: RequestInfo | URL, init?: RequestInit) =>
   };
   type QuoteCatalog = CatalogBase & {
     price_incl_tax: number;
-    price_excl_tax: number;
-    tax_rate?: string;
     max_price?: number;
     estimated_quantity?: string;
     customer_name?: string;
@@ -45,8 +43,6 @@ const apiFetch = (input: RequestInfo | URL, init?: RequestInit) =>
   };
   type CostCatalog = CatalogBase & {
     cost_unit: number;
-    cost_unit_excl_tax: number;
-    tax_rate?: string;
     supplier_name?: string;
     min_quantity?: string;
     remark?: string;

@@ -4,11 +4,11 @@ import type { CurrentIdentity } from '$lib/server/identity';
 const textSchema = { type: 'string', maxLength: 2000 };
 const kindSchema = { type: 'string', enum: ['quote', 'cost'] };
 const objectSchema = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object', properties, required, additionalProperties: false });
-const commonFields = Object.fromEntries(['name', 'category', 'specification', 'unit', 'item_no', 'tax_rate', 'remark'].map((key) => [key, textSchema]));
+const commonFields = Object.fromEntries(['name', 'category', 'specification', 'unit', 'item_no', 'remark'].map((key) => [key, textSchema]));
 const moneySchema = { type: 'string', pattern: '^\\d+(\\.\\d{1,2})?$', description: '人民币元，非负，最多两位小数；建议使用字符串。' };
 const rowSchema = { oneOf: [
-  objectSchema({ ...commonFields, cost_unit: moneySchema, cost_unit_excl_tax: moneySchema, min_quantity: textSchema }, ['name', 'cost_unit']),
-  objectSchema({ ...commonFields, price_incl_tax: moneySchema, price_excl_tax: moneySchema, max_quote_unit: moneySchema, project_name: textSchema, estimated_quantity: textSchema }, ['name', 'price_incl_tax'])
+  objectSchema({ ...commonFields, cost_unit: moneySchema, min_quantity: textSchema }, ['name', 'cost_unit']),
+  objectSchema({ ...commonFields, price_incl_tax: moneySchema, max_quote_unit: moneySchema, project_name: textSchema, estimated_quantity: textSchema }, ['name', 'price_incl_tax'])
 ] };
 
 export const catalogTools = [
@@ -84,11 +84,11 @@ export function runCatalogTool(tool: string, input: unknown, identity: CurrentId
     const total = (db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${where}`).get(...values) as { count: number }).count;
     // 不暴露 raw_data 和来源文件等非本工具需要的内容。
     const columns = !searching ? 'id,kind,owner_name,updated_at' : libraryKind === 'cost'
-      ? 'id,source_id,item_no,category,name,specification,unit,supplier_name,cost_unit,cost_unit_excl_tax,tax_rate,min_quantity,remark'
-      : 'id,source_id,item_no,category,name,specification,unit,customer_name,project_name,estimated_quantity,price_incl_tax,price_excl_tax,max_price,tax_rate,remark';
+      ? 'id,source_id,item_no,category,name,specification,unit,supplier_name,cost_unit,min_quantity,remark'
+      : 'id,source_id,item_no,category,name,specification,unit,customer_name,project_name,estimated_quantity,price_incl_tax,max_price,remark';
     const rows = db.prepare(`SELECT ${columns} FROM ${table} WHERE ${where} ORDER BY ${searching ? 'name' : 'owner_name'},id LIMIT ? OFFSET ?`).all(...values, limit, offset) as Record<string, unknown>[];
     if (searching) for (const row of rows) {
-      for (const key of libraryKind === 'cost' ? ['cost_unit', 'cost_unit_excl_tax'] : ['price_incl_tax', 'price_excl_tax', 'max_price']) row[key] = yuan(row[key]);
+      for (const key of libraryKind === 'cost' ? ['cost_unit'] : ['price_incl_tax', 'max_price']) row[key] = yuan(row[key]);
       // 与录入字段名称一致。
       if (libraryKind === 'quote') { row.max_quote_unit = row.max_price; delete row.max_price; }
     }
@@ -115,7 +115,7 @@ export function runCatalogTool(tool: string, input: unknown, identity: CurrentId
     const inputRows = data.rows;
     return db.transaction(() => {
       const source = sourceById(sourceId);
-      const moneyFields = source.kind === 'cost' ? ['cost_unit', 'cost_unit_excl_tax'] : ['price_incl_tax', 'price_excl_tax', 'max_quote_unit'];
+      const moneyFields = source.kind === 'cost' ? ['cost_unit'] : ['price_incl_tax', 'max_quote_unit'];
       const textFields = [...Object.keys(commonFields), ...(source.kind === 'cost' ? ['min_quantity'] : ['project_name', 'estimated_quantity'])];
       const seen = new Set<string>();
       let inserted = 0;
@@ -129,7 +129,7 @@ export function runCatalogTool(tool: string, input: unknown, identity: CurrentId
         normalized.unit ||= '项';
         normalized.item_no ||= String(index + 1);
         const primary = source.kind === 'cost' ? 'cost_unit' : 'price_incl_tax';
-        if (row[primary] === undefined) invalid(`${path}.${primary}`, '必须显式提供含税单价，避免误写成零');
+        if (row[primary] === undefined) invalid(`${path}.${primary}`, '必须显式提供单价，避免误写成零');
         for (const field of moneyFields) {
           const value = row[field] === undefined ? '0' : row[field];
           if (typeof value !== 'string') invalid(`${path}.${field}`, '金额必须为人民币元字符串');

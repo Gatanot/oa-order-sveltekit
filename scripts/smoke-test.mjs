@@ -25,18 +25,20 @@ let localLogs = '';
 let fixturePortOffset = 0;
 
 async function waitForServer(targetOrigin = origin, readLogs = () => logs, child = server, probePath = '/orders', readyStatuses = null) {
+  let lastStatus = 'no response';
   for (let index = 0; index < 80; index++) {
     // 进程已退出时立即失败并带上日志，避免迁移/启动错误只表现为 8 秒超时。
     if (child.exitCode !== null) throw new Error(`服务器已退出（code ${child.exitCode}）\n${readLogs()}`);
     let response;
     try { response = await fetch(`${targetOrigin}${probePath}`); } catch { /* 端口未就绪，重试 */ }
     // 部分身份（待开通/未登录）本就无法拿到 2xx，按预期状态码判断是否已可响应。
+    if (response) lastStatus = response.status;
     if (response && (readyStatuses ? readyStatuses.includes(response.status) : response.ok)) return;
     // 服务已能响应但返回非预期 5xx，说明迁移/初始化失败，立即失败而不是空等 8 秒。
     if (response && !readyStatuses && response.status >= 500) throw new Error(`服务器启动失败（HTTP ${response.status}）\n${readLogs()}`);
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error(`服务器启动超时\n${readLogs()}`);
+  throw new Error(`服务器启动超时（最后状态：${lastStatus}）\n${readLogs()}`);
 }
 
 /** 原生 node:http 请求：本机入口会拒绝带浏览器 Fetch metadata 的请求，不能使用 fetch。 */
@@ -106,9 +108,17 @@ async function aiCall(tool, args) {
 /** 复制当前数据库为旧版本 fixture，启动一次服务触发迁移，再用只读连接断言结果。 */
 /** v27 迁移需要从旧 catalog_items 迁出数据；legacy fixture 复制自 v27 库，需按需重建旧目录表。 */
 function restoreLegacyCatalog(legacy) {
+  legacy.pragma('foreign_keys = OFF');
   legacy.exec(`
+    DROP TABLE IF EXISTS catalog_quote_items;
+    DROP TABLE IF EXISTS catalog_cost_items;
+    CREATE TABLE catalog_quote_items(id TEXT PRIMARY KEY,source_id TEXT,active INTEGER NOT NULL DEFAULT 1,item_no TEXT NOT NULL DEFAULT '',category TEXT NOT NULL DEFAULT '',name TEXT NOT NULL,specification TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT '项',estimated_quantity TEXT NOT NULL DEFAULT '',price_incl_tax INTEGER NOT NULL DEFAULT 0,price_excl_tax INTEGER NOT NULL DEFAULT 0,tax_rate TEXT NOT NULL DEFAULT '',max_price INTEGER NOT NULL DEFAULT 0,customer_name TEXT NOT NULL DEFAULT '',project_name TEXT NOT NULL DEFAULT '',remark TEXT NOT NULL DEFAULT '',source_file TEXT NOT NULL DEFAULT '',source_sheet TEXT NOT NULL DEFAULT '',source_type TEXT NOT NULL DEFAULT 'customer_quote',raw_data TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL,UNIQUE(category,name,customer_name,project_name,specification,estimated_quantity));
+    CREATE TABLE catalog_cost_items(id TEXT PRIMARY KEY,source_id TEXT,active INTEGER NOT NULL DEFAULT 1,item_no TEXT NOT NULL DEFAULT '',category TEXT NOT NULL DEFAULT '',name TEXT NOT NULL,specification TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT '项',supplier_name TEXT NOT NULL DEFAULT '',cost_unit INTEGER NOT NULL DEFAULT 0,cost_unit_excl_tax INTEGER NOT NULL DEFAULT 0,tax_rate TEXT NOT NULL DEFAULT '',min_quantity TEXT NOT NULL DEFAULT '',remark TEXT NOT NULL DEFAULT '',source_file TEXT NOT NULL DEFAULT '',source_sheet TEXT NOT NULL DEFAULT '',source_type TEXT NOT NULL DEFAULT 'supplier_cost',raw_data TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL,UNIQUE(category,name,supplier_name,specification));
+    CREATE INDEX idx_catalog_quote_source ON catalog_quote_items(source_id,active);
+    CREATE INDEX idx_catalog_cost_source ON catalog_cost_items(source_id,active);
     CREATE TABLE IF NOT EXISTS catalog_items(id TEXT PRIMARY KEY, category TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, unit TEXT NOT NULL DEFAULT '项', quote_unit INTEGER NOT NULL DEFAULT 0, cost_unit INTEGER NOT NULL DEFAULT 0, customer_name TEXT NOT NULL DEFAULT '', project_name TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, source_file TEXT NOT NULL DEFAULT '', source_sheet TEXT NOT NULL DEFAULT '', source_type TEXT NOT NULL DEFAULT 'manual', item_no TEXT NOT NULL DEFAULT '', specification TEXT NOT NULL DEFAULT '', estimated_quantity TEXT NOT NULL DEFAULT '', max_quote_unit INTEGER NOT NULL DEFAULT 0, supplier_remark TEXT NOT NULL DEFAULT '', raw_data TEXT NOT NULL DEFAULT '{}', source_id TEXT, UNIQUE(category,name,customer_name,project_name,specification,estimated_quantity));
   `);
+  legacy.pragma('foreign_keys = ON');
 }
 
 async function withMigratedFixture(name, legacyVersion, prepare, assertions) {
@@ -370,7 +380,7 @@ try {
   const settlementXml = strFromU8(unzipSync(settlementBuffer)['xl/worksheets/sheet1.xml']);
   exportRows = XLSX.utils.sheet_to_json(settlementSheet, { header: 1, defval: '' });
   assert.equal(workbook.SheetNames[0], '结算', '结算单工作表名称应与模板一致');
-  assert.deepEqual(exportRows[6].slice(0, 8), ['序号', '产品名称', '单位', '数量', '规格和技术要求', '含税单价(元）', '小计（元）', '备注']);
+  assert.deepEqual(exportRows[6].slice(0, 8), ['序号', '产品名称', '单位', '数量', '规格和技术要求', '单价(元）', '小计（元）', '备注']);
   const settlementProductRow = exportRows.find((row) => row[1] === '测试产品');
   assert.equal(settlementProductRow?.[7], '行备注乙', '结算单备注列应优先使用行备注');
   const settlementFallbackRow = exportRows.find((row) => row[1] === '测试产品二');
@@ -470,13 +480,14 @@ try {
   assert.match(result.response.headers.get('content-type') || '', /spreadsheet/);
 
   const db = new Database(databasePath, { readonly: true });
-  assert.equal(db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '27');
+  assert.equal(db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '28');
   assert.equal(db.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('catalog_quote_items','catalog_cost_items')").pluck().get(), 2, 'v27 应创建报价库/成本库分表');
   assert.equal(db.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='catalog_items'").pluck().get(), 0, 'v27 应移除旧的 catalog_items');
   assert.equal(db.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='catalog_id'").pluck().get(), 0, 'v27 应移除 orders_simple.catalog_id');
   assert.ok(db.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='catalog_cost_items'").pluck().get(), '成本库分表应存在');
-  assert.ok(db.prepare("SELECT COUNT(*) FROM pragma_table_info('catalog_quote_items') WHERE name='price_incl_tax'").pluck().get(), '报价库应含税单价字段');
-  assert.ok(db.prepare("SELECT COUNT(*) FROM pragma_table_info('catalog_quote_items') WHERE name='price_excl_tax'").pluck().get(), '报价库应含不含税单价字段');
+  assert.ok(db.prepare("SELECT COUNT(*) FROM pragma_table_info('catalog_quote_items') WHERE name='price_incl_tax'").pluck().get(), '报价库应保留统一单价字段');
+  assert.equal(db.prepare("SELECT COUNT(*) FROM pragma_table_info('catalog_cost_items') WHERE name IN ('cost_unit_excl_tax','tax_rate')").pluck().get(), 0, '成本库不应区分税率或不含税价格');
+  assert.equal(db.prepare("SELECT COUNT(*) FROM pragma_table_info('catalog_quote_items') WHERE name IN ('price_excl_tax','tax_rate')").pluck().get(), 0, '报价库不应区分税率或不含税价格');
   assert.ok(db.prepare("SELECT COUNT(*) FROM pragma_table_info('catalog_cost_items') WHERE name='cost_unit'").pluck().get(), '成本库应含成本单价字段');
   assert.ok(db.prepare("SELECT COUNT(*) FROM pragma_table_info('audit_logs') WHERE name='actor_uid'").pluck().get(), '审计表应包含操作者 UID');
   assert.ok(db.prepare('SELECT COUNT(*) FROM audit_logs WHERE actor_uid=826').pluck().get() >= 1, '审计应记录操作者 UID');
@@ -500,21 +511,31 @@ try {
     legacy.prepare("UPDATE orders_simple SET status='待确认'").run();
     legacy.pragma('ignore_check_constraints = OFF');
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '27');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '28');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('audit_logs') WHERE name='actor_uid'").pluck().get(), 'v23 数据库迁移后应补齐审计 actor_uid');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v23 数据库重启后应保留订单');
     assert.equal(migrated.prepare('SELECT status FROM orders_simple LIMIT 1').pluck().get(), '已提交', 'v26 迁移应将历史订单状态归并为已提交');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('order_products') WHERE name='remark'").pluck().get(), '迁移后订单项应补齐行备注字段');
   });
 
-  // 已在 v27 的库（上一版程序建的库）不会重跑 v27 重建，行备注只能靠幂等 ALTER 补齐。
+  // v27 数据库升级时移除税务列，并保留订单明细关联。
   await withMigratedFixture('oa-v27.db', '27', (legacy) => {
-    legacy.exec('ALTER TABLE order_products DROP COLUMN remark');
+    legacy.pragma('foreign_keys = OFF');
+    legacy.exec(`
+      DROP TABLE catalog_quote_items;
+      DROP TABLE catalog_cost_items;
+      CREATE TABLE catalog_quote_items(id TEXT PRIMARY KEY,source_id TEXT,active INTEGER NOT NULL DEFAULT 1,item_no TEXT NOT NULL DEFAULT '',category TEXT NOT NULL DEFAULT '',name TEXT NOT NULL,specification TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT '项',estimated_quantity TEXT NOT NULL DEFAULT '',price_incl_tax INTEGER NOT NULL DEFAULT 0,price_excl_tax INTEGER NOT NULL DEFAULT 0,tax_rate TEXT NOT NULL DEFAULT '',max_price INTEGER NOT NULL DEFAULT 0,customer_name TEXT NOT NULL DEFAULT '',project_name TEXT NOT NULL DEFAULT '',remark TEXT NOT NULL DEFAULT '',source_file TEXT NOT NULL DEFAULT '',source_sheet TEXT NOT NULL DEFAULT '',source_type TEXT NOT NULL DEFAULT 'customer_quote',raw_data TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL,UNIQUE(category,name,customer_name,project_name,specification,estimated_quantity));
+      CREATE TABLE catalog_cost_items(id TEXT PRIMARY KEY,source_id TEXT,active INTEGER NOT NULL DEFAULT 1,item_no TEXT NOT NULL DEFAULT '',category TEXT NOT NULL DEFAULT '',name TEXT NOT NULL,specification TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT '项',supplier_name TEXT NOT NULL DEFAULT '',cost_unit INTEGER NOT NULL DEFAULT 0,cost_unit_excl_tax INTEGER NOT NULL DEFAULT 0,tax_rate TEXT NOT NULL DEFAULT '',min_quantity TEXT NOT NULL DEFAULT '',remark TEXT NOT NULL DEFAULT '',source_file TEXT NOT NULL DEFAULT '',source_sheet TEXT NOT NULL DEFAULT '',source_type TEXT NOT NULL DEFAULT 'supplier_cost',raw_data TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL,UNIQUE(category,name,supplier_name,specification));
+      CREATE INDEX idx_catalog_quote_source ON catalog_quote_items(source_id,active);
+      CREATE INDEX idx_catalog_cost_source ON catalog_cost_items(source_id,active);
+    `);
+    legacy.pragma('foreign_keys = ON');
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '27');
-    assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('order_products') WHERE name='remark'").pluck().get(), 'v27 数据库重启应通过 ALTER 补齐行备注列');
-    assert.equal(migrated.prepare('SELECT COUNT(*) FROM order_products').pluck().get(), 1, '补列不应丢失订单项');
-    assert.equal(migrated.prepare('SELECT remark FROM order_products LIMIT 1').pluck().get(), '', '补列后历史行备注应为空字符串');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '28');
+    assert.equal(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('catalog_quote_items') WHERE name IN ('price_excl_tax','tax_rate')").pluck().get(), 0, 'v28 应移除报价税务列');
+    assert.equal(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('catalog_cost_items') WHERE name IN ('cost_unit_excl_tax','tax_rate')").pluck().get(), 0, 'v28 应移除成本税务列');
+    assert.equal(migrated.prepare('SELECT COUNT(*) FROM order_products').pluck().get(), 1, '迁移不应丢失订单项');
+    assert.deepEqual(migrated.prepare('PRAGMA foreign_key_check').all(), [], 'v28 重建资料库表后外键应有效');
   });
 
   await withMigratedFixture('oa-v18.db', '18', (legacy) => {
@@ -534,7 +555,7 @@ try {
       ALTER TABLE audit_logs ADD COLUMN actor_user_id TEXT;
     `);
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '27');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '28');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='idempotency_key'").pluck().get(), 'v18 数据库应补齐幂等字段');
     assert.equal(migrated.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('users','sessions')").pluck().get(), 0, '迁移后不应保留登录表');
     for (const [table, column] of [['orders_simple', 'created_by_user_id'], ['reimbursements_simple', 'employee_user_id'], ['reimbursements_simple', 'voucher_archived_by_user_id'], ['order_attachments', 'uploaded_by_user_id'], ['reimbursement_attachments', 'uploaded_by_user_id'], ['catalog_sources', 'maintained_by_user_id'], ['audit_logs', 'actor_user_id']]) {
@@ -548,7 +569,7 @@ try {
     restoreLegacyCatalog(legacy);
     legacy.exec('ALTER TABLE orders_simple DROP COLUMN planner; ALTER TABLE orders_simple DROP COLUMN execution_company;');
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '27');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '28');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='planner'").pluck().get(), 'v20 数据库应补齐策划人字段');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='execution_company'").pluck().get(), 'v20 数据库应补齐执行公司字段');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v20 迁移不应丢失订单');
@@ -559,7 +580,7 @@ try {
     restoreLegacyCatalog(legacy);
     legacy.exec('ALTER TABLE orders_simple DROP COLUMN execution_company;');
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '27');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '28');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='execution_company'").pluck().get(), 'v21 数据库应补齐执行公司字段');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v21 迁移不应丢失订单');
     assert.deepEqual(migrated.prepare('PRAGMA foreign_key_check').all(), []);
@@ -601,7 +622,7 @@ try {
   assert.equal(result.data.error?.code, 'CONFLICT');
 
   // upsert_items：默认预览不写库；提交后金额按元存储，搜索返回元字符串而不是放大的分。
-  const aiCostRows = [{ category: 'AI-SMOKE-成本类', name: 'AI-SMOKE-喷画', specification: 'AI-SMOKE-规格', unit: 'sqm', cost_unit: '12.34', cost_unit_excl_tax: '10.92', tax_rate: '13%' }];
+  const aiCostRows = [{ category: 'AI-SMOKE-成本类', name: 'AI-SMOKE-喷画', specification: 'AI-SMOKE-规格', unit: 'sqm', cost_unit: '12.34' }];
   result = await aiCall('upsert_items', { source_id: aiCostSourceId, rows: aiCostRows });
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
   assert.equal(result.data.data.dry_run, true, 'upsert_items 默认应只预览');
@@ -614,13 +635,12 @@ try {
   assert.equal(result.data.data.dry_run, false);
   assert.equal(result.data.data.inserted, 1);
   assert.equal(result.data.data.rows[0].cost_unit, '12.34', '返回的金额应为元字符串');
-  assert.equal(readDb((db) => db.prepare("SELECT cost_unit,cost_unit_excl_tax,supplier_name FROM catalog_cost_items WHERE source_id=? AND name='AI-SMOKE-喷画'").get(aiCostSourceId).cost_unit), 1234, '库内应以分存储 12.34 元');
+  assert.equal(readDb((db) => db.prepare("SELECT cost_unit,supplier_name FROM catalog_cost_items WHERE source_id=? AND name='AI-SMOKE-喷画'").get(aiCostSourceId).cost_unit), 1234, '库内应以分存储 12.34 元');
   result = await aiCall('search_items', { kind: 'cost', source_id: aiCostSourceId, q: 'AI-SMOKE-喷画' });
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
   assert.equal(result.data.data.money_unit, 'yuan');
   assert.equal(result.data.data.items.length, 1);
   assert.equal(result.data.data.items[0].cost_unit, '12.34', '搜索返回的金额不应放大 100 倍');
-  assert.equal(result.data.data.items[0].cost_unit_excl_tax, '10.92');
   assert.equal(result.data.data.items[0].supplier_name, 'AI-SMOKE-厂商甲', '成本条目供应商应取资料库名称');
 
   // 按自然键更新同一行，不新增重复条目。
@@ -653,7 +673,7 @@ try {
   result = await aiCall('upsert_items', { source_id: aiCostSourceId, dry_run: false, rows: [{ name: 'AI-SMOKE-null金额', cost_unit: null }] });
   assert.equal(result.response.status, 400, 'null 不得被转换成零价格');
   result = await aiCall('upsert_items', { source_id: aiCostSourceId, dry_run: false, rows: [{ name: 'AI-SMOKE-缺价' }] });
-  assert.equal(result.response.status, 400, '缺少含税单价应被拒绝');
+  assert.equal(result.response.status, 400, '缺少单价应被拒绝');
   // uid 只能来自 hooks 解析的登录身份，请求体中的 uid 必须拒绝。
   result = await aiCall('create_source', { kind: 'cost', owner_name: 'AI-SMOKE-UID库', uid: 1004 });
   assert.equal(result.response.status, 400, '请求体中的 uid 必须拒绝');
@@ -673,8 +693,8 @@ try {
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
   const aiOtherCostSourceId = result.data.data.source.id;
   const aiLegacyDb = new Database(databasePath);
-  aiLegacyDb.prepare(`INSERT INTO catalog_cost_items(id,source_id,active,item_no,category,name,specification,unit,supplier_name,cost_unit,cost_unit_excl_tax,tax_rate,min_quantity,remark,source_file,source_sheet,source_type,raw_data,created_at)
-    VALUES(?,?,1,'1',?,?,?,?,'AI-SMOKE-厂商乙',?,0,'','','','','','supplier_cost','{}',?)`)
+  aiLegacyDb.prepare(`INSERT INTO catalog_cost_items(id,source_id,active,item_no,category,name,specification,unit,supplier_name,cost_unit,min_quantity,remark,source_file,source_sheet,source_type,raw_data,created_at)
+    VALUES(?,?,1,'1',?,?,?,?,'AI-SMOKE-厂商乙',?,'','','','','supplier_cost','{}',?)`)
     .run('ai-smoke-cross-source', aiCostSourceId, 'AI-SMOKE-跨库类', 'AI-SMOKE-跨库条目', 'AI-SMOKE-跨库规格', '项', 100, new Date().toISOString());
   aiLegacyDb.close();
   result = await aiCall('upsert_items', { source_id: aiOtherCostSourceId, dry_run: false, rows: [{ category: 'AI-SMOKE-跨库类', name: 'AI-SMOKE-跨库条目', specification: 'AI-SMOKE-跨库规格', unit: '项', cost_unit: '99.00' }] });
@@ -685,16 +705,16 @@ try {
   assert.equal(aiCrossItem?.source_id, aiCostSourceId, '条目仍应属于原资料库');
   assert.equal(aiCrossItem?.cost_unit, 100, '原条目金额不应被覆盖');
 
-  // 报价库：写入金额为元、客户强制取资料库名称，search 返回含税/不含税/限价字段。
+  // 报价库：写入金额为元、客户强制取资料库名称，search 返回统一价格和限价字段。
   result = await aiCall('create_source', { kind: 'quote', owner_name: 'AI-SMOKE-客户甲', dry_run: false });
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
   const aiQuoteSourceId = result.data.data.source.id;
-  result = await aiCall('upsert_items', { source_id: aiQuoteSourceId, dry_run: false, rows: [{ category: 'AI-SMOKE-报价类', name: 'AI-SMOKE-报价项', unit: '项', price_incl_tax: '2468.00', price_excl_tax: '2184.07', max_quote_unit: '3000.00', estimated_quantity: 'AI-SMOKE-数量', project_name: 'AI-SMOKE-项目' }] });
+  result = await aiCall('upsert_items', { source_id: aiQuoteSourceId, dry_run: false, rows: [{ category: 'AI-SMOKE-报价类', name: 'AI-SMOKE-报价项', unit: '项', price_incl_tax: '2468.00', max_quote_unit: '3000.00', estimated_quantity: 'AI-SMOKE-数量', project_name: 'AI-SMOKE-项目' }] });
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
   assert.equal(result.data.data.rows[0].price_incl_tax, '2468.00');
   result = await aiCall('search_items', { kind: 'quote', source_id: aiQuoteSourceId, q: 'AI-SMOKE-报价项' });
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
-  assert.equal(result.data.data.items[0].price_incl_tax, '2468.00', '报价含税单价不应放大 100 倍');
+  assert.equal(result.data.data.items[0].price_incl_tax, '2468.00', '报价统一价格不应放大 100 倍');
   assert.equal(result.data.data.items[0].max_quote_unit, '3000.00');
   assert.equal(result.data.data.items[0].customer_name, 'AI-SMOKE-客户甲');
   result = await aiCall('search_items', { kind: 'cost', source_id: aiOtherCostSourceId, q: 'AI-SMOKE-喷画' });
