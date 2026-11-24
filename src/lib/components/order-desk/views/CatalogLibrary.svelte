@@ -1,12 +1,30 @@
 <script lang="ts">
   import { getContext } from 'svelte';
-  import { Building2, ChevronLeft, ChevronRight, Factory, FileSpreadsheet, Plus, Search, Upload, X } from 'lucide-svelte';
+  import { Building2, ChevronLeft, ChevronRight, Factory, FileSpreadsheet, Plus, Search, Upload, Users, X } from 'lucide-svelte';
   import WorkbenchListFilters from '../WorkbenchListFilters.svelte';
   import CustomerManager from '../CustomerManager.svelte';
   const desk = getContext<any>('order-desk');
   let detailSource = $state<any>(null);
   let detailSearch = $state('');
   let reuploadInput = $state<HTMLInputElement | null>(null);
+  let customerTabOpen = $state(false);
+  const catalogTabs = ['quote', 'cost', 'customers'] as const;
+  const activeCatalogTab = $derived(customerTabOpen ? 'customers' : desk.catalogKind);
+  function selectCatalogTab(tab: typeof catalogTabs[number]) {
+    if (tab === 'customers') { customerTabOpen = true; return; }
+    customerTabOpen = false;
+    desk.catalogKind = tab;
+  }
+  function onCatalogTabKeydown(event: KeyboardEvent, index: number) {
+    if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const next = event.key === 'Home' ? 0
+      : event.key === 'End' ? catalogTabs.length - 1
+      : (index + (event.key === 'ArrowRight' ? 1 : -1) + catalogTabs.length) % catalogTabs.length;
+    selectCatalogTab(catalogTabs[next]);
+    const buttons = (event.currentTarget as HTMLElement).parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+    buttons?.[next]?.focus();
+  }
   const sources = () => desk.catalogSources.filter((source: any) => source.kind === desk.catalogKind);
   const filterFields = $derived([
     { key: 'catalogSearch', label: '搜索', type: 'search' as const, value: desk.catalogSearch, placeholder: '名称 / 分类 / 公司 / 项目' },
@@ -32,15 +50,20 @@
 <section class="page-section workbench-list-page catalog-page">
   <div class="section-heading">
     <div><p class="section-kicker">基础资料</p><h2>报价库与成本库</h2></div>
-    {#if desk.canManageCatalog}<div class="top-actions"><button class="primary-action" type="button" onclick={desk.openCatalogSourceForm}><Plus size={16} />新增{desk.catalogKind === 'quote' ? '公司' : '厂商'}</button></div>{:else}<span class="readonly-badge">只读</span>{/if}
+    {#if customerTabOpen}
+      {#if !desk.canManageCatalog}<span class="readonly-badge">只读</span>{/if}
+    {:else if desk.canManageCatalog}<div class="top-actions"><button class="primary-action" type="button" onclick={desk.openCatalogSourceForm}><Plus size={16} />新增{desk.catalogKind === 'quote' ? '公司' : '厂商'}</button></div>{:else}<span class="readonly-badge">只读</span>{/if}
   </div>
 
-  <div class="catalog-layout">
-    <div class="catalog-main">
-  <div class="catalog-tabs" role="tablist" aria-label="资料库类型">
-    <button role="tab" aria-selected={desk.catalogKind === 'quote'} tabindex={desk.catalogKind === 'quote' ? 0 : -1} class:active={desk.catalogKind === 'quote'} onclick={() => desk.catalogKind = 'quote'} onkeydown={(event) => { if (['ArrowRight', 'ArrowLeft', 'End'].includes(event.key)) { event.preventDefault(); desk.catalogKind = 'cost'; (event.currentTarget.nextElementSibling as HTMLButtonElement)?.focus(); } }}><Building2 size={16} />客户报价库</button>
-    <button role="tab" aria-selected={desk.catalogKind === 'cost'} tabindex={desk.catalogKind === 'cost' ? 0 : -1} class:active={desk.catalogKind === 'cost'} onclick={() => desk.catalogKind = 'cost'} onkeydown={(event) => { if (['ArrowRight', 'ArrowLeft', 'Home'].includes(event.key)) { event.preventDefault(); desk.catalogKind = 'quote'; (event.currentTarget.previousElementSibling as HTMLButtonElement)?.focus(); } }}><Factory size={16} />厂商成本库</button>
+  <div class="catalog-tabs" role="tablist" aria-label="报价库、成本库与客户管理">
+    <button role="tab" aria-selected={activeCatalogTab === 'quote'} tabindex={activeCatalogTab === 'quote' ? 0 : -1} class:active={activeCatalogTab === 'quote'} onclick={() => selectCatalogTab('quote')} onkeydown={(event) => onCatalogTabKeydown(event, 0)}><Building2 size={16} />客户报价库</button>
+    <button role="tab" aria-selected={activeCatalogTab === 'cost'} tabindex={activeCatalogTab === 'cost' ? 0 : -1} class:active={activeCatalogTab === 'cost'} onclick={() => selectCatalogTab('cost')} onkeydown={(event) => onCatalogTabKeydown(event, 1)}><Factory size={16} />厂商成本库</button>
+    <button role="tab" aria-selected={activeCatalogTab === 'customers'} tabindex={activeCatalogTab === 'customers' ? 0 : -1} class:active={activeCatalogTab === 'customers'} onclick={() => selectCatalogTab('customers')} onkeydown={(event) => onCatalogTabKeydown(event, 2)}><Users size={16} />客户管理</button>
   </div>
+
+  {#if customerTabOpen}
+    <CustomerManager />
+  {:else}
   <WorkbenchListFilters fields={filterFields} onchange={(key, value) => desk[key] = value} onclear={clearFilters} label="资料库筛选" />
   <div class="workbench-statistics"><div class="workbench-statistics-head"><span>当前筛选结果 · {desk.visibleCatalog.length} 条资料</span></div><div class="summary-row"><div><span>资料条目</span><b>{desk.visibleCatalog.length}</b></div><div><span>{desk.catalogKind === 'quote' ? '客户来源' : '厂商来源'}</span><b>{new Set(desk.visibleCatalog.map((item: any) => item.source_id || item.customer_name || '通用')).size}</b></div><div><span>涉及分类</span><b>{new Set(desk.visibleCatalog.map((item: any) => item.category || '未分类')).size}</b></div></div></div>
   <div class="table-tools workbench-table-tools"><div class="order-table-heading"><h3>{desk.catalogKind === 'quote' ? '客户报价明细' : '厂商成本明细'}</h3><span class="filter-result">共 {desk.visibleCatalog.length} 条，第 {desk.catalogPage} / {desk.catalogPageCount} 页</span></div></div>
@@ -68,9 +91,7 @@
       <button class="icon-control" title="下一页" aria-label="下一页" disabled={desk.catalogPage === desk.catalogPageCount} onclick={() => desk.setCatalogPage(desk.catalogPage + 1)}><ChevronRight size={17} /></button>
     </nav>
   {/if}
-    </div>
-    <div class="catalog-side"><CustomerManager /></div>
-  </div>
+  {/if}
 </section>
 
 {#if desk.catalogSourceOpen}

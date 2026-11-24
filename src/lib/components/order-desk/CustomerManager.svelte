@@ -83,10 +83,10 @@
   onMount(loadProfiles);
 </script>
 
-<aside class="customer-manager" aria-labelledby="customer-manager-title">
+<section class="customer-manager" aria-labelledby="customer-manager-title">
   <div class="customer-manager-head">
     <div>
-      <h3 id="customer-manager-title"><Building2 size={16} />客户管理</h3>
+      <h3 id="customer-manager-title"><Building2 size={16} />客户资料</h3>
       <span>独立维护客户开票资料，暂不与订单、报价关联</span>
     </div>
     {#if desk.canManageCatalog && !formOpen}
@@ -110,7 +110,7 @@
       <label>地址<input bind:value={form.address} maxlength="160" placeholder="开票地址" disabled={saving} /></label>
       <label>开户银行<input bind:value={form.bank_name} maxlength="80" placeholder="开户行名称" disabled={saving} /></label>
       <label>银行账号<input bind:value={form.bank_account} maxlength="60" placeholder="对公账号" disabled={saving} /></label>
-      <label>备注<textarea bind:value={form.note} maxlength="300" rows="2" placeholder="其他开票信息" disabled={saving}></textarea></label>
+      <label class="customer-form-wide">备注<textarea bind:value={form.note} maxlength="300" rows="2" placeholder="其他开票信息" disabled={saving}></textarea></label>
       <div class="customer-form-actions">
         <button class="outline-action" type="button" disabled={saving} onclick={cancelForm}>取消</button>
         <button class="primary-action" type="submit" disabled={saving || !form.name.trim()}><Save size={15} />{saving ? '保存中...' : '保存'}</button>
@@ -138,4 +138,4 @@
       {/each}
     </div>
   {/if}
-</aside>
+</section>
