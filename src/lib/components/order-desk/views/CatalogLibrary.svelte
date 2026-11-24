@@ -2,6 +2,7 @@
   import { getContext } from 'svelte';
   import { Building2, ChevronLeft, ChevronRight, Factory, FileSpreadsheet, Plus, Search, Upload, X } from 'lucide-svelte';
   import WorkbenchListFilters from '../WorkbenchListFilters.svelte';
+  import CustomerManager from '../CustomerManager.svelte';
   const desk = getContext<any>('order-desk');
   let detailSource = $state<any>(null);
   let detailSearch = $state('');
@@ -34,6 +35,8 @@
     {#if desk.canManageCatalog}<div class="top-actions"><button class="primary-action" type="button" onclick={desk.openCatalogSourceForm}><Plus size={16} />新增{desk.catalogKind === 'quote' ? '公司' : '厂商'}</button></div>{:else}<span class="readonly-badge">只读</span>{/if}
   </div>
 
+  <div class="catalog-layout">
+    <div class="catalog-main">
   <div class="catalog-tabs" role="tablist" aria-label="资料库类型">
     <button role="tab" aria-selected={desk.catalogKind === 'quote'} tabindex={desk.catalogKind === 'quote' ? 0 : -1} class:active={desk.catalogKind === 'quote'} onclick={() => desk.catalogKind = 'quote'} onkeydown={(event) => { if (['ArrowRight', 'ArrowLeft', 'End'].includes(event.key)) { event.preventDefault(); desk.catalogKind = 'cost'; (event.currentTarget.nextElementSibling as HTMLButtonElement)?.focus(); } }}><Building2 size={16} />客户报价库</button>
     <button role="tab" aria-selected={desk.catalogKind === 'cost'} tabindex={desk.catalogKind === 'cost' ? 0 : -1} class:active={desk.catalogKind === 'cost'} onclick={() => desk.catalogKind = 'cost'} onkeydown={(event) => { if (['ArrowRight', 'ArrowLeft', 'Home'].includes(event.key)) { event.preventDefault(); desk.catalogKind = 'quote'; (event.currentTarget.previousElementSibling as HTMLButtonElement)?.focus(); } }}><Factory size={16} />厂商成本库</button>
@@ -65,6 +68,9 @@
       <button class="icon-control" title="下一页" aria-label="下一页" disabled={desk.catalogPage === desk.catalogPageCount} onclick={() => desk.setCatalogPage(desk.catalogPage + 1)}><ChevronRight size={17} /></button>
     </nav>
   {/if}
+    </div>
+    <div class="catalog-side"><CustomerManager /></div>
+  </div>
 </section>
 
 {#if desk.catalogSourceOpen}

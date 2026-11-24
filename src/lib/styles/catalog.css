@@ -89,3 +89,202 @@
   font-size: 12px;
   font-weight: 700;
 }
+
+/* 报价库右侧的客户管理面板：与资料库内容并排，窄屏时自动堆叠。 */
+.catalog-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 312px;
+  align-items: start;
+  gap: 20px;
+}
+
+.catalog-main,
+.catalog-side {
+  min-width: 0;
+}
+
+.catalog-side {
+  position: sticky;
+  top: 16px;
+}
+
+.customer-manager {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.customer-manager-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.customer-manager-head h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.customer-manager-head span {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.customer-search {
+  max-width: none;
+}
+
+.customer-list {
+  display: grid;
+  gap: 8px;
+  max-height: min(54vh, 520px);
+  overflow-y: auto;
+}
+
+.customer-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 9px;
+  background: var(--paper);
+}
+
+.customer-card:hover {
+  border-color: var(--blue);
+  background: #f8faff;
+}
+
+.customer-card-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.customer-card-copy b {
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.customer-card-copy span,
+.customer-card-copy small {
+  color: var(--muted);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.customer-card-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+.customer-card-actions :is(.icon-control, .delete-action) {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  flex-basis: 28px;
+  padding: 0;
+}
+
+.customer-empty {
+  padding: 20px 8px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.customer-form {
+  display: grid;
+  gap: 10px;
+}
+
+.customer-form-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.customer-form-head b {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.customer-form label {
+  display: grid;
+  gap: 5px;
+  color: #42536b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.customer-form label em {
+  color: var(--red);
+  font-style: normal;
+}
+
+.customer-form input,
+.customer-form textarea {
+  width: 100%;
+}
+
+.customer-form textarea {
+  height: auto;
+  min-height: 60px;
+  padding-block: 8px;
+  resize: vertical;
+}
+
+.customer-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.customer-message {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.customer-message.error {
+  background: var(--red-soft);
+  color: #9f2929;
+}
+
+.customer-message.success {
+  background: #effaf5;
+  color: #176c58;
+}
+
+@media (max-width: 1280px) {
+  .catalog-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .catalog-side {
+    position: static;
+  }
+}
+

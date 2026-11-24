@@ -319,6 +319,20 @@ export function getOrderDb() {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      -- 客户档案独立维护开票资料，暂不与订单、报价库等其他业务数据关联。
+      CREATE TABLE IF NOT EXISTS customer_profiles (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        tax_no TEXT NOT NULL DEFAULT '',
+        contact TEXT NOT NULL DEFAULT '',
+        phone TEXT NOT NULL DEFAULT '',
+        address TEXT NOT NULL DEFAULT '',
+        bank_name TEXT NOT NULL DEFAULT '',
+        bank_account TEXT NOT NULL DEFAULT '',
+        note TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
     // 首次初始化时写入默认执行公司，与原前端内置的三项默认值保持一致。
     const executionCompanyCount = (instance.prepare('SELECT COUNT(*) AS count FROM execution_companies').get() as { count: number }).count;
@@ -887,6 +901,71 @@ export function deleteExecutionCompany(id: unknown, actor?: ExecutionCompanyActo
   return { id: targetId };
 }
 
+export type CustomerProfile = {
+  id: string; name: string; tax_no: string; contact: string; phone: string;
+  address: string; bank_name: string; bank_account: string; note: string;
+  created_at: string; updated_at: string;
+};
+type CustomerProfileActor = { name?: string; uid?: number | null };
+
+// 客户管理仅维护开票所需的客户资料，不参与订单、报价库或成本库的任何匹配。
+function customerProfileValues(data: Record<string, unknown>) {
+  const name = text(data.name);
+  if (!name) throw new Error('客户名称不能为空');
+  if (name.length > 80) throw new Error('客户名称不能超过 80 个字符');
+  return {
+    name,
+    tax_no: text(data.tax_no).slice(0, 40),
+    contact: text(data.contact).slice(0, 40),
+    phone: text(data.phone).slice(0, 40),
+    address: text(data.address).slice(0, 160),
+    bank_name: text(data.bank_name).slice(0, 80),
+    bank_account: text(data.bank_account).slice(0, 60),
+    note: text(data.note).slice(0, 300),
+  };
+}
+
+export function listCustomerProfiles(): CustomerProfile[] {
+  return getOrderDb().prepare('SELECT * FROM customer_profiles ORDER BY name').all() as CustomerProfile[];
+}
+
+export function createCustomerProfile(data: Record<string, unknown>, actor?: CustomerProfileActor): CustomerProfile {
+  const values = customerProfileValues(data);
+  const db = getOrderDb();
+  if (db.prepare('SELECT 1 FROM customer_profiles WHERE name=?').get(values.name)) throw new Error('该客户已存在');
+  const id = uuid();
+  const timestamp = now();
+  db.prepare('INSERT INTO customer_profiles(id,name,tax_no,contact,phone,address,bank_name,bank_account,note,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+    .run(id, values.name, values.tax_no, values.contact, values.phone, values.address, values.bank_name, values.bank_account, values.note, timestamp, timestamp);
+  recordAudit(db, { actorName: actor?.name, actorUid: actor?.uid, action: 'create_customer_profile', entityType: 'customer_profile', entityId: id, detail: { name: values.name } });
+  return db.prepare('SELECT * FROM customer_profiles WHERE id=?').get(id) as CustomerProfile;
+}
+
+export function updateCustomerProfile(id: unknown, data: Record<string, unknown>, actor?: CustomerProfileActor): CustomerProfile {
+  const targetId = text(id);
+  if (!targetId) throw new Error('客户不存在');
+  const values = customerProfileValues(data);
+  const db = getOrderDb();
+  const existing = db.prepare('SELECT * FROM customer_profiles WHERE id=?').get(targetId) as CustomerProfile | undefined;
+  if (!existing) throw new Error('客户不存在');
+  if (db.prepare('SELECT 1 FROM customer_profiles WHERE name=? AND id<>?').get(values.name, targetId)) throw new Error('该客户已存在');
+  db.prepare('UPDATE customer_profiles SET name=?,tax_no=?,contact=?,phone=?,address=?,bank_name=?,bank_account=?,note=?,updated_at=? WHERE id=?')
+    .run(values.name, values.tax_no, values.contact, values.phone, values.address, values.bank_name, values.bank_account, values.note, now(), targetId);
+  recordAudit(db, { actorName: actor?.name, actorUid: actor?.uid, action: 'update_customer_profile', entityType: 'customer_profile', entityId: targetId, fromValue: existing.name, toValue: values.name, detail: { name: values.name } });
+  return db.prepare('SELECT * FROM customer_profiles WHERE id=?').get(targetId) as CustomerProfile;
+}
+
+export function deleteCustomerProfile(id: unknown, actor?: CustomerProfileActor) {
+  const targetId = text(id);
+  if (!targetId) throw new Error('客户不存在');
+  const db = getOrderDb();
+  const existing = db.prepare('SELECT id,name FROM customer_profiles WHERE id=?').get(targetId) as { id: string; name: string } | undefined;
+  if (!existing) throw new Error('客户不存在');
+  db.prepare('DELETE FROM customer_profiles WHERE id=?').run(targetId);
+  recordAudit(db, { actorName: actor?.name, actorUid: actor?.uid, action: 'delete_customer_profile', entityType: 'customer_profile', entityId: targetId, detail: { name: existing.name } });
+  return { id: targetId };
+}
+
 const exportColumnLabels: Record<string, string> = {
   code: '订单编号', order_date: '订单日期', customer_name: '客户', project_name: '项目',
   project_owner: '项目负责人', customer_department: '客户部门', designer: '设计师', planner: '策划人', contact: '联系人',
@@ -1198,6 +1277,15 @@ export function createProject(data: CreateProjectInput) {
   })();
 }
 
+// 未填写项目时使用的虚拟项目：按客户分别归档，避免和新订单的客户信息脱节。
+const unassignedProjectName = '非分配项目';
+function ensureUnassignedProject(db: Database.Database, customerId: string) {
+  const existing = db.prepare('SELECT id,customer_id FROM projects_simple WHERE customer_id=? AND name=?').get(customerId, unassignedProjectName) as { id: string; customer_id: string } | undefined;
+  if (existing) return existing;
+  db.prepare('INSERT OR IGNORE INTO projects_simple(id,customer_id,name,owner,status,created_at) VALUES(?,?,?,?,?,?)').run(uuid(), customerId, unassignedProjectName, '', '进行中', now());
+  return db.prepare('SELECT id,customer_id FROM projects_simple WHERE customer_id=? AND name=?').get(customerId, unassignedProjectName) as { id: string; customer_id: string };
+}
+
 export function createOrder(data: Record<string, unknown>) {
   const db = getOrderDb();
   const idempotencyKey = text(data.idempotency_key).slice(0, 100);
@@ -1205,9 +1293,16 @@ export function createOrder(data: Record<string, unknown>) {
     const duplicate = db.prepare('SELECT * FROM orders_simple WHERE idempotency_key=?').get(idempotencyKey) as Record<string, unknown> | undefined;
     if (duplicate) return hydrateOrder(duplicate);
   }
-  const projectId = String(data.project_id || '');
-  const project = db.prepare('SELECT * FROM projects_simple WHERE id=?').get(projectId) as { id: string; customer_id: string } | undefined;
-  if (!project) throw new Error('请选择项目');
+  const requestedProjectId = text(data.project_id);
+  const project = requestedProjectId
+    ? db.prepare('SELECT * FROM projects_simple WHERE id=?').get(requestedProjectId) as { id: string; customer_id: string } | undefined
+    : undefined;
+  if (requestedProjectId && !project) throw new Error('项目不存在');
+  // 项目选填后客户不能再由项目反查，必须由前端显式提交并校验。
+  const customerId = project?.customer_id || text(data.customer_id);
+  if (!customerId) throw new Error('请选择客户');
+  if (!db.prepare('SELECT 1 FROM customers_simple WHERE id=?').get(customerId)) throw new Error('客户不存在');
+  const projectId = project?.id || ensureUnassignedProject(db, customerId).id;
   const department = text(data.customer_department);
   const contact = text(data.contact);
   const deliveryDate = text(data.delivery_date);
@@ -1233,7 +1328,7 @@ export function createOrder(data: Record<string, unknown>) {
   const quoteCents = products.length ? products.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0) : optionalMoneyToCents(data.quote_amount);
   const costCents = costs.length ? costs.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0) : optionalMoneyToCents(data.cost_amount);
   db.transaction(() => {
-    db.prepare('INSERT INTO orders_simple(id,code,customer_id,project_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,created_by,status,note,created_at,specification,is_extra,delivery_date,contact,customer_department,designer,planner,payment_status,products_json,costs_json,idempotency_key,execution_company) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id, code, project.customer_id, projectId, serviceName, quantity, String(data.unit || products[0]?.unit || '项'), quoteCents, costCents, date, String(data.created_by || '填写人'), normalizeOrderStatus(data.status), String(data.note || '').trim(), created, text(data.specification || products[0]?.specification), data.is_extra ? 1 : 0, deliveryDate, contact, department, designer, planner, text(data.payment_status) || '未结款', JSON.stringify(products), JSON.stringify(costs), idempotencyKey, executionCompany);
+    db.prepare('INSERT INTO orders_simple(id,code,customer_id,project_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,created_by,status,note,created_at,specification,is_extra,delivery_date,contact,customer_department,designer,planner,payment_status,products_json,costs_json,idempotency_key,execution_company) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id, code, customerId, projectId, serviceName, quantity, String(data.unit || products[0]?.unit || '项'), quoteCents, costCents, date, String(data.created_by || '填写人'), normalizeOrderStatus(data.status), String(data.note || '').trim(), created, text(data.specification || products[0]?.specification), data.is_extra ? 1 : 0, deliveryDate, contact, department, designer, planner, text(data.payment_status) || '未结款', JSON.stringify(products), JSON.stringify(costs), idempotencyKey, executionCompany);
     syncNormalizedOrderLines(db, id, products, costs);
   })();
   return hydrateOrder(db.prepare('SELECT * FROM orders_simple WHERE id=?').get(id) as Record<string, unknown>);
@@ -1257,11 +1352,19 @@ export function updateOrder(id: string, data: Record<string, unknown>) {
   const quote = products.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0);
   const cost = costs.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0);
   const service = products.map((item) => text(item.name)).filter(Boolean).join('、') || text(data.service_name) || String(existing.service_name);
-  const targetProject = text(data.project_id || existing.project_id);
+  const requestedProjectId = Object.hasOwn(data, 'project_id') ? text(data.project_id) : text(existing.project_id);
+  const targetProject = requestedProjectId
+    ? db.prepare('SELECT id,customer_id FROM projects_simple WHERE id=?').get(requestedProjectId) as { id: string; customer_id: string } | undefined
+    : undefined;
+  if (requestedProjectId && !targetProject) throw new Error('项目不存在');
+  const targetCustomerId = targetProject?.customer_id || text(data.customer_id) || text(existing.customer_id);
+  if (!targetCustomerId) throw new Error('请选择客户');
+  if (!db.prepare('SELECT 1 FROM customers_simple WHERE id=?').get(targetCustomerId)) throw new Error('客户不存在');
+  const targetProjectId = targetProject?.id || ensureUnassignedProject(db, targetCustomerId).id;
   const department = text(data.customer_department);
   const contact = text(data.contact);
   db.transaction(() => {
-    db.prepare(`UPDATE orders_simple SET project_id=?,customer_id=(SELECT customer_id FROM projects_simple WHERE id=?),service_name=?,quantity=?,unit=?,quote_amount=?,cost_amount=?,order_date=?,delivery_date=?,contact=?,customer_department=?,designer=?,planner=?,execution_company=?,created_by=?,status=?,payment_status=?,note=?,specification=?,products_json=?,costs_json=? WHERE id=?`).run(targetProject, targetProject, service, Number(products[0]?.quantity || existing.quantity), text(products[0]?.unit || existing.unit), quote, cost, text(data.order_date || existing.order_date), deliveryDate, contact, department, designer, planner, executionCompany, text(data.created_by || existing.created_by), normalizeOrderStatus(data.status || existing.status), text(data.payment_status || existing.payment_status), text(data.note), text(products[0]?.specification || existing.specification), JSON.stringify(products), JSON.stringify(costs), id);
+    db.prepare(`UPDATE orders_simple SET project_id=?,customer_id=?,service_name=?,quantity=?,unit=?,quote_amount=?,cost_amount=?,order_date=?,delivery_date=?,contact=?,customer_department=?,designer=?,planner=?,execution_company=?,created_by=?,status=?,payment_status=?,note=?,specification=?,products_json=?,costs_json=? WHERE id=?`).run(targetProjectId, targetCustomerId, service, Number(products[0]?.quantity || existing.quantity), text(products[0]?.unit || existing.unit), quote, cost, text(data.order_date || existing.order_date), deliveryDate, contact, department, designer, planner, executionCompany, text(data.created_by || existing.created_by), normalizeOrderStatus(data.status || existing.status), text(data.payment_status || existing.payment_status), text(data.note), text(products[0]?.specification || existing.specification), JSON.stringify(products), JSON.stringify(costs), id);
     syncNormalizedOrderLines(db, id, products, costs);
   })();
   return hydrateOrder(db.prepare(`SELECT o.*,c.name customer_name,p.name project_name,p.owner project_owner FROM orders_simple o JOIN customers_simple c ON c.id=o.customer_id JOIN projects_simple p ON p.id=o.project_id WHERE o.id=?`).get(id) as Record<string, unknown>);

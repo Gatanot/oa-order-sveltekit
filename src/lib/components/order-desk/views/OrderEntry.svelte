@@ -26,7 +26,7 @@
     <div class="form-title"><div><p class="section-kicker">订单录入</p><h3>{desk.editingOrderId ? "编辑订单" : "新增订单"}</h3><span>订单保存后可在列表中查看、筛选和再次编辑</span></div><button type="button" class="outline-action" onclick={() => desk.navigate("/orders")}>取消</button></div>
     <div class="form-grid">
       <label>客户 <em>*</em><select bind:value={desk.customerId} onchange={desk.onCustomerChange} required><option value="">{desk.customers.length ? "请选择客户" : "暂无客户，请先导入客户报价库"}</option>{#each desk.customers as c}<option value={c.id}>{c.name}</option>{/each}</select></label>
-      <label>项目 <em>*</em><div class="field-with-action"><select bind:value={desk.projectId} required disabled={!desk.customerId}><option value="">请选择项目</option>{#each desk.filteredProjects as p}<option value={p.id}>{p.name} · {p.owner || "未分配"}</option>{/each}</select><button type="button" class="mini-create" disabled={!desk.customerId} title={desk.customerId ? "新增项目" : "请先选择客户"} onclick={() => (desk.showProjectForm = !desk.showProjectForm)}><Plus size={14}/>新建项目</button></div></label>
+      <label>项目 <span class="optional-mark">选填</span><div class="field-with-action"><select bind:value={desk.projectId} disabled={!desk.customerId}><option value="">不关联项目（自动归入非分配项目）</option>{#each desk.filteredProjects as p}<option value={p.id}>{p.name} · {p.owner || "未分配"}</option>{/each}</select><button type="button" class="mini-create" disabled={!desk.customerId} title={desk.customerId ? "新增项目" : "请先选择客户"} onclick={() => (desk.showProjectForm = !desk.showProjectForm)}><Plus size={14}/>新建项目</button></div></label>
       {#if desk.showProjectForm}
         <div class="full inline-create-form">
           <label>新项目名称 <em>*</em><input bind:value={desk.newProject} placeholder="例如：办公楼改造项目" /></label>
@@ -64,6 +64,6 @@
         {/if}
       </div>
     </div>
-    <div class="form-footer"><span>至少添加一项产品；填写产品名称会自动匹配同名的报价和成本项。</span><div class="submit-dropdown"><button class="primary-action" disabled={desk.busy || desk.uploadingFiles || !desk.projectId}>{desk.busy || desk.uploadingFiles ? "保存中..." : "保存订单"}</button></div></div>
+    <div class="form-footer"><span>至少添加一项产品；填写产品名称会自动匹配同名的报价和成本项；未选择项目时自动归入该客户的非分配项目。</span><div class="submit-dropdown"><button class="primary-action" disabled={desk.busy || desk.uploadingFiles || !desk.customerId}>{desk.busy || desk.uploadingFiles ? "保存中..." : "保存订单"}</button></div></div>
   </form>
 </section>

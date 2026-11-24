@@ -25,7 +25,7 @@
     <div class="sidebar-avatar" title={desk.identity?.displayName || desk.creatorName || '账户'}>{(desk.identity?.displayName || desk.creatorName || 'OA').slice(0, 1).toUpperCase()}</div>
     <div class="sidebar-profile-copy">
     {#if desk.visitor.status === "authenticated"}
-      <b>{desk.visitor.username}</b><span>平台访问者 · 用户编号 {desk.visitor.uid}</span>
+      <b>{desk.identity?.displayName || desk.creatorName || desk.visitor.username}</b><span>平台访问者 · 用户编号 {desk.visitor.uid}</span>
     {:else if desk.visitor.status === "guest"}
       <b>未识别访问者</b><span>{desk.isEmbedded ? "请在新页面完成登录" : "当前以游客身份访问"}</span>
       {#if desk.onArtifactGateway}

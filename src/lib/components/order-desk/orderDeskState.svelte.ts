@@ -339,7 +339,7 @@ export function createOrderDesk(data: Data) {
     customers.find((item) => item.id === customerId)?.name || "",
   );
   const selectedProject = $derived(
-    projects.find((item) => item.id === projectId)?.name || "",
+    projects.find((item) => item.id === projectId && item.name !== "非分配项目")?.name || "",
   );
   const filteredOrders = $derived(
     orders.filter(
@@ -1199,7 +1199,7 @@ export function createOrderDesk(data: Data) {
     }
     busy = true;
     try {
-      const payload = { project_id: projectId, order_date: orderDate, delivery_date: deliveryDate, contact, customer_department: customerDepartment, designer, designer_uid: designerUid, planner, planner_uid: plannerUid, execution_company: executionCompany, payment_status: paymentStatus, status, created_by: createdBy.trim() || creatorName || "未填写", note, products: validProducts, costs: validCosts, idempotency_key: editingOrderId ? "" : (submissionKey ||= crypto.randomUUID()) };
+      const payload = { customer_id: customerId, project_id: projectId, order_date: orderDate, delivery_date: deliveryDate, contact, customer_department: customerDepartment, designer, designer_uid: designerUid, planner, planner_uid: plannerUid, execution_company: executionCompany, payment_status: paymentStatus, status, created_by: createdBy.trim() || creatorName || "未填写", note, products: validProducts, costs: validCosts, idempotency_key: editingOrderId ? "" : (submissionKey ||= crypto.randomUUID()) };
       const result = editingOrderId
         ? await api.patch<{ data: Order }>(`/api/orders/${editingOrderId}`, payload)
         : await api.post<{ data: Order }>("/api/orders", payload);
