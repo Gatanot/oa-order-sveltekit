@@ -24,7 +24,7 @@
 
 <fieldset class="order-list-filters" aria-label="订单筛选" disabled={desk.bulkRunning}>
   <div class="order-filter-primary">
-    <label class="field filter-search"><span>搜索</span><div class="search-field"><Search size={16} /><input aria-label="搜索订单" bind:value={desk.search} placeholder="订单 / 产品 / 联系人" /></div></label>
+    <label class="field filter-search"><span>搜索</span><div class="search-field"><Search size={16} /><input aria-label="搜索订单" bind:value={desk.search} placeholder="订单 / 产品 / 订单来源" /></div></label>
     <label class="field"><span>客户</span><select bind:value={desk.filterCustomer} onchange={desk.onFilterCustomerChange}><option value="">全部客户</option>{#each desk.customers as customer}<option value={customer.id}>{customer.name}</option>{/each}</select></label>
     <label class="field"><span>结款状态</span><select bind:value={desk.filterPayment}><option value="">全部</option><option>未结款</option><option>已结款</option></select></label>
     <div class="field order-date-field"><span id="order-date-label">订单日期</span><div class="order-date-range" role="group" aria-labelledby="order-date-label">

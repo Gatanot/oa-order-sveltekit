@@ -66,13 +66,12 @@ const apiFetch = (input: RequestInfo | URL, init?: RequestInit) =>
     created_by: string;
     status: string;
     reimbursement_status?: string;
-    customer_department?: string;
+    order_source?: string;
     designer?: string;
     designer_uid?: number | null;
     planner?: string;
     planner_uid?: number | null;
     delivery_date?: string;
-    contact?: string;
     payment_status?: string;
     products?: Array<Record<string, any>>;
     costs?: Array<Record<string, any>>;
@@ -128,8 +127,7 @@ export function createOrderDesk(data: Data) {
   let note = $state("");
   let noteFiles = $state<File[]>([]);
   let deliveryDate = $state("");
-  let contact = $state("");
-  let customerDepartment = $state("");
+  let orderSource = $state("");
   let designer = $state("");
   let designerUid = $state<number | null>(null);
   let planner = $state("");
@@ -245,7 +243,7 @@ export function createOrderDesk(data: Data) {
   let bulkResult = $state<{ success: number; failed: Array<{ id: string; code: string; message: string }>; refreshError: string } | null>(null);
   let visibleOrderColumns = $state(["owner", "quote", "cost", "date", "payment", "status"]);
   const orderColumnOptions = [
-    ["department", "客户部门"], ["contact", "联系人"], ["designer", "设计师"],
+    ["source", "订单来源"], ["designer", "设计师"],
     ["owner", "项目负责人"], ["quote", "报价"], ["cost", "成本"], ["creator", "录入人"],
     ["date", "下单日期"], ["delivery", "交货日期"], ["payment", "结款状态"], ["status", "状态"],
   ];
@@ -268,9 +266,8 @@ export function createOrderDesk(data: Data) {
     ["customer_name", "客户"],
     ["project_name", "项目"],
     ["project_owner", "项目负责人"],
-    ["customer_department", "客户部门"],
+    ["order_source", "订单来源"],
     ["designer", "设计师"],
-    ["contact", "联系人"],
     ["delivery_date", "交货日期"],
     ["payment_status", "结款状态"],
     ["service_name", "订单内容"],
@@ -345,7 +342,7 @@ export function createOrderDesk(data: Data) {
     orders.filter(
       (o) =>
         (!search ||
-          `${o.code}${o.customer_name}${o.project_name}${o.service_name}${o.customer_department || ""}${o.contact || ""}${o.designer || ""}${o.created_by || ""}${o.note || ""}${(o.products || []).map((item: any) => `${item.name || ""}${item.specification || ""}${item.remark || ""}`).join("")}${(o.costs || []).map((item: any) => item.name || "").join("")}`
+          `${o.code}${o.customer_name}${o.project_name}${o.service_name}${o.order_source || ""}${o.designer || ""}${o.created_by || ""}${o.note || ""}${(o.products || []).map((item: any) => `${item.name || ""}${item.specification || ""}${item.remark || ""}`).join("")}${(o.costs || []).map((item: any) => item.name || "").join("")}`
             .toLowerCase()
             .includes(search.toLowerCase())) &&
         (!filterCustomer || o.customer_id === filterCustomer) &&
@@ -1204,7 +1201,7 @@ export function createOrderDesk(data: Data) {
     }
     busy = true;
     try {
-      const payload = { customer_id: customerId, project_id: projectId, order_date: orderDate, delivery_date: deliveryDate, contact, customer_department: customerDepartment, designer, designer_uid: designerUid, planner, planner_uid: plannerUid, execution_company: executionCompany, payment_status: paymentStatus, status, created_by: createdBy.trim() || creatorName || "未填写", note, products: validProducts, costs: validCosts, idempotency_key: editingOrderId ? "" : (submissionKey ||= crypto.randomUUID()) };
+      const payload = { customer_id: customerId, project_id: projectId, order_date: orderDate, delivery_date: deliveryDate, order_source: orderSource, designer, designer_uid: designerUid, planner, planner_uid: plannerUid, execution_company: executionCompany, payment_status: paymentStatus, status, created_by: createdBy.trim() || creatorName || "未填写", note, products: validProducts, costs: validCosts, idempotency_key: editingOrderId ? "" : (submissionKey ||= crypto.randomUUID()) };
       const result = editingOrderId
         ? await api.patch<{ data: Order }>(`/api/orders/${editingOrderId}`, payload)
         : await api.post<{ data: Order }>("/api/orders", payload);
@@ -1229,8 +1226,7 @@ export function createOrderDesk(data: Data) {
       noteFiles = [];
       createdBy = creatorName;
       deliveryDate = "";
-      contact = "";
-      customerDepartment = "";
+      orderSource = "";
       designer = "";
       designerUid = null;
       planner = "";
@@ -1453,8 +1449,7 @@ export function createOrderDesk(data: Data) {
     projectId = order.project_id;
     orderDate = order.order_date;
     deliveryDate = order.delivery_date || "";
-    contact = order.contact || "";
-    customerDepartment = order.customer_department || "";
+    orderSource = order.order_source || "";
     designer = order.designer || "";
     designerUid = order.designer_uid || null;
     planner = order.planner || "";
@@ -1571,8 +1566,7 @@ export function createOrderDesk(data: Data) {
     projectId = "";
     orderDate = new Date().toISOString().slice(0, 10);
     deliveryDate = "";
-    contact = "";
-    customerDepartment = "";
+    orderSource = "";
     designer = "";
     designerUid = null;
     planner = "";
@@ -1609,7 +1603,7 @@ export function createOrderDesk(data: Data) {
     exportPartyA = first?.customer_name || "";
     exportPartyB = "";
     exportContract = "";
-    exportFollowA = first?.contact || "";
+    exportFollowA = first?.order_source || "";
     exportFollowB = creatorName || "";
     exportContactPhone = "";
     exportRemarkOrder = false;
@@ -1721,8 +1715,8 @@ export function createOrderDesk(data: Data) {
       const productsForText = order.products || [];
       const values: Record<string, unknown> = {
         code: order.code, order_date: order.order_date, customer_name: order.customer_name,
-        project_name: order.project_name, project_owner: order.project_owner, customer_department: order.customer_department,
-        designer: order.designer, contact: order.contact, delivery_date: order.delivery_date,
+        project_name: order.project_name, project_owner: order.project_owner, order_source: order.order_source,
+        designer: order.designer, delivery_date: order.delivery_date,
         payment_status: order.payment_status, service_name: order.service_name, quantity: order.quantity, unit: order.unit,
         quote_amount: Number(order.quote_amount || 0) / 100, cost_amount: Number(order.cost_amount || 0) / 100,
         advance_amount: advanceAmount(order), profit: Number(order.quote_amount || 0) / 100 - Number(order.cost_amount || 0) / 100 - advanceAmount(order),
@@ -1900,8 +1894,7 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "note", { get: () => note, set: (value) => { note = value; } });
   Object.defineProperty(desk, "noteFiles", { get: () => noteFiles, set: (value) => { noteFiles = value; } });
   Object.defineProperty(desk, "deliveryDate", { get: () => deliveryDate, set: (value) => { deliveryDate = value; } });
-  Object.defineProperty(desk, "contact", { get: () => contact, set: (value) => { contact = value; } });
-  Object.defineProperty(desk, "customerDepartment", { get: () => customerDepartment, set: (value) => { customerDepartment = value; } });
+  Object.defineProperty(desk, "orderSource", { get: () => orderSource, set: (value) => { orderSource = value; } });
   Object.defineProperty(desk, "designer", { get: () => designer, set: (value) => { designer = value; } });
   Object.defineProperty(desk, "designerUid", { get: () => designerUid, set: (value) => { designerUid = value ? Number(value) : null; } });
   Object.defineProperty(desk, "planner", { get: () => planner, set: (value) => { planner = value; } });

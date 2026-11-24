@@ -66,7 +66,7 @@ export function moneyToCents(value: unknown): number {
 function migrate(db: Database.Database) {
   db.exec('CREATE TABLE IF NOT EXISTS schema_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)');
   const version = db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").get() as { value: string } | undefined;
-  if (version?.value === '28' || version?.value === '27' || version?.value === '26' || version?.value === '25' || version?.value === '24' || version?.value === '23' || version?.value === '22') return;
+  if (version?.value === '29' || version?.value === '28' || version?.value === '27' || version?.value === '26' || version?.value === '25' || version?.value === '24' || version?.value === '23' || version?.value === '22') return;
   if (version?.value === '21') {
     db.exec(`ALTER TABLE orders_simple ADD COLUMN execution_company TEXT NOT NULL DEFAULT ''; UPDATE schema_meta SET value='22' WHERE key='order_app_version';`);
     return;
@@ -543,6 +543,47 @@ export function getOrderDb() {
       const violations = instance.pragma('foreign_key_check') as Array<Record<string, unknown>>;
       if (violations.length) throw new Error(`v28 迁移后存在 ${violations.length} 条外键异常`);
     }
+    // v29：客户部门 + 联系人/下单人 合并为「订单来源」，旧数据按「部门-联系人」拼接。
+    if (appVersion < 29) {
+      instance.pragma('foreign_keys = OFF');
+      try {
+        instance.transaction(() => {
+          instance!.exec(`
+            CREATE TABLE orders_simple_v29(
+              id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, customer_id TEXT NOT NULL, project_id TEXT NOT NULL,
+              service_name TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 1, unit TEXT NOT NULL DEFAULT '项',
+              quote_amount INTEGER NOT NULL DEFAULT 0, cost_amount INTEGER NOT NULL DEFAULT 0, order_date TEXT NOT NULL,
+              delivery_date TEXT NOT NULL DEFAULT '', order_source TEXT NOT NULL DEFAULT '',
+              designer TEXT NOT NULL DEFAULT '', planner TEXT NOT NULL DEFAULT '', execution_company TEXT NOT NULL DEFAULT '',
+              created_by TEXT NOT NULL, status TEXT NOT NULL DEFAULT '已提交' CHECK(status IN ('已提交','已完成')),
+              payment_status TEXT NOT NULL DEFAULT '未结款', note TEXT NOT NULL DEFAULT '', specification TEXT NOT NULL DEFAULT '',
+              products_json TEXT NOT NULL DEFAULT '[]', costs_json TEXT NOT NULL DEFAULT '[]', is_extra INTEGER NOT NULL DEFAULT 0,
+              idempotency_key TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, created_by_uid INTEGER, designer_uid INTEGER, planner_uid INTEGER,
+              FOREIGN KEY(customer_id) REFERENCES customers_simple(id), FOREIGN KEY(project_id) REFERENCES projects_simple(id)
+            );
+            INSERT INTO orders_simple_v29(id,code,customer_id,project_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,delivery_date,order_source,designer,planner,execution_company,created_by,status,payment_status,note,specification,products_json,costs_json,is_extra,idempotency_key,created_at,created_by_uid,designer_uid,planner_uid)
+              SELECT id,code,customer_id,project_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,delivery_date,
+                CASE
+                  WHEN TRIM(COALESCE(customer_department,'')) = '' THEN TRIM(COALESCE(contact,''))
+                  WHEN TRIM(COALESCE(contact,'')) = '' THEN TRIM(customer_department)
+                  ELSE TRIM(customer_department) || '-' || TRIM(contact)
+                END,
+                designer,planner,execution_company,created_by,status,payment_status,note,specification,products_json,costs_json,is_extra,idempotency_key,created_at,created_by_uid,designer_uid,planner_uid
+              FROM orders_simple;
+            DROP TABLE orders_simple;
+            ALTER TABLE orders_simple_v29 RENAME TO orders_simple;
+            CREATE INDEX idx_simple_orders_date ON orders_simple(order_date DESC);
+            CREATE INDEX idx_simple_orders_customer ON orders_simple(customer_id,project_id);
+            CREATE UNIQUE INDEX idx_orders_idempotency ON orders_simple(idempotency_key) WHERE idempotency_key <> '';
+            UPDATE schema_meta SET value='29' WHERE key='order_app_version';
+          `);
+        })();
+      } finally {
+        instance.pragma('foreign_keys = ON');
+      }
+      const v29Violations = instance.pragma('foreign_key_check') as Array<Record<string, unknown>>;
+      if (v29Violations.length) throw new Error(`v29 迁移后存在 ${v29Violations.length} 条外键异常`);
+    }
     importBundledExcel(instance);
   }
   return instance;
@@ -974,7 +1015,7 @@ export function deleteCustomerProfile(id: unknown, actor?: CustomerProfileActor)
 
 const exportColumnLabels: Record<string, string> = {
   code: '订单编号', order_date: '订单日期', customer_name: '客户', project_name: '项目',
-  project_owner: '项目负责人', customer_department: '客户部门', designer: '设计师', planner: '策划人', contact: '联系人',
+  project_owner: '项目负责人', order_source: '订单来源', designer: '设计师', planner: '策划人',
   delivery_date: '交货日期', payment_status: '结款状态', service_name: '订单内容', quantity: '数量', unit: '单位',
   quote_amount: '总报价', cost_amount: '制作成本', advance_amount: '报销金额', profit: '预计毛利', created_by: '录入人',
   status: '订单状态', reimbursement_status: '报销状态', product_name: '产品名称', product_specification: '制作要求', product_remark: '行备注',
@@ -983,7 +1024,12 @@ const exportColumnLabels: Record<string, string> = {
 
 export function exportOrders(filters: Record<string, string>) {
   const selectedIds = new Set((filters.ids || '').split(',').map((id) => id.trim()).filter(Boolean));
-  const columns = (filters.columns || '').split(',').filter((key) => exportColumnLabels[key]);
+  // customer_department / contact 已在 v29 合并为 order_source；旧导出链接里的字段名继续按订单来源出列。
+  const legacyColumnAliases: Record<string, string> = { customer_department: 'order_source', contact: 'order_source' };
+  const columns = (filters.columns || '')
+    .split(',')
+    .map((key) => legacyColumnAliases[key] || key)
+    .filter((key, index, all) => exportColumnLabels[key] && all.indexOf(key) === index);
   const selectedColumns = columns.length ? columns : ['code', 'order_date', 'customer_name', 'project_name', 'service_name', 'quote_amount', 'cost_amount'];
   const orders = listOrders().filter((order) =>
     (!selectedIds.size || selectedIds.has(order.id)) &&
@@ -1216,8 +1262,8 @@ export function exportOrders(filters: Record<string, string>) {
     return productsToWrite.map((product: any) => {
       const values: Record<string, unknown> = {
         code: order.code, order_date: order.order_date, customer_name: order.customer_name, project_name: order.project_name,
-        project_owner: order.project_owner || '', customer_department: order.customer_department || '', designer: order.designer || '', planner: order.planner || '',
-        contact: order.contact || '', delivery_date: order.delivery_date || '', payment_status: order.payment_status || '未结款',
+        project_owner: order.project_owner || '', order_source: order.order_source || '', designer: order.designer || '', planner: order.planner || '',
+        delivery_date: order.delivery_date || '', payment_status: order.payment_status || '未结款',
         service_name: order.service_name, quantity: order.quantity, unit: order.unit, quote_amount: order.quote_amount / 100,
         cost_amount: order.cost_amount / 100, advance_amount: advances / 100, profit: (order.quote_amount - order.cost_amount - advances) / 100,
         created_by: order.created_by, status: order.status, reimbursement_status: order.reimbursement_status || '无需报销',
@@ -1309,8 +1355,7 @@ export function createOrder(data: Record<string, unknown>) {
   if (!customerId) throw new Error('请选择客户');
   if (!db.prepare('SELECT 1 FROM customers_simple WHERE id=?').get(customerId)) throw new Error('客户不存在');
   const projectId = project?.id || ensureUnassignedProject(db, customerId).id;
-  const department = text(data.customer_department);
-  const contact = text(data.contact);
+  const orderSource = text(data.order_source);
   const deliveryDate = text(data.delivery_date);
   const designer = text(data.designer);
   const planner = text(data.planner);
@@ -1334,7 +1379,7 @@ export function createOrder(data: Record<string, unknown>) {
   const quoteCents = products.length ? products.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0) : optionalMoneyToCents(data.quote_amount);
   const costCents = costs.length ? costs.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0) : optionalMoneyToCents(data.cost_amount);
   db.transaction(() => {
-    db.prepare('INSERT INTO orders_simple(id,code,customer_id,project_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,created_by,status,note,created_at,specification,is_extra,delivery_date,contact,customer_department,designer,planner,payment_status,products_json,costs_json,idempotency_key,execution_company) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id, code, customerId, projectId, serviceName, quantity, String(data.unit || products[0]?.unit || '项'), quoteCents, costCents, date, String(data.created_by || '填写人'), normalizeOrderStatus(data.status), String(data.note || '').trim(), created, text(data.specification || products[0]?.specification), data.is_extra ? 1 : 0, deliveryDate, contact, department, designer, planner, text(data.payment_status) || '未结款', JSON.stringify(products), JSON.stringify(costs), idempotencyKey, executionCompany);
+    db.prepare('INSERT INTO orders_simple(id,code,customer_id,project_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,created_by,status,note,created_at,specification,is_extra,delivery_date,order_source,designer,planner,payment_status,products_json,costs_json,idempotency_key,execution_company) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id, code, customerId, projectId, serviceName, quantity, String(data.unit || products[0]?.unit || '项'), quoteCents, costCents, date, String(data.created_by || '填写人'), normalizeOrderStatus(data.status), String(data.note || '').trim(), created, text(data.specification || products[0]?.specification), data.is_extra ? 1 : 0, deliveryDate, orderSource, designer, planner, text(data.payment_status) || '未结款', JSON.stringify(products), JSON.stringify(costs), idempotencyKey, executionCompany);
     syncNormalizedOrderLines(db, id, products, costs);
   })();
   return hydrateOrder(db.prepare('SELECT * FROM orders_simple WHERE id=?').get(id) as Record<string, unknown>);
@@ -1367,10 +1412,9 @@ export function updateOrder(id: string, data: Record<string, unknown>) {
   if (!targetCustomerId) throw new Error('请选择客户');
   if (!db.prepare('SELECT 1 FROM customers_simple WHERE id=?').get(targetCustomerId)) throw new Error('客户不存在');
   const targetProjectId = targetProject?.id || ensureUnassignedProject(db, targetCustomerId).id;
-  const department = text(data.customer_department);
-  const contact = text(data.contact);
+  const orderSource = text(data.order_source);
   db.transaction(() => {
-    db.prepare(`UPDATE orders_simple SET project_id=?,customer_id=?,service_name=?,quantity=?,unit=?,quote_amount=?,cost_amount=?,order_date=?,delivery_date=?,contact=?,customer_department=?,designer=?,planner=?,execution_company=?,created_by=?,status=?,payment_status=?,note=?,specification=?,products_json=?,costs_json=? WHERE id=?`).run(targetProjectId, targetCustomerId, service, Number(products[0]?.quantity || existing.quantity), text(products[0]?.unit || existing.unit), quote, cost, text(data.order_date || existing.order_date), deliveryDate, contact, department, designer, planner, executionCompany, text(data.created_by || existing.created_by), normalizeOrderStatus(data.status || existing.status), text(data.payment_status || existing.payment_status), text(data.note), text(products[0]?.specification || existing.specification), JSON.stringify(products), JSON.stringify(costs), id);
+    db.prepare(`UPDATE orders_simple SET project_id=?,customer_id=?,service_name=?,quantity=?,unit=?,quote_amount=?,cost_amount=?,order_date=?,delivery_date=?,order_source=?,designer=?,planner=?,execution_company=?,created_by=?,status=?,payment_status=?,note=?,specification=?,products_json=?,costs_json=? WHERE id=?`).run(targetProjectId, targetCustomerId, service, Number(products[0]?.quantity || existing.quantity), text(products[0]?.unit || existing.unit), quote, cost, text(data.order_date || existing.order_date), deliveryDate, orderSource, designer, planner, executionCompany, text(data.created_by || existing.created_by), normalizeOrderStatus(data.status || existing.status), text(data.payment_status || existing.payment_status), text(data.note), text(products[0]?.specification || existing.specification), JSON.stringify(products), JSON.stringify(costs), id);
     syncNormalizedOrderLines(db, id, products, costs);
   })();
   return hydrateOrder(db.prepare(`SELECT o.*,c.name customer_name,p.name project_name,p.owner project_owner FROM orders_simple o JOIN customers_simple c ON c.id=o.customer_id JOIN projects_simple p ON p.id=o.project_id WHERE o.id=?`).get(id) as Record<string, unknown>);
@@ -1860,8 +1904,7 @@ export function seedDemoOrdersAndReimbursements(requestedCount = 36, actorUid: n
       project_id: project.id,
       order_date: orderDate,
       delivery_date: deliveryDate,
-      contact: ['黄经理', '吴老师', '梁主管'][index % 3],
-      customer_department: ['市场部', '品牌部', '综合事务部'][index % 3],
+      order_source: `${['市场部', '品牌部', '综合事务部'][index % 3]}-${['黄经理', '吴老师', '梁主管'][index % 3]}`,
       designer: designers[index % designers.length],
       created_by: employee,
       status: ['已提交', '已完成'][index % 2],

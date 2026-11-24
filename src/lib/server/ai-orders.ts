@@ -17,7 +17,7 @@ const orderFields = {
   project_id: textSchema,
   created_by_uid: { type: 'integer', minimum: 1, description: '创建人归属员工 UID。代录创建时必填；员工必须已开通在职，姓名由员工档案确定，不接受 created_by 文本。' },
   order_date: dateSchema, delivery_date: { ...textSchema, description: 'YYYY-MM-DD，空字符串清除交付日期' },
-  contact: textSchema, customer_department: textSchema, execution_company: textSchema, note: textSchema,
+  order_source: textSchema, execution_company: textSchema, note: textSchema,
   designer_uid: { type: ['integer', 'null'], minimum: 1 }, planner_uid: { type: ['integer', 'null'], minimum: 1 },
   products: productsSchema, costs: costsSchema
 };
@@ -119,7 +119,7 @@ function revision(id: string) {
 }
 function publicOrder(row: Record<string, any>, identity: CurrentIdentity) {
   const result: Record<string, unknown> = {};
-  for (const key of ['id', 'code', 'project_id', 'customer_id', 'customer_name', 'project_name', 'service_name', 'order_date', 'delivery_date', 'contact', 'customer_department', 'execution_company', 'note', 'status', 'payment_status', 'created_at', 'created_by', 'created_by_uid', 'designer', 'designer_uid', 'planner', 'planner_uid', 'is_extra']) result[key] = row[key] ?? null;
+  for (const key of ['id', 'code', 'project_id', 'customer_id', 'customer_name', 'project_name', 'service_name', 'order_date', 'delivery_date', 'order_source', 'execution_company', 'note', 'status', 'payment_status', 'created_at', 'created_by', 'created_by_uid', 'designer', 'designer_uid', 'planner', 'planner_uid', 'is_extra']) result[key] = row[key] ?? null;
   result.quote_amount = yuan(row.quote_amount);
   result.cost_amount = yuan(row.cost_amount);
   for (const type of ['products', 'costs']) result[type] = (row[type] || []).map((line: Record<string, unknown>) => {
@@ -161,10 +161,10 @@ function normalizeOrder(input: Record<string, unknown>, path: string, identity: 
   if (existing && !Object.keys(input).length) invalid(path, '至少提供一个修改字段');
   const order: Record<string, any> = {};
   // 更新仅覆盖显式给出的字段，绕开旧网页 PATCH 未传字段被清空的语义。
-  for (const key of ['project_id', 'order_date', 'delivery_date', 'contact', 'customer_department', 'execution_company', 'note', 'designer_uid', 'planner_uid', 'designer', 'planner', 'products', 'costs', 'status', 'payment_status', 'created_by', 'created_by_uid']) {
+  for (const key of ['project_id', 'order_date', 'delivery_date', 'order_source', 'execution_company', 'note', 'designer_uid', 'planner_uid', 'designer', 'planner', 'products', 'costs', 'status', 'payment_status', 'created_by', 'created_by_uid']) {
     if (existing && existing[key] !== undefined) order[key] = existing[key];
   }
-  for (const key of ['project_id', 'contact', 'customer_department', 'execution_company', 'note']) {
+  for (const key of ['project_id', 'order_source', 'execution_company', 'note']) {
     if (!existing || Object.hasOwn(input, key)) order[key] = str(input[key], `${path}.${key}`, key === 'project_id');
   }
   if (!getOrderDb().prepare('SELECT 1 FROM projects_simple WHERE id=?').get(order.project_id)) invalid(`${path}.project_id`, '项目不存在，请先查询项目参考数据');

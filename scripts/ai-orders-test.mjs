@@ -251,7 +251,7 @@ const lineCost = (overrides = {}) => ({
 });
 const orderPayload = (overrides = {}) => ({
   project_id: PROJECT_ID, created_by_uid: CREATOR.uid, order_date: '2024-05-01', delivery_date: '2024-06-01',
-  contact: '联系人甲', customer_department: '市场部', execution_company: '执行公司一',
+  order_source: '市场部-联系人甲', execution_company: '执行公司一',
   note: '初始备注', designer_uid: DESIGNER.uid, products: [lineProduct()], costs: [lineCost()],
   ...overrides
 });
@@ -392,8 +392,7 @@ try {
     order_id: orderId, expected_revision: noteRevision, changes: { note: '本机代录更新' }, dry_run: false
   });
   assert.equal(updated.order.note, '本机代录更新');
-  assert.equal(updated.order.contact, '联系人甲');
-  assert.equal(updated.order.customer_department, '市场部');
+  assert.equal(updated.order.order_source, '市场部-联系人甲');
   assert.equal(updated.order.created_by_uid, CREATOR.uid, '未重新归属时仍属于原创建人');
   assert.equal(updated.order.products.length, 1);
   audit = lastOrderAudit();
@@ -412,7 +411,7 @@ try {
   assert.equal(reassigned.order.created_by_uid, DESIGNER.uid);
   assert.equal(reassigned.order.created_by, DESIGNER.name);
   assert.equal(reassigned.order.note, '本机代录更新', '重新归属不得清空其他字段');
-  assert.equal(reassigned.order.contact, '联系人甲');
+  assert.equal(reassigned.order.order_source, '市场部-联系人甲');
   assert.equal(reassigned.order.products.length, 1);
   audit = lastOrderAudit();
   assertLocalActor(audit);

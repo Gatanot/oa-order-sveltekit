@@ -40,8 +40,7 @@ resource可选customers/projects/employees/execution_companies。customer_id仅�
       "delivery_date":"2026-09-25",
       "designer_uid":1002,
       "planner_uid":null,
-      "contact":"客户联系人",
-      "customer_department":"市场部",
+      "order_source":"市场部-客户联系人",
       "execution_company":"执行公司",
       "note":"订单备注",
       "products":[{"name":"喷画","unit":"平方米","quantity":2,"unit_price":"12.34","specification":"高清户外","remark":"行备注"}],
@@ -54,7 +53,7 @@ resource可选customers/projects/employees/execution_companies。customer_id仅�
 默认dry_run=true，预览不写订单/审计/幂等记录。确认提交在同一个arguments中加入dry_run=false及idempotency_key（1–80字符）。
 
 - project_id、created_by_uid和产品必填。created_by_uid是已开通在职员工，姓名按档案确定，不接受created_by自由文本；这不表示提交者通过了员工身份认证。
-- 设计/策划UID必须是对应岗位在职员工，null不指派。联系人、部门、公司、日期、备注等可直接填，不取浏览器信息。
+- 设计/策划UID必须是对应岗位在职员工，null不指派。订单来源、公司、日期、备注等可直接填，不取浏览器信息。
 - 客户由项目确定；产品至少1行最多100行，成本0–100行。
 - 每行name/quantity/unit_price必填；数量有限正数，单价非负人民币元字符串最多两位小数，小计/合计服务端计算。
 - 产品可选catalog_id/unit/specification/remark；成本可选catalog_id/unit/vendor。引用必须是对应有效资料库条目，单价显式填写，不自动跟随资料库最新价格。

@@ -35,8 +35,7 @@
         </div>
       {/if}
       <label>执行公司<select bind:value={desk.executionCompany}><option value="">请选择执行公司</option>{#each desk.executionCompanyOptions as company}<option>{company}</option>{/each}</select></label>
-      <label>客户部门<input bind:value={desk.customerDepartment} placeholder="例如：市场部（可不填）" /></label>
-      <label>联系人 / 下单人<input bind:value={desk.contact} placeholder="例如：张三（可不填）" /></label>
+      <label>订单来源<input bind:value={desk.orderSource} placeholder="例如：市场部-张三（可不填）" /></label>
       <label class="compact-field">订单日期 <em>*</em><input class="date-input" type="date" bind:value={desk.orderDate} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} required /></label>
       <label class="compact-field">交货日期<input class="date-input" type="date" bind:value={desk.deliveryDate} min={desk.orderDate} onclick={(event) => (event.currentTarget as HTMLInputElement).showPicker?.()} /></label>
       <label>指定设计师<select value={desk.designerUid ?? ""} onchange={(event) => { const uid = Number(event.currentTarget.value) || null; desk.designerUid = uid; desk.designer = desk.employees.find((employee: any) => employee.catsco_uid === uid)?.display_name || ""; }}><option value="">暂不指定</option>{#each desk.employees.filter((employee: any) => employee.role === 'designer') as employee}<option value={employee.catsco_uid}>{employee.display_name} · 编号 {employee.catsco_uid}{employee.department ? ` · ${employee.department}` : ''}</option>{/each}</select></label>
