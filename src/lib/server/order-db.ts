@@ -659,8 +659,14 @@ export function listProjects(customerId?: string) {
 }
 
 export function listCatalog() {
+  // 显式列出网页需要的字段：报价库的 raw_data 是导入时的原始行快照（占响应体约 28%），
+  // 网页只用 name/category/customer_name/project_name 等字段筛选，从不下发。
+  // 成本库仍保留 raw_data：成本单价选择需要从 raw.vendor/raw.supplier 回退供应商名。
   const db = getOrderDb();
-  const quote = db.prepare(`SELECT qi.*,cs.kind AS library_kind,cs.owner_name AS source_owner,cs.source_file AS library_file,cs.updated_at AS source_updated_at
+  const quote = db.prepare(`SELECT qi.id,qi.source_id,qi.active,qi.item_no,qi.category,qi.name,qi.specification,qi.unit,
+      qi.estimated_quantity,qi.price_incl_tax,qi.max_price,qi.customer_name,qi.project_name,qi.remark,
+      qi.source_file,qi.source_sheet,qi.source_type,qi.created_at,
+      cs.kind AS library_kind,cs.owner_name AS source_owner,cs.source_file AS library_file,cs.updated_at AS source_updated_at
     FROM catalog_quote_items qi LEFT JOIN catalog_sources cs ON cs.id=qi.source_id
     WHERE qi.active=1 ORDER BY cs.owner_name,qi.category,qi.name`).all();
   const cost = db.prepare(`SELECT ki.*,cs.kind AS library_kind,cs.owner_name AS source_owner,cs.source_file AS library_file,cs.updated_at AS source_updated_at

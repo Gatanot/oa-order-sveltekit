@@ -791,6 +791,11 @@ export function createOrderDesk(data: Data) {
     historyReimbursements = history.data;
     reimbursementRefreshVersion += 1;
   }
+  /** 保存订单/上传附件后只有订单列表会变，单独重取，避免再次拉取整个报价库。 */
+  async function refreshOrders() {
+    const result = await api.get<{ data: Order[] }>("/api/orders");
+    orders = result.data;
+  }
   function openStandaloneReimbursement() {
     standaloneEmployee = creatorName;
     standaloneItem = "";
@@ -1204,10 +1209,14 @@ export function createOrderDesk(data: Data) {
         ? await api.patch<{ data: Order }>(`/api/orders/${editingOrderId}`, payload)
         : await api.post<{ data: Order }>("/api/orders", payload);
       await refresh();
-      try {
-        await uploadAttachments(result.data.id);
-      } finally {
-        await refresh();
+      // 没有附件时不再重复整轮刷新（原先会第二次并发拉取 7 个接口，含 4MB+ 的报价库）。
+      // 有附件时附件只影响该订单，重取订单列表即可。
+      if (noteFiles.length) {
+        try {
+          await uploadAttachments(result.data.id);
+        } finally {
+          await refreshOrders();
+        }
       }
       replaceState(appPath("/orders"), {});
       notify(editingOrderId ? "订单已更新" : "订单已保存");

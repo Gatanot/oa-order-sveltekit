@@ -1,9 +1,89 @@
 import { dev } from '$app/environment';
 import { env } from '$env/dynamic/private';
 import { json, type Handle, type HandleServerError } from '@sveltejs/kit';
+import { brotliCompress, constants, gzip } from 'node:zlib';
+import { promisify } from 'node:util';
 import { getArtifactVisitor } from '$lib/server/artifact-visitor';
 import { ADMIN_UID, getAdminExtraIdentity, orderExportRoles, reimbursementActionRoles, resolveActingIdentity, resolveIdentity, hasAnyRole } from '$lib/server/identity';
 import type { CurrentIdentity } from '$lib/server/identity';
+
+const brotliCompressAsync = promisify(brotliCompress);
+const gzipAsync = promisify(gzip);
+
+// 低于此体积的响应压缩收益不足，直接原文返回，避免无谓 CPU 开销。
+const COMPRESS_MIN_BYTES = 1024;
+// 动态 JSON/HTML 压缩质量：brotli q5 约为体积/耗时的平衡点；静态资源仍由 adapter 的预压缩文件提供。
+const BROTLI_QUALITY = 5;
+const GZIP_LEVEL = 6;
+const COMPRESSIBLE_TYPE = /^(?:text\/|application\/(?:json|javascript|xml|x-www-form-urlencoded|manifest\+json|ld\+json)|image\/svg\+xml)/i;
+
+/** 按 RFC 9110 q 值选择可用的压缩算法，优先 brotli。 */
+function negotiateEncoding(header: string | null): 'br' | 'gzip' | null {
+  if (!header) return null;
+  const accepted = new Map<string, number>();
+  for (const part of header.toLowerCase().split(',')) {
+    const [token, ...params] = part.trim().split(';');
+    if (!token) continue;
+    let quality = 1;
+    for (const param of params) {
+      const match = param.trim().match(/^q=([0-9.]+)$/);
+      if (match) {
+        const parsed = Number(match[1]);
+        quality = Number.isFinite(parsed) ? parsed : 0;
+      }
+    }
+    accepted.set(token.trim(), quality);
+  }
+  const br = accepted.get('br') ?? accepted.get('*') ?? 0;
+  const gz = accepted.get('gzip') ?? accepted.get('*') ?? 0;
+  if (br > 0 && br >= gz) return 'br';
+  if (gz > 0) return 'gzip';
+  return null;
+}
+
+/**
+ * 给 SSR HTML 和 /api JSON 动态响应补上压缩。
+ *
+ * 静态资源由 adapter-node 的 sirv 按 .br/.gz 预压缩文件下发，不经过 hooks，因此这里不会重复压缩。
+ * 必须在 hooks 中做，而不是改启动脚本，这样无论用 `node build`、反向代理还是平台入口启动都生效。
+ */
+async function compressResponse(request: Request, response: Response): Promise<Response> {
+  if (request.method !== 'GET') return response;
+  if (response.status < 200 || response.status === 204 || response.status === 304) return response;
+  if (response.body === null || response.headers.has('content-encoding')) return response;
+  if (response.headers.get('cache-control')?.toLowerCase().includes('no-transform')) return response;
+  const contentType = response.headers.get('content-type') || '';
+  if (!COMPRESSIBLE_TYPE.test(contentType)) return response;
+  const encoding = negotiateEncoding(request.headers.get('accept-encoding'));
+  if (!encoding) return response;
+
+  const declaredLength = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declaredLength) && declaredLength > 0 && declaredLength < COMPRESS_MIN_BYTES) return response;
+
+  const raw = Buffer.from(await response.arrayBuffer());
+  const headers = new Headers(response.headers);
+  headers.delete('content-length');
+  // 内容被重新编码后原 ETag 不再匹配，避免缓存/条件请求拿到错误结果。
+  headers.delete('etag');
+
+  if (raw.byteLength < COMPRESS_MIN_BYTES) {
+    return new Response(raw, { status: response.status, statusText: response.statusText, headers });
+  }
+
+  const compressed = encoding === 'br'
+    ? await brotliCompressAsync(raw, {
+        params: {
+          [constants.BROTLI_PARAM_QUALITY]: BROTLI_QUALITY,
+          [constants.BROTLI_PARAM_SIZE_HINT]: raw.byteLength
+        }
+      })
+    : await gzipAsync(raw, { level: GZIP_LEVEL });
+
+  headers.set('Content-Encoding', encoding);
+  headers.set('Content-Length', String(compressed.byteLength));
+  headers.append('Vary', 'Accept-Encoding');
+  return new Response(compressed, { status: response.status, statusText: response.statusText, headers });
+}
 
 // 仅供 smoke test 使用：在测试环境下可指定一个固定的 Catsco UID，以便验证非管理员员工的权限。
 function testBypassIdentity(): CurrentIdentity | null {
@@ -84,7 +164,7 @@ export const handle: Handle = async ({ event, resolve }) => {
   if (response.headers.get('content-type')?.toLowerCase().includes('text/html')) {
     response.headers.set('Cache-Control', 'no-store');
   }
-  return response;
+  return compressResponse(event.request, response);
 };
 
 export const handleError: HandleServerError = ({ error }) => {
