@@ -1089,7 +1089,7 @@ function recordReimbursementApproval(
 function resolveEmployeeUidByName(db: Database.Database, name: string): number | null {
   const value = text(name);
   if (!value) return null;
-  const matches = db.prepare('SELECT catsco_uid FROM employees WHERE active=1 AND (display_name=? OR username=?)').all(value, value) as Array<{ catsco_uid: number }>;
+  const matches = db.prepare("SELECT catsco_uid FROM employees WHERE role<>'pending' AND (display_name=? OR username=?)").all(value, value) as Array<{ catsco_uid: number }>;
   return matches.length === 1 ? matches[0].catsco_uid : null;
 }
 
@@ -1251,7 +1251,7 @@ export function resolveOrderEmployeeUid(uid: unknown, role: 'designer' | 'planne
   const value = Number(uid) || null;
   if (value === null) return null;
   if (!Number.isSafeInteger(value) || value < 1) throw new Error(`INVALID_${role.toUpperCase()}_UID`);
-  const employee = getOrderDb().prepare('SELECT catsco_uid FROM employees WHERE catsco_uid=? AND active=1 AND role=?').get(value, role);
+  const employee = getOrderDb().prepare("SELECT catsco_uid FROM employees WHERE catsco_uid=? AND role<>'pending' AND role=?").get(value, role);
   if (!employee) throw new Error(`INVALID_${role.toUpperCase()}_UID`);
   return value;
 }
@@ -1373,9 +1373,15 @@ export function updateCustomerProfile(id: unknown, data: Record<string, unknown>
   const existing = db.prepare('SELECT * FROM customer_profiles WHERE id=?').get(targetId) as CustomerProfile | undefined;
   if (!existing) throw new Error('客户不存在');
   if (db.prepare('SELECT 1 FROM customer_profiles WHERE name=? AND id<>?').get(values.name, targetId)) throw new Error('该客户已存在');
-  db.prepare('UPDATE customer_profiles SET name=?,tax_no=?,contact=?,phone=?,address=?,bank_name=?,bank_account=?,note=?,updated_at=? WHERE id=?')
-    .run(values.name, values.tax_no, values.contact, values.phone, values.address, values.bank_name, values.bank_account, values.note, now(), targetId);
-  recordAudit(db, { actorName: actor?.name, actorUid: actor?.uid, action: 'update_customer_profile', entityType: 'customer_profile', entityId: targetId, fromValue: existing.name, toValue: values.name, detail: { name: values.name } });
+  db.transaction(() => {
+    db.prepare('UPDATE customer_profiles SET name=?,tax_no=?,contact=?,phone=?,address=?,bank_name=?,bank_account=?,note=?,updated_at=? WHERE id=?')
+      .run(values.name, values.tax_no, values.contact, values.phone, values.address, values.bank_name, values.bank_account, values.note, now(), targetId);
+    // 报价库按客户名称归属；客户改名时同步来源归属，避免出现重复客户分组。
+    if (existing.name !== values.name) {
+      db.prepare("UPDATE catalog_sources SET owner_name=? WHERE kind='quote' AND owner_name=?").run(values.name, existing.name);
+    }
+    recordAudit(db, { actorName: actor?.name, actorUid: actor?.uid, action: 'update_customer_profile', entityType: 'customer_profile', entityId: targetId, fromValue: existing.name, toValue: values.name, detail: { name: values.name } });
+  })();
   return db.prepare('SELECT * FROM customer_profiles WHERE id=?').get(targetId) as CustomerProfile;
 }
 

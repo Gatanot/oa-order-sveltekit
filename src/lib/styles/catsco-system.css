@@ -372,7 +372,7 @@ html body :is(button, [tabindex])[data-cc-pointer-focus="true"]:focus-visible { 
 .review-page .workbench-filter-primary { grid-template-columns: repeat(4, minmax(115px, 1fr)) minmax(260px, 1.8fr) auto; }
 .review-page .filter-clear { justify-self: end; }
 .catalog-page .workbench-filter-primary { grid-template-columns: minmax(220px, 1.6fr) repeat(2, minmax(160px, 1fr)) auto; }
-.employee-page .workbench-filter-primary { grid-template-columns: minmax(220px, 1.3fr) repeat(3, minmax(130px, 1fr)) auto; }
+.employee-page .workbench-filter-primary { grid-template-columns: minmax(220px, 1.3fr) repeat(2, minmax(130px, 1fr)) auto; }
 .workbench-statistics { margin: 16px 0 20px; padding: 12px 16px 16px; border-block: 1px solid var(--line); background: var(--panel); }
 .workbench-statistics-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin-bottom: 12px; color: var(--muted); font-size: 12px; }
 .workbench-statistics .summary-row { grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; }
@@ -472,13 +472,11 @@ html body :is(button, [tabindex])[data-cc-pointer-focus="true"]:focus-visible { 
 .catalog-page .catalog-source-actions { flex-wrap: wrap; gap: 6px; }
 .catalog-page .catalog-source-select :is(b, small) { overflow-wrap: anywhere; }
 .employee-page .employee-admin { margin: 0; padding: 0; }
-.employee-page .employee-table-wrap table { min-width: 900px; table-layout: fixed; }
-.employee-page .employee-table-wrap :is(th, td):nth-child(1) { width: 23%; }
-.employee-page .employee-table-wrap :is(th, td):nth-child(2) { width: 20%; }
-.employee-page .employee-table-wrap :is(th, td):nth-child(3) { width: 20%; }
-.employee-page .employee-table-wrap :is(th, td):nth-child(4) { width: 18%; }
-.employee-page .employee-table-wrap :is(th, td):nth-child(5) { width: 8%; }
-.employee-page .employee-table-wrap :is(th, td):nth-child(6) { width: 11%; }
+.employee-page .employee-table-wrap table { min-width: 820px; table-layout: fixed; }
+.employee-page .employee-table-wrap :is(th, td):nth-child(1) { width: 38%; }
+.employee-page .employee-table-wrap :is(th, td):nth-child(2) { width: 24%; }
+.employee-page .employee-table-wrap :is(th, td):nth-child(3) { width: 22%; }
+.employee-page .employee-table-wrap :is(th, td):nth-child(4) { width: 16%; }
 .employee-page .employee-table-wrap td :is(input:not([type="checkbox"]), select) { min-width: 0; }
 .employee-page .employee-row-actions { gap: 2px; }
 .employee-page .employee-row-actions .delete-action { width: 34px; height: 34px; padding: 0; }

@@ -99,8 +99,8 @@ function resolveCreator(identity: CurrentIdentity, uid: unknown, path: string): 
     if (value !== identity.uid) throw new OrderToolError('FORBIDDEN', '当前用户身份只能以本人作为创建人', 403, path);
     return { uid: identity.uid, name: identity.displayName };
   }
-  const row = getOrderDb().prepare('SELECT catsco_uid,display_name FROM employees WHERE catsco_uid=? AND active=1 AND role<>\'pending\'').get(value) as { catsco_uid: number; display_name: string } | undefined;
-  if (!row) invalid(path, 'created_by_uid 必须是已开通的在职员工（active=1 且非 pending），不限岗位');
+  const row = getOrderDb().prepare("SELECT catsco_uid,display_name FROM employees WHERE catsco_uid=? AND role<>'pending'").get(value) as { catsco_uid: number; display_name: string } | undefined;
+  if (!row) invalid(path, 'created_by_uid 必须是已分配身份的员工（非 pending），不限岗位');
   return { uid: row.catsco_uid, name: row.display_name };
 }
 function access(id: string, identity: CurrentIdentity, edit = false) {
@@ -224,7 +224,7 @@ function listReferences(data: Record<string, unknown>) {
     from = 'projects_simple p JOIN customers_simple c ON c.id=p.customer_id';
     columns = 'p.id,p.name,p.customer_id,c.name AS customer_name,p.status'; sort = 'p.name,p.id';
     if (data.customer_id !== undefined) { where.push('p.customer_id=?'); values.push(str(data.customer_id, 'arguments.customer_id', true)); }
-  } else if (resource === 'employees') { from = 'employees'; columns = 'catsco_uid,display_name,department,role'; sort = 'display_name,catsco_uid'; where.push("active=1 AND role<>'pending'"); }
+  } else if (resource === 'employees') { from = 'employees'; columns = 'catsco_uid,display_name,department,role'; sort = 'display_name,catsco_uid'; where.push("role<>'pending'"); }
   else if (resource === 'execution_companies') { from = 'execution_companies'; columns = 'id,name'; sort = 'name,id'; }
   else invalid('arguments.resource', '不支持的参考数据类型');
   if (data.customer_id !== undefined && resource !== 'projects') invalid('arguments.customer_id', '该筛选仅适用于项目');
@@ -325,7 +325,7 @@ function batchCreateOrders(data: Record<string, unknown>, identity: CurrentIdent
 }
 
 export function runOrderTool(tool: string, input: unknown, identity: CurrentIdentity) {
-  if (!identity.active || identity.role === 'pending') throw new OrderToolError('FORBIDDEN', '账户未开通或已停用', 403);
+  if (!identity.active || identity.role === 'pending') throw new OrderToolError('FORBIDDEN', '账户待开通', 403);
   const data = obj(input, 'arguments');
   const db = getOrderDb();
   if (tool === 'list_references') return listReferences(data);

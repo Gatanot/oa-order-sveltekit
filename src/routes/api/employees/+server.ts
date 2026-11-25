@@ -41,10 +41,10 @@ export const POST: RequestHandler = async ({ locals, request }) => {
   if (!Number.isSafeInteger(uid) || uid <= 0 || !username || uid === 826) {
     return json({ error: { code: 'INVALID_REQUEST', message: 'UID 或用户名格式不正确' } }, { status: 400 });
   }
-  const role = String(data?.role || 'pending');
+  const role = String(data?.role || 'executor');
   const department = String(data?.department || '').trim();
   const displayName = String(data?.display_name || '').trim() || username;
-  const active = role === 'pending' ? 0 : data?.active === false ? 0 : 1;
+  const active = role === 'pending' ? 0 : 1;
   if (role !== 'pending' && !employeeRoles.includes(role as typeof employeeRoles[number])) {
     return json({ error: { code: 'INVALID_ROLE', message: '业务身份格式不正确' } }, { status: 400 });
   }
@@ -90,7 +90,7 @@ export const PATCH: RequestHandler = async ({ locals, request }) => {
   const denied = requireAdmin(identity);
   if (denied) return denied;
   const data = await request.json().catch(() => null);
-  if (!data || !Number.isSafeInteger(Number(data.uid)) || typeof data.active !== 'boolean') {
+  if (!data || !Number.isSafeInteger(Number(data.uid))) {
     return json({ error: { code: 'INVALID_REQUEST', message: '员工资料格式不正确' } }, { status: 400 });
   }
   if (Number(data.uid) === 826) {
@@ -99,13 +99,13 @@ export const PATCH: RequestHandler = async ({ locals, request }) => {
   try {
     const role = String(data.role || '');
     const { getOrderDb } = await import('$lib/server/order-db');
-    const current = getOrderDb().prepare('SELECT catsco_uid,role,active FROM employees WHERE catsco_uid=?').get(Number(data.uid)) as { catsco_uid: number; role: string; active: number } | undefined;
+    const current = getOrderDb().prepare('SELECT catsco_uid,role FROM employees WHERE catsco_uid=?').get(Number(data.uid)) as { catsco_uid: number; role: string } | undefined;
     if (!current) return json({ error: { code: 'EMPLOYEE_NOT_FOUND', message: '员工不存在' } }, { status: 404 });
     const isSelf = identity?.uid === current.catsco_uid;
     if (isSelf && identity?.role !== 'admin') {
-      // 非管理员只能维护自己的姓名与部门，不能修改自己的身份或启用状态，避免自我提权/自锁。
-      if (role !== current.role || data.active !== (current.active === 1)) {
-        return json({ error: { code: 'FORBIDDEN', message: '不能修改自己的身份或启用状态' } }, { status: 403 });
+      // 非管理员只能维护自己的姓名与部门，不能修改自己的身份，避免自我提权。
+      if (role !== current.role) {
+        return json({ error: { code: 'FORBIDDEN', message: '不能修改自己的身份' } }, { status: 403 });
       }
     } else if (!canManageEmployee(identity, current)) {
       return json({ error: { code: 'FORBIDDEN', message: '不能管理同级或更高级别的员工' } }, { status: 403 });
@@ -117,7 +117,7 @@ export const PATCH: RequestHandler = async ({ locals, request }) => {
       display_name: String(data.display_name || ''),
       department: String(data.department || ''),
       role,
-      active: data.active
+      active: role !== 'pending'
     });
     addAuditLog({ actorName: identity?.displayName, actorUid: identity?.uid, action: 'update_employee', entityType: 'employee', entityId: String(data.uid), detail: { role, department: updated.department, active: updated.active } });
     return json({ data: updated });

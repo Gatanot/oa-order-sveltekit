@@ -1396,7 +1396,7 @@ export function createOrderDesk(data: Data) {
     const owner = catalogSourceName.trim();
     const libraryName = catalogSourceLibraryName.trim();
     if (!owner) {
-      notify(`请填写${catalogKind === "quote" ? "客户公司" : "厂商"}名称`, true);
+      notify(`请选择${catalogKind === "quote" ? "客户" : "厂商"}`, true);
       return;
     }
     if (!libraryName) {
@@ -1437,7 +1437,7 @@ export function createOrderDesk(data: Data) {
       if (!await requestConfirm("替换资料库", `将用新文件替换“${sourceName}”的全部有效条目，历史订单不受影响。确定继续吗？`)) return;
     }
     if (!catalogImportTargetId && !catalogImportOwner.trim()) {
-      notify(`请填写${catalogKind === "quote" ? "客户公司" : "厂商"}名称`, true);
+      notify(`请选择${catalogKind === "quote" ? "客户" : "厂商"}`, true);
       return;
     }
     busy = true;

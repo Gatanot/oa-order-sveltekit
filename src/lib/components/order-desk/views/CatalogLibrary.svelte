@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { getContext } from 'svelte';
+  import { getContext, onMount } from 'svelte';
+  import { api } from '$lib/api';
   import { Building2, ChevronLeft, ChevronRight, Factory, FileSpreadsheet, Plus, Search, Upload, Users, X } from 'lucide-svelte';
   import WorkbenchListFilters from '../WorkbenchListFilters.svelte';
   import CustomerManager from '../CustomerManager.svelte';
@@ -16,6 +17,7 @@
     active?: number;
   };
   type QuoteCustomer = { name: string; sources: CatalogSource[]; itemCount: number; updatedAt: string };
+  type CustomerProfile = { id: string; name: string };
 
   let detailSource = $state<any>(null);
   let detailSearch = $state('');
@@ -23,6 +25,9 @@
   let customerTabOpen = $state(false);
   let quoteCustomerSearch = $state('');
   let selectedQuoteCustomer = $state('');
+  let customerProfiles = $state<CustomerProfile[]>([]);
+  let customerProfilesLoading = $state(false);
+  let customerProfilesError = $state('');
   const catalogTabs = ['quote', 'cost', 'customers'] as const;
   const activeCatalogTab = $derived(customerTabOpen ? 'customers' : desk.catalogKind);
 
@@ -31,6 +36,7 @@
     customerTabOpen = false;
     if (tab !== 'quote') selectedQuoteCustomer = '';
     desk.catalogKind = tab;
+    if (tab === 'quote') loadCustomerProfiles();
   }
   function onCatalogTabKeydown(event: KeyboardEvent, index: number) {
     if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
@@ -56,6 +62,11 @@
       if (updatedAt > group.updatedAt) group.updatedAt = updatedAt;
       groups.set(name, group);
     }
+    // 客户管理是报价库归属客户的入口：尚未建库的客户也展示出来，便于直接新增报价库。
+    for (const profile of customerProfiles) {
+      const name = String(profile.name || '').trim();
+      if (name && !groups.has(name)) groups.set(name, { name, sources: [], itemCount: 0, updatedAt: '' });
+    }
     for (const group of groups.values()) {
       group.sources.sort((left, right) => sourceLabel(left).localeCompare(sourceLabel(right), 'zh-CN'));
     }
@@ -76,6 +87,33 @@
     items: visibleQuoteCustomers.reduce((total, customer) => total + customer.itemCount, 0)
   });
 
+  async function loadCustomerProfiles() {
+    customerProfilesLoading = true;
+    customerProfilesError = '';
+    try {
+      const result = await api.get<{ data: CustomerProfile[] }>('/api/customer-profiles');
+      customerProfiles = result.data;
+    } catch (reason) {
+      customerProfilesError = reason instanceof Error ? reason.message : '客户资料加载失败';
+    } finally {
+      customerProfilesLoading = false;
+    }
+  }
+  async function startCreateCatalogSource() {
+    if (desk.catalogKind === 'quote') await loadCustomerProfiles();
+    desk.openCatalogSourceForm(desk.catalogKind === 'quote' ? selectedQuoteCustomerGroup?.name || '' : '');
+  }
+  async function openCustomerTabFromForm() {
+    desk.catalogSourceOpen = false;
+    await loadCustomerProfiles();
+    selectCatalogTab('customers');
+  }
+  function quoteCustomerOptions(current = '') {
+    const names = customerProfiles.map((profile) => profile.name);
+    const selected = String(current || '').trim();
+    // 保留历史报价库中已存在、但尚未归档到客户管理的客户，便于继续维护。
+    return selected && !names.includes(selected) ? [selected, ...names] : names;
+  }
   function sourceLabel(source: CatalogSource) {
     const libraryName = String(source?.library_name || '').trim().split(/[\\/]/).pop() || '';
     if (libraryName) return libraryName.replace(/\.(xlsx?|csv)$/i, '');
@@ -116,6 +154,8 @@
     else if (detailSource) detailSource = null;
     else if (selectedQuoteCustomer) selectedQuoteCustomer = '';
   }
+
+  onMount(loadCustomerProfiles);
 </script>
 
 <svelte:window onkeydown={(event) => { if (event.key === 'Escape') closeTopLayer(); }} />
@@ -132,7 +172,7 @@
           <button class="outline-action" type="button" onclick={() => selectedQuoteCustomer = ''}><ChevronLeft size={15} />全部客户</button>
         {/if}
         {#if desk.canManageCatalog}
-          <button class="primary-action" type="button" onclick={() => desk.openCatalogSourceForm(desk.catalogKind === 'quote' ? selectedQuoteCustomerGroup?.name || '' : '')}><Plus size={16} />新增{desk.catalogKind === 'quote' ? '报价库' : '成本库'}</button>
+          <button class="primary-action" type="button" onclick={startCreateCatalogSource}><Plus size={16} />新增{desk.catalogKind === 'quote' ? '报价库' : '成本库'}</button>
         {:else if !(desk.catalogKind === 'quote' && selectedQuoteCustomerGroup)}
           <span class="readonly-badge">只读</span>
         {/if}
@@ -171,6 +211,15 @@
                     </div>
                   </td>
                 </tr>
+              {:else}
+                <tr>
+                  <td colspan="5">
+                    <div class="empty-table">
+                      该客户还没有报价库。
+                      {#if desk.canManageCatalog}<button class="primary-action" type="button" onclick={startCreateCatalogSource}><Plus size={15} />新增报价库</button>{/if}
+                    </div>
+                  </td>
+                </tr>
               {/each}
             </tbody>
           </table>
@@ -203,7 +252,7 @@
                   <td><button class="link-action" type="button" onclick={(event) => { event.stopPropagation(); openQuoteCustomer(customer.name); }}>查看报价库</button></td>
                 </tr>
               {:else}
-                <tr><td colspan="5"><div class="empty-table">{quoteCustomerSearch ? '没有匹配的客户或报价库。' : '暂无客户报价库。'}{#if quoteCustomerSearch}<button class="outline-action" type="button" onclick={() => quoteCustomerSearch = ''}>清空搜索</button>{/if}</div></td></tr>
+                <tr><td colspan="5"><div class="empty-table">{quoteCustomerSearch ? '没有匹配的客户或报价库。' : '暂无客户，请先在「客户管理」中录入客户。'}{#if quoteCustomerSearch}<button class="outline-action" type="button" onclick={() => quoteCustomerSearch = ''}>清空搜索</button>{/if}</div></td></tr>
               {/each}
             </tbody>
           </table>
@@ -244,10 +293,29 @@
 {#if desk.catalogSourceOpen}
   <div class="project-modal-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) desk.catalogSourceOpen = false; }}>
     <div class="project-modal" role="dialog" aria-modal="true" aria-labelledby="catalog-source-title">
-      <div class="project-modal-head"><div><p class="section-kicker">新增资料库</p><h2 id="catalog-source-title">新增{desk.catalogKind === 'quote' ? '客户报价库' : '厂商成本库'}</h2><span>{desk.catalogKind === 'quote' ? '同一客户可维护多个报价库；填写客户与报价库名称并上传配置文件。' : '同一厂商可维护多个成本库；填写厂商与成本库名称并上传配置文件。'}</span></div><button class="icon-control" aria-label="关闭新增资料库" onclick={() => desk.catalogSourceOpen = false}><X size={18} /></button></div>
+      <div class="project-modal-head"><div><p class="section-kicker">新增资料库</p><h2 id="catalog-source-title">新增{desk.catalogKind === 'quote' ? '客户报价库' : '厂商成本库'}</h2><span>{desk.catalogKind === 'quote' ? '选择客户管理中的客户，并填写报价库名称、上传配置文件。' : '同一厂商可维护多个成本库；填写厂商与成本库名称并上传配置文件。'}</span></div><button class="icon-control" aria-label="关闭新增资料库" onclick={() => desk.catalogSourceOpen = false}><X size={18} /></button></div>
       <form onsubmit={(event) => { event.preventDefault(); desk.submitCatalogSourceForm(); }}>
         <div class="project-modal-body">
-          <label>{desk.catalogKind === 'quote' ? '客户公司名称' : '厂商名称'} <em>*</em><input bind:value={desk.catalogSourceName} maxlength="80" placeholder={desk.catalogKind === 'quote' ? '例如：华东科技有限公司' : '例如：硕达'} required /></label>
+          {#if desk.catalogKind === 'quote'}
+            <label>客户 <em>*</em>
+              <select bind:value={desk.catalogSourceName} required disabled={customerProfilesLoading}>
+                <option value="">{customerProfilesLoading ? '客户资料加载中...' : '请选择客户'}</option>
+                {#each quoteCustomerOptions(desk.catalogSourceName) as name}<option value={name}>{name}</option>{/each}
+              </select>
+              {#if customerProfilesError}
+                <small class="field-hint is-error" role="alert">{customerProfilesError}</small>
+              {:else if !customerProfiles.length && !customerProfilesLoading}
+                <small class="field-hint">客户管理中还没有客户，请先录入客户。</small>
+              {:else}
+                <small class="field-hint">客户来自「客户管理」，报价库会归到该客户下。</small>
+              {/if}
+            </label>
+            {#if !customerProfilesLoading && !customerProfiles.length}
+              <button class="link-action catalog-customer-link" type="button" onclick={openCustomerTabFromForm}>去客户管理新增</button>
+            {/if}
+          {:else}
+            <label>厂商名称 <em>*</em><input bind:value={desk.catalogSourceName} maxlength="80" placeholder="例如：硕达" required /></label>
+          {/if}
           <label>{desk.catalogKind === 'quote' ? '报价库名称' : '成本库名称'} <em>*</em><input bind:value={desk.catalogSourceLibraryName} maxlength="80" placeholder={desk.catalogKind === 'quote' ? '例如：2025 年常规报价' : '例如：2025 年材料成本'} required /><small class="field-hint">同一客户或厂商可以建立多个资料库。</small></label>
           <div class="catalog-file-field">
             <span>{desk.catalogKind === 'quote' ? '客户报价配置文件' : '厂商成本配置文件'} <em>*</em></span>
@@ -278,7 +346,17 @@
       <div class="drawer-body">
         <div class="import-preview-summary"><div><small>读取行数</small><b>{desk.catalogImportPreview?.total_rows}</b></div><div><small>有效行</small><b>{desk.catalogImportPreview?.valid_rows}</b></div><div><small>忽略行</small><b>{desk.catalogImportPreview?.ignored_rows}</b></div></div>
         {#if !desk.catalogImportTargetId}
-          <label class="settings-name-field">{desk.catalogKind === 'quote' ? '客户公司名称' : '厂商名称'}<input bind:value={desk.catalogImportOwner} maxlength="80" placeholder={desk.catalogKind === 'quote' ? '例如：佛山广电' : '例如：硕达'} />{#if desk.catalogKind === 'quote'}<small class="field-hint">按填写内容原样加入订单可选客户</small>{/if}</label>
+          {#if desk.catalogKind === 'quote'}
+            <label class="settings-name-field">客户
+              <select bind:value={desk.catalogImportOwner} disabled={customerProfilesLoading}>
+                <option value="">请选择客户</option>
+                {#each quoteCustomerOptions(desk.catalogImportOwner) as name}<option value={name}>{name}</option>{/each}
+              </select>
+              <small class="field-hint">客户来自「客户管理」，报价库会归到该客户下。</small>
+            </label>
+          {:else}
+            <label class="settings-name-field">厂商名称<input bind:value={desk.catalogImportOwner} maxlength="80" placeholder="例如：硕达" /></label>
+          {/if}
           <label class="settings-name-field">{desk.catalogKind === 'quote' ? '报价库名称' : '成本库名称'}<input bind:value={desk.catalogImportLibraryName} maxlength="80" placeholder={desk.catalogKind === 'quote' ? '例如：2025 年常规报价' : '例如：2025 年材料成本'} /><small class="field-hint">同一客户或厂商可对应多个资料库。</small></label>
         {/if}
         <div class="import-column-map"><b>识别列</b><span>{previewColumns().join('、') || '未识别到表头'}</span></div>

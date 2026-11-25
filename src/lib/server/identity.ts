@@ -73,7 +73,7 @@ export function resolveIdentity(visitor: ArtifactVisitor): CurrentIdentity | nul
   if (employee.username !== username) {
     db.prepare('UPDATE employees SET username=?,updated_at=? WHERE catsco_uid=?').run(username, new Date().toISOString(), uid);
   }
-  return { uid, username, displayName: employee.display_name, role: employee.role, department: employee.department, active: employee.active === 1 };
+  return { uid, username, displayName: employee.display_name, role: employee.role, department: employee.department, active: employee.role !== 'pending' };
 }
 
 export function resolveActingIdentity(visitor: ArtifactVisitor): CurrentIdentity | null {
@@ -84,7 +84,8 @@ export function resolveActingIdentity(visitor: ArtifactVisitor): CurrentIdentity
 }
 
 export function listActiveEmployees(): Pick<Employee, 'catsco_uid' | 'display_name' | 'department' | 'role'>[] {
-  return getOrderDb().prepare("SELECT catsco_uid,display_name,department,role FROM employees WHERE active=1 ORDER BY department,display_name").all() as Pick<Employee, 'catsco_uid' | 'display_name' | 'department' | 'role'>[];
+  // 已录入并分配身份的员工的直接可用，不再额外区分启用/停用。
+  return getOrderDb().prepare("SELECT catsco_uid,display_name,department,role FROM employees WHERE role<>'pending' ORDER BY department,display_name").all() as Pick<Employee, 'catsco_uid' | 'display_name' | 'department' | 'role'>[];
 }
 
 /** 按 UID 读取员工档案姓名，订单展示与写入统一使用该姓名而非登录用户名。 */
@@ -100,7 +101,7 @@ export function canUseReimbursementReview(identity: CurrentIdentity | null | und
 }
 
 export function listEmployees(): Employee[] {
-  return getOrderDb().prepare('SELECT catsco_uid,username,display_name,department,role,active FROM employees ORDER BY active,department,display_name').all() as Employee[];
+  return getOrderDb().prepare('SELECT catsco_uid,username,display_name,department,role,active FROM employees ORDER BY department,display_name').all() as Employee[];
 }
 
 export function updateEmployee(uid: number, input: { display_name: string; department: string; role: string; active: boolean }) {

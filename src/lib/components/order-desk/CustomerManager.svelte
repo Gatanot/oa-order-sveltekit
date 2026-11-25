@@ -87,7 +87,7 @@
   <div class="customer-manager-head">
     <div>
       <h3 id="customer-manager-title"><Building2 size={16} />客户资料</h3>
-      <span>独立维护客户开票资料，暂不与订单、报价关联</span>
+      <span>维护客户资料；新增客户报价库时可从这里选择归属客户</span>
     </div>
     {#if desk.canManageCatalog && !formOpen}
       <button class="mini-create" type="button" title="新增客户" onclick={startCreate}><Plus size={15} />新增</button>

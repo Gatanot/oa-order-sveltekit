@@ -28,10 +28,11 @@ const PLANNER = { uid: 1103, username: 'ai-planner', name: 'AI策划', role: 'pl
 const FINANCE = { uid: 1104, username: 'ai-finance', name: 'AI财务', role: 'finance' };
 const MANAGER = { uid: 1105, username: 'ai-manager', name: 'AI管理', role: 'manager' };
 const OWNER = { uid: 1106, username: 'ai-owner', name: 'AI老板', role: 'owner' };
-const INACTIVE = { uid: 1107, username: 'ai-inactive', name: 'AI停用', role: 'executor', active: 0 };
+const INACTIVE = { uid: 1107, username: 'ai-inactive', name: '历史停用', role: 'executor', active: 0 };
 const PENDING = { uid: 1108, username: 'ai-pending', name: 'AI待开通', role: 'pending', active: 0 };
 const UNRELATED = { uid: 1109, username: 'ai-unrelated', name: 'AI无关', role: 'executor' };
-const ACTIVE_STAFF = [CREATOR, DESIGNER, PLANNER, FINANCE, MANAGER, OWNER, UNRELATED];
+// 员工不再区分启用/停用：历史 active=0 的正式员工也应可用。
+const ACTIVE_STAFF = [CREATOR, DESIGNER, PLANNER, FINANCE, MANAGER, OWNER, INACTIVE, UNRELATED];
 const COOKIE = { admin: 'user=A', creator: 'user=B', designer: 'user=C', unrelated: 'user=D' };
 const VIEWER = new Map([['A', ADMIN], ['B', CREATOR], ['C', DESIGNER], ['D', UNRELATED]]);
 
@@ -231,7 +232,7 @@ function seedDatabase() {
       .run(PROJECT_ID, CUSTOMER_ID, 'AI 订单项目', '项目负责人', '进行中', timestamp);
     const insertEmployee = db.prepare(`INSERT INTO employees(catsco_uid,username,display_name,department,role,active,created_at,updated_at)
       VALUES(?,?,?,?,?,?,?,?)`);
-    for (const employee of [...ACTIVE_STAFF, INACTIVE, PENDING]) {
+    for (const employee of [...ACTIVE_STAFF, PENDING]) {
       insertEmployee.run(employee.uid, employee.username, employee.name, '', employee.role, employee.active ?? 1, timestamp, timestamp);
     }
     db.prepare('INSERT INTO catalog_quote_items(id,active,name,unit,price_incl_tax,created_at) VALUES(?,?,?,?,?,?)')
@@ -292,20 +293,21 @@ try {
   assert.ok(!toolNames.includes('oa_current_user'));
   console.log('PASS 本机入口无密钥身份仅为 local_entry，工具清单可用');
 
-  // 3) 员工参考数据：所有 active 且非 pending 的多角色员工，可按 role 过滤。
+  // 3) 员工参考数据：所有非 pending 的多角色员工，可按 role 过滤。
   const references = await ok('list_references', { resource: 'employees', limit: 100 });
   assert.equal(references.total, ACTIVE_STAFF.length, JSON.stringify(references));
   assert.deepEqual(references.items.map((item) => item.role).sort(),
     ACTIVE_STAFF.map((employee) => employee.role).sort());
   assert.ok(references.items.every((item) => !['pending'].includes(item.role)));
-  assert.ok(!references.items.some((item) => item.catsco_uid === INACTIVE.uid || item.catsco_uid === PENDING.uid));
+  assert.ok(!references.items.some((item) => item.catsco_uid === PENDING.uid));
+  assert.ok(references.items.some((item) => item.catsco_uid === INACTIVE.uid), '历史停用员工也直接可用');
   for (const item of references.items) assert.deepEqual(Object.keys(item).sort(), ['catsco_uid', 'department', 'display_name', 'role']);
   const designers = await ok('list_references', { resource: 'employees', role: 'designer', limit: 100 });
   assert.deepEqual(designers.items.map((item) => item.catsco_uid), [DESIGNER.uid]);
   const executors = await ok('list_references', { resource: 'employees', role: 'executor', limit: 100 });
-  assert.deepEqual(executors.items.map((item) => item.catsco_uid).sort(), [CREATOR.uid, UNRELATED.uid].sort());
+  assert.deepEqual(executors.items.map((item) => item.catsco_uid).sort(), [CREATOR.uid, INACTIVE.uid, UNRELATED.uid].sort());
   expectError(await call('list_references', { resource: 'employees', role: 'pending' }), 'VALIDATION_ERROR', 'arguments.role');
-  console.log('PASS list_references 返回全部在职非 pending 员工，role 过滤正确');
+  console.log('PASS list_references 返回全部非 pending 员工，role 过滤正确');
 
   // 4) 创建预览必须显式 created_by_uid，且归属员工而非本机执行进程。
   let beforeOrders = orderCount();
@@ -315,7 +317,6 @@ try {
   expectError(await call('create_order', { order: missingCreator }), 'VALIDATION_ERROR', 'arguments.order.created_by_uid');
   expectError(await call('create_order', createArgs({ created_by_uid: null })), 'VALIDATION_ERROR', 'arguments.order.created_by_uid');
   expectError(await call('create_order', createArgs({ created_by_uid: 9999 })), 'VALIDATION_ERROR', 'arguments.order.created_by_uid');
-  expectError(await call('create_order', createArgs({ created_by_uid: INACTIVE.uid })), 'VALIDATION_ERROR', 'arguments.order.created_by_uid');
   expectError(await call('create_order', createArgs({ created_by: '伪造创建人' })), 'VALIDATION_ERROR', 'arguments.order.created_by');
   const preview = await ok('create_order', createArgs());
   assert.equal(preview.dry_run, true);
@@ -430,7 +431,6 @@ try {
   beforeAudit = auditCount();
   for (const [label, changes, path] of [
     ['创建人 null', { created_by_uid: null }, 'arguments.changes.created_by_uid'],
-    ['创建人停用', { created_by_uid: INACTIVE.uid }, 'arguments.changes.created_by_uid'],
     ['创建人未知', { created_by_uid: 9999 }, 'arguments.changes.created_by_uid'],
     ['designer 岗位错误', { designer_uid: PLANNER.uid }, 'arguments.changes.designer_uid'],
     ['planner 岗位错误', { planner_uid: DESIGNER.uid }, 'arguments.changes.planner_uid'],
@@ -455,7 +455,6 @@ try {
   const invalidCreates = [
     ['创建人 null', orderPayload({ created_by_uid: null }), 'arguments.order.created_by_uid'],
     ['创建人未知', orderPayload({ created_by_uid: 9999 }), 'arguments.order.created_by_uid'],
-    ['创建人停用', orderPayload({ created_by_uid: INACTIVE.uid }), 'arguments.order.created_by_uid'],
     ['创建人 pending', orderPayload({ created_by_uid: PENDING.uid }), 'arguments.order.created_by_uid'],
     ['designer 岗位错误', orderPayload({ designer_uid: PLANNER.uid }), 'arguments.order.designer_uid'],
     ['planner 岗位错误', orderPayload({ planner_uid: DESIGNER.uid }), 'arguments.order.planner_uid'],

@@ -1,4 +1,68 @@
-/* 员工与权限管理：沿用工作台既有筛选、统计与列表样式，仅补充状态与权限摘要。 */
+/* 员工与权限管理：沿用工作台既有筛选、统计与列表样式，仅补充状态与权限入口。 */
+
+.employee-toast {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  z-index: 130;
+  display: flex;
+  width: max-content;
+  max-width: min(560px, calc(100vw - 32px));
+  align-items: flex-start;
+  gap: 9px;
+  padding: 12px 12px 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 16px 40px rgb(16 24 40 / 18%), 0 2px 8px rgb(16 24 40 / 8%);
+  transform: translateX(-50%);
+  animation: employee-toast-enter 160ms cubic-bezier(.22, 1, .36, 1);
+}
+
+.employee-toast > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.employee-toast > span {
+  flex: 1;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.employee-toast .icon-control {
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  min-height: 26px;
+  flex-basis: 26px;
+  margin-top: -2px;
+  color: inherit;
+}
+
+.employee-toast-success {
+  border-color: #b9dfcf;
+  background: #effaf5;
+  color: #176c58;
+}
+
+.employee-toast-error {
+  border-color: #eec4c1;
+  background: var(--red-soft);
+  color: #9f2929;
+}
+
+@keyframes employee-toast-enter {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -6px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
 
 .employee-role-cell {
   display: flex;
@@ -16,20 +80,128 @@
   white-space: normal;
 }
 
-.employee-state {
+/* 部门已在分组标题中展示；编辑时把所属部门放在姓名下方，避免单独占一列。 */
+.employee-inline-department {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.employee-inline-department > span {
+  flex: 0 0 auto;
+}
+
+.employee-inline-department select {
+  height: 32px;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-top: 0;
+  padding: 0 8px;
   font-size: 12px;
 }
 
-.employee-state-enabled {
-  color: var(--teal);
+/* 员工明细按部门折叠：分组标题整行可点击，展开后显示该部门员工。 */
+.employee-table-tools {
+  align-items: center;
 }
 
-.employee-state-pending {
+.employee-group-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.employee-group-actions .outline-action {
+  gap: 5px;
+  min-height: 32px;
+  padding-inline: 10px;
+  font-size: 12px;
+}
+
+.employee-group .employee-department-row td {
+  width: auto;
+  padding: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
+}
+
+/* 分组折叠后只剩标题行，保留分组之间的分隔线。 */
+.employee-group .employee-department-row:last-child td {
+  border-bottom: 1px solid var(--line);
+}
+
+.employee-group .employee-department-row:hover {
+  background: var(--paper);
+}
+
+.employee-department-toggle {
+  display: flex;
+  width: 100%;
+  min-height: 44px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.employee-department-toggle:hover {
+  background: var(--cc-hover);
+}
+
+.employee-department-toggle:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
+
+.employee-department-toggle > svg:first-child {
+  flex: 0 0 auto;
+  color: var(--muted);
+  transition: transform 140ms ease;
+}
+
+.employee-department-toggle[aria-expanded="true"] > svg:first-child {
+  transform: rotate(90deg);
+}
+
+.employee-department-toggle b {
+  font-weight: 600;
+}
+
+.employee-department-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.employee-boss-tag {
+  display: inline-flex;
+  min-height: 20px;
+  align-items: center;
+  padding: 0 6px;
+  border-radius: 5px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.employee-group.is-boss-group .employee-department-toggle > svg:nth-child(2) {
   color: var(--amber);
 }
 
-.employee-state-disabled {
-  color: var(--muted);
+.employee-group.is-boss-group .employee-department-row td {
+  background: #fffaf0;
 }
 
 /* 角色权限说明：改为弹窗展示，卡片按身份拆分，支持搜索与直接筛选员工。 */
@@ -238,43 +410,6 @@
   font-size: 13px;
 }
 
-/* 首页统计同时作为快捷筛选入口，保留原有分隔线与数字样式。 */
-.employee-stat {
-  display: flex;
-  width: 100%;
-  min-height: 68px;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 5px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--ink);
-  text-align: left;
-  cursor: pointer;
-}
-
-.employee-stat span {
-  color: var(--muted);
-  transition: color 140ms ease;
-}
-
-.employee-stat b {
-  transition: color 140ms ease;
-}
-
-.employee-stat:hover span,
-.employee-stat:hover b,
-.employee-stat.is-active b {
-  color: var(--blue);
-}
-
-.employee-stat:focus-visible {
-  border-radius: 4px;
-  outline: 2px solid var(--blue);
-  outline-offset: 3px;
-}
-
 .employee-role-title {
   display: flex;
   min-width: 0;
@@ -286,10 +421,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.employee-role-title .employee-role-summary {
-  flex: 1;
 }
 
 .employee-role-info {
@@ -349,9 +480,16 @@
 }
 
 .approver-editor-body {
-  display: grid;
-  align-content: start;
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
   gap: 14px;
+  overflow: hidden;
+}
+
+.approver-editor-body > .search-field,
+.approver-editor-body > .employee-error {
+  flex: 0 0 auto;
 }
 
 .approver-editor-body > .search-field {
@@ -373,6 +511,20 @@
 .approver-editor-modal .search-field input:focus {
   border: 0;
   box-shadow: none;
+}
+
+.approver-matrix {
+  min-height: 0;
+  flex: 0 1 auto;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.approver-matrix thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--paper);
 }
 
 .approver-matrix table {
@@ -430,6 +582,12 @@
 
   .role-guide-result {
     margin-left: 0;
+  }
+
+  .employee-toast {
+    top: 12px;
+    width: calc(100vw - 24px);
+    max-width: none;
   }
 }
 /* 执行公司只有名称与操作两列，不沿用员工明细的固定列宽。 */

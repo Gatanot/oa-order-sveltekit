@@ -780,7 +780,8 @@ try {
     result = await requestOn(base, '/api/employees', { method: 'PATCH', json: { uid: 1001, display_name: '王管理', department: '商务', role: 'owner', active: true } });
     assert.equal(result.response.status, 403, '管理人员不能把自己提升为老板');
     result = await requestOn(base, '/api/employees', { method: 'PATCH', json: { uid: 1001, display_name: '王管理', department: '商务', role: 'manager', active: false } });
-    assert.equal(result.response.status, 403, '管理人员不能停用自己');
+    assert.equal(result.response.status, 200, '员工启用状态不再区分');
+    assert.equal(result.data.data.active, 1, '已录入员工保持可用');
     result = await requestOn(base, '/api/employees', { method: 'PATCH', json: { uid: 1001, display_name: '王管理改名', department: '商务', role: 'manager', active: true } });
     assert.equal(result.response.status, 200, '管理人员可维护自己的姓名和部门');
     result = await requestOn(base, '/api/employees', { method: 'PATCH', json: { uid: 1002, display_name: '李老板', department: '商务', role: 'executor', active: true } });
@@ -859,7 +860,8 @@ try {
     result = await requestOn(base, '/api/employees', { method: 'PATCH', json: { uid: 1002, display_name: '李老板', department: '商务', role: 'manager', active: true } });
     assert.equal(result.response.status, 403, '老板不能改变自己的身份');
     result = await requestOn(base, '/api/employees', { method: 'PATCH', json: { uid: 1002, display_name: '李老板', department: '商务', role: 'owner', active: false } });
-    assert.equal(result.response.status, 403, '老板不能停用自己');
+    assert.equal(result.response.status, 200, '员工启用状态不再区分');
+    assert.equal(result.data.data.active, 1, '已录入员工保持可用');
     result = await requestOn(base, '/api/employees', { method: 'PATCH', json: { uid: 1001, display_name: '王管理', department: '商务', role: 'manager', active: true } });
     assert.equal(result.response.status, 200, '老板可管理管理人员');
     result = await requestOn(base, '/api/employees', { method: 'PATCH', json: { uid: 1004, display_name: '钱财务', department: '内务', role: 'finance', active: true } });

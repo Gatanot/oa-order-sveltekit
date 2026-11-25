@@ -40,6 +40,15 @@
   gap: 14px;
 }
 
+.catalog-customer-link {
+  margin-top: 2px;
+  padding-inline: 0;
+}
+
+.field-hint.is-error {
+  color: var(--red);
+}
+
 .catalog-file-field {
   display: grid;
   gap: 7px;
