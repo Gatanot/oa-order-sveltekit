@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getContext, onMount } from 'svelte';
-  import { ChevronRight, Pencil, Plus, Save, Trash2, X } from 'lucide-svelte';
+  import { ArrowRight, Check, CircleCheck, Info, Pencil, Plus, Save, Search, ShieldCheck, Trash2, X } from 'lucide-svelte';
   import { api } from '$lib/api';
   import WorkbenchListFilters from '../WorkbenchListFilters.svelte';
 
@@ -85,6 +85,27 @@
   function roleLabel(role: string) {
     return roleInfo(role).label;
   }
+  function openRoleGuide(role = '') {
+    roleGuideOpen = true;
+    roleGuideFocusRole = role;
+    roleGuideQuery = role ? roleInfo(role).label : '';
+  }
+  function closeRoleGuide() {
+    if (roleGuideOpen) roleGuideOpen = false;
+  }
+  function showAllRoles() {
+    roleGuideQuery = '';
+    roleGuideFocusRole = '';
+  }
+  function filterByRole(role: string) {
+    filters = { ...filters, role, active: '' };
+    roleGuideOpen = false;
+  }
+  function setStatFilter(kind: 'all' | 'enabled' | 'pending' | 'disabled') {
+    if (kind === 'all') filters = { ...filters, role: '', active: '' };
+    else if (kind === 'pending') filters = { ...filters, role: 'pending', active: '' };
+    else filters = { ...filters, role: '', active: kind };
+  }
   function employeeStatus(employee: EmployeeRow) {
     if (employee.role === 'pending') return { label: '待开通', tone: 'pending' };
     return Boolean(employee.active)
@@ -110,6 +131,11 @@
   let editingUid = $state<number | null>(null);
   let draft = $state<EmployeeDraft | null>(null);
   let filters = $state({ search: '', department: '', role: '', active: '' });
+  let roleGuideOpen = $state(false);
+  let roleGuideQuery = $state('');
+  let roleGuideFocusRole = $state('');
+  let roleGuideSearchInput = $state<HTMLInputElement>();
+  let approverSearch = $state('');
 
   let createOpen = $state(false);
   let newUid = $state('');
@@ -118,20 +144,41 @@
   let newDepartment = $state('');
   let newRole = $state('pending');
 
-  const matchingEmployeeIds = $derived(new Set(savedEmployees.filter((employee) =>
+  // 统计口径只跟随搜索与部门，身份/启用状态作为快捷筛选，避免点击后数量归零。
+  const baseEmployees = $derived(savedEmployees.filter((employee) =>
     (!filters.search || `${employee.display_name} ${employee.username} ${employee.catsco_uid}`.toLowerCase().includes(filters.search.trim().toLowerCase())) &&
-    (!filters.department || employee.department === filters.department) &&
+    (!filters.department || employee.department === filters.department)
+  ));
+  const matchingEmployeeIds = $derived(new Set(baseEmployees.filter((employee) =>
     (!filters.role || employee.role === filters.role) &&
     (!filters.active || (filters.active === 'enabled'
       ? Boolean(employee.active) && employee.role !== 'pending'
       : !Boolean(employee.active) && employee.role !== 'pending'))
   ).map((employee) => employee.catsco_uid)));
   const visibleEmployees = $derived(employees.filter((employee) => matchingEmployeeIds.has(employee.catsco_uid)));
+  const visibleDepartments = $derived(new Set(visibleEmployees.map((employee) => employee.department).filter(Boolean)));
+  const statCounts = $derived({
+    total: baseEmployees.length,
+    enabled: baseEmployees.filter((employee) => Boolean(employee.active) && employee.role !== 'pending').length,
+    pending: baseEmployees.filter((employee) => employee.role === 'pending').length,
+    disabled: baseEmployees.filter((employee) => !Boolean(employee.active) && employee.role !== 'pending').length
+  });
+  const roleCounts = $derived(employees.reduce<Record<string, number>>((counts, employee) => {
+    counts[employee.role] = (counts[employee.role] || 0) + 1;
+    return counts;
+  }, {}));
+  const guideQueryText = $derived(roleGuideQuery.trim().toLowerCase());
+  const guideRoleEntries = $derived(guideRoles.filter((role) => {
+    if (!guideQueryText) return true;
+    const info = roleInfo(role);
+    return `${info.label} ${info.summary} ${info.permissions.join(' ')}`.toLowerCase().includes(guideQueryText);
+  }));
   const hasActiveFilters = $derived(filters.search !== '' || filters.department !== '' || filters.role !== '' || filters.active !== '');
   // 审核人候选取启用中的正式员工；任意部门员工都可以被配置为其他部门的审核人。
   const approverCandidates = $derived(employees
     .filter((employee) => Boolean(employee.active) && employee.role !== 'pending')
     .sort((a, b) => a.department.localeCompare(b.department, 'zh-CN') || a.display_name.localeCompare(b.display_name, 'zh-CN')));
+  const approverSearchText = $derived(approverSearch.trim().toLowerCase());
 
   // 当前操作者可授予的身份；管理人员不能授予管理、财务或老板身份。
   const assignableRoles = $derived.by(() => {
@@ -140,6 +187,12 @@
     if (currentRole === 'owner') return ['pending', ...available.filter((role) => role !== 'owner')];
     if (currentRole === 'manager') return ['pending', ...available.filter((role) => !['owner', 'manager', 'finance'].includes(role))];
     return ['pending'];
+  });
+  const roleAssignHint = $derived.by(() => {
+    if (currentRole === 'admin') return '可授予全部业务身份。';
+    if (currentRole === 'owner') return '可授予除老板外的身份；固定账号不可修改。';
+    if (currentRole === 'manager') return '可授予执行、设计、策划或待开通；不可授予管理、财务、老板。';
+    return '当前身份不能调整员工身份。';
   });
 
   const filterFields = $derived([
@@ -202,16 +255,17 @@
   function emptyLayerDraft(): ApproverLayerDraft {
     return { '1': [], '2': [], '3': [] };
   }
+  function departmentDraftFrom(config: DepartmentApproverConfig, department: string): ApproverLayerDraft {
+    const layerDraft = emptyLayerDraft();
+    for (const layer of ['1', '2', '3'] as const) {
+      layerDraft[layer] = (config.approvers?.[department]?.[layer] || []).map((approver) => Number(approver.employee_uid));
+    }
+    return layerDraft;
+  }
   function applyApproverConfig(config: DepartmentApproverConfig) {
     approverConfig = config;
     const draft: Record<string, ApproverLayerDraft> = {};
-    for (const department of config.departments) {
-      const layerDraft = emptyLayerDraft();
-      for (const layer of ['1', '2', '3'] as const) {
-        layerDraft[layer] = (config.approvers?.[department]?.[layer] || []).map((approver) => Number(approver.employee_uid));
-      }
-      draft[department] = layerDraft;
-    }
+    for (const department of config.departments) draft[department] = departmentDraftFrom(config, department);
     approverDraft = draft;
   }
   async function loadApproverConfig() {
@@ -224,6 +278,27 @@
   }
   function approverIds(department: string, layer: 1 | 2 | 3) {
     return approverDraft[department]?.[String(layer) as '1' | '2' | '3'] || [];
+  }
+  function approverCandidatesFor(department: string, layer: 1 | 2 | 3) {
+    const selected = new Set(approverIds(department, layer));
+    const selectedEmployees = employees.filter((employee) => selected.has(employee.catsco_uid));
+    const otherCandidates = approverCandidates.filter((employee) => !selected.has(employee.catsco_uid)
+      && (!approverSearchText || `${employee.display_name} ${employee.username} ${employee.department}`.toLowerCase().includes(approverSearchText)));
+    return [...selectedEmployees, ...otherCandidates]
+      .sort((a, b) => Number(selected.has(b.catsco_uid)) - Number(selected.has(a.catsco_uid))
+        || a.department.localeCompare(b.department, 'zh-CN')
+        || a.display_name.localeCompare(b.display_name, 'zh-CN'));
+  }
+  function approverDirty(department: string) {
+    for (const layer of ['1', '2', '3'] as const) {
+      const saved = (approverConfig?.approvers?.[department]?.[layer] || []).map((approver) => Number(approver.employee_uid)).sort((a, b) => a - b);
+      const current = [...approverIds(department, Number(layer) as 1 | 2 | 3)].sort((a, b) => a - b);
+      if (saved.length !== current.length || saved.some((uid, index) => uid !== current[index])) return true;
+    }
+    return false;
+  }
+  function approverConfigured(department: string) {
+    return (['1', '2', '3'] as const).some((layer) => approverIds(department, Number(layer) as 1 | 2 | 3).length > 0);
   }
   function toggleApprover(department: string, layer: 1 | 2 | 3, uid: number, checked: boolean) {
     const current = approverIds(department, layer);
@@ -248,18 +323,15 @@
         department,
         layers: approverDraft[department] || emptyLayerDraft()
       });
-      applyApproverConfig(result.data);
+      // 只同步刚保存的部门，保留其他部门尚未保存的修改。
+      approverConfig = result.data;
+      approverDraft = { ...approverDraft, [department]: departmentDraftFrom(result.data, department) };
       approverSuccess = `已保存${department}的三级审批设置`;
     } catch (reason) {
       approverError = reason instanceof Error ? reason.message : '审批设置保存失败';
     } finally {
       approverSaving = '';
     }
-  }
-  function defaultApproverHint(layer: 1 | 2 | 3) {
-    const roles = approverConfig?.layers.find((item) => item.layer === layer)?.defaultRoles || [];
-    if (!roles.length) return '未配置时使用默认角色';
-    return `未配置时按角色兜底：${roles.map((role) => roleLabel(role)).join('、')}`;
   }
   function clearFilters() {
     filters = { search: '', department: '', role: '', active: '' };
@@ -496,6 +568,14 @@
     }
   }
 
+  $effect(() => {
+    if (!roleGuideOpen) return;
+    // 移动端不主动聚焦搜索框，避免弹出键盘遮挡权限卡片。
+    if (!window.matchMedia('(min-width: 761px)').matches) return;
+    const timer = setTimeout(() => roleGuideSearchInput?.focus(), 30);
+    return () => clearTimeout(timer);
+  });
+
   onMount(async () => {
     if (canManageEmployees) {
       await loadEmployees();
@@ -505,7 +585,11 @@
   });
 </script>
 
-<svelte:window onkeydown={(event) => { if (event.key === 'Escape' && createOpen && !creatingEmployee) closeCreate(); }} />
+<svelte:window onkeydown={(event) => {
+  if (event.key !== 'Escape') return;
+  if (roleGuideOpen) { closeRoleGuide(); return; }
+  if (createOpen && !creatingEmployee) closeCreate();
+}} />
 
 <section class="page-section workbench-list-page employee-page">
   <div class="section-heading">
@@ -514,7 +598,10 @@
       <h2>{canManageEmployees ? '员工与权限管理' : '执行公司管理'}</h2>
     </div>
     {#if canManageEmployees}
-      <div class="top-actions"><button class="primary-action" type="button" onclick={startCreate}><Plus size={16} />新增员工</button></div>
+      <div class="top-actions">
+        <button class="outline-action" type="button" onclick={() => openRoleGuide()}><ShieldCheck size={16} />角色权限说明</button>
+        <button class="primary-action" type="button" onclick={startCreate}><Plus size={16} />新增员工</button>
+      </div>
     {/if}
   </div>
 
@@ -528,39 +615,17 @@
       />
 
       <div class="workbench-statistics">
-        <div class="workbench-statistics-head"><span>当前筛选结果 · {visibleEmployees.length} 位员工</span></div>
-        <div class="summary-row">
-          <div><span>员工总数</span><b>{visibleEmployees.length}</b></div>
-          <div><span>已启用</span><b>{visibleEmployees.filter((employee) => Boolean(employee.active) && employee.role !== 'pending').length}</b></div>
-          <div><span>待开通</span><b>{visibleEmployees.filter((employee) => employee.role === 'pending').length}</b></div>
-          <div><span>涉及部门</span><b>{new Set(visibleEmployees.map((employee) => employee.department).filter(Boolean)).size}</b></div>
+        <div class="workbench-statistics-head"><span aria-live="polite">当前结果 {visibleEmployees.length} 位 · {visibleDepartments.size} 个部门</span><span>点击数字筛选状态</span></div>
+        <div class="summary-row" role="group" aria-label="按启用状态快捷筛选员工">
+          <div><button type="button" class="employee-stat" class:is-active={!filters.role && !filters.active} aria-pressed={!filters.role && !filters.active} title="显示全部员工" onclick={() => setStatFilter('all')}><span>员工总数</span><b>{statCounts.total}</b></button></div>
+          <div><button type="button" class="employee-stat" class:is-active={filters.active === 'enabled'} aria-pressed={filters.active === 'enabled'} title="只看已启用员工" onclick={() => setStatFilter('enabled')}><span>已启用</span><b>{statCounts.enabled}</b></button></div>
+          <div><button type="button" class="employee-stat" class:is-active={filters.role === 'pending'} aria-pressed={filters.role === 'pending'} title="只看待开通员工" onclick={() => setStatFilter('pending')}><span>待开通</span><b>{statCounts.pending}</b></button></div>
+          <div><button type="button" class="employee-stat" class:is-active={filters.active === 'disabled'} aria-pressed={filters.active === 'disabled'} title="只看已停用员工" onclick={() => setStatFilter('disabled')}><span>已停用</span><b>{statCounts.disabled}</b></button></div>
         </div>
       </div>
 
       {#if employeeError && !createOpen}<p class="employee-error" role="alert">{employeeError}</p>{/if}
       {#if employeeSuccess}<p class="employee-success" role="status">{employeeSuccess}</p>{/if}
-
-      <details class="catalog-sources-disclosure employee-role-guide">
-        <summary>角色权限说明<span>{guideRoles.length} 类业务身份</span><ChevronRight size={15} /></summary>
-        <div class="table-panel">
-          <div class="table-scroll">
-            <table>
-              <thead><tr><th>身份</th><th>权限范围</th><th>可执行操作</th></tr></thead>
-              <tbody>
-                {#each guideRoles as role}
-                  {@const info = roleInfo(role)}
-                  <tr>
-                    <td><b>{info.label}</b></td>
-                    <td>{info.summary}</td>
-                    <td>{info.permissions.join('；')}</td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
-        </div>
-        <p class="field-hint">系统管理员为固定账号，不在此页面授予或修改。</p>
-      </details>
 
       <div class="table-tools workbench-table-tools">
         <div class="order-table-heading"><h3>员工明细</h3><span class="filter-result">共 {visibleEmployees.length} 位</span></div>
@@ -577,6 +642,7 @@
                   <td>
                     <input aria-label="员工姓名" maxlength="40" bind:value={draft.display_name} disabled={savingEmployee} />
                     {#if employee.isSelf}<span class="employee-self-tag">（我）</span>{/if}
+                    {#if draftDirty(employee)}<span class="employee-dirty-tag">未保存</span>{/if}
                   </td>
                   <td>{employee.catsco_uid} · {employee.username}</td>
                   <td>
@@ -595,7 +661,10 @@
                     >
                       {#each roleOptions as role}<option value={role}>{roleLabel(role)}</option>{/each}
                     </select>
-                    <small class="employee-role-summary">{roleInfo(draft.role).summary}</small>
+                    <div class="employee-role-title">
+                      <small class="employee-role-summary">{roleInfo(draft.role).summary}</small>
+                      <button type="button" class="employee-role-info" title={`查看${roleInfo(draft.role).label}权限说明`} aria-label={`查看${roleInfo(draft.role).label}权限说明`} onclick={() => openRoleGuide(draft!.role)}><Info size={13} /></button>
+                    </div>
                     {#if !canEditRole(employee)}<small class="employee-role-summary">不能修改自己的身份</small>{/if}
                   </td>
                   <td>
@@ -624,7 +693,10 @@
                   <td>{#if employee.department}{employee.department}{:else}<span class="muted">未设置</span>{/if}</td>
                   <td>
                     <div class="employee-role-cell">
-                      <b>{info.label}</b>
+                      <div class="employee-role-title">
+                        <b>{info.label}</b>
+                        <button type="button" class="employee-role-info" title={`查看${info.label}权限说明`} aria-label={`查看${info.label}权限说明`} onclick={() => openRoleGuide(employee.role)}><Info size={13} /></button>
+                      </div>
                       <small class="employee-role-summary" title={info.summary}>{info.summary}</small>
                     </div>
                   </td>
@@ -660,59 +732,81 @@
     </section>
 
     <section class="employee-admin approver-admin">
-      <div class="table-tools workbench-table-tools">
+      <div class="table-tools workbench-table-tools approver-heading">
         <div class="order-table-heading"><h3>报销三级审批设置</h3><span class="filter-result">按报销人所属部门匹配</span></div>
+        {#if approverCandidates.length}
+          <div class="approver-search-group">
+            <label class="search-field approver-search"><Search size={16} /><input bind:value={approverSearch} aria-label="搜索审核人" placeholder="搜索姓名 / 用户名 / 部门" title="已选审核人不会被搜索隐藏" /></label>
+            {#if approverSearch}<button class="icon-control approver-search-clear" type="button" title="清空审核人搜索" aria-label="清空审核人搜索" onclick={() => approverSearch = ''}><X size={15} /></button>{/if}
+          </div>
+        {/if}
       </div>
-      <p class="field-hint">每一级可配置多名审核人，其中任一人处理即可；审核人不能审核本人提交的报销。未配置的部门继续按默认角色兜底。</p>
+      {#if approverCandidates.length}
+        <p class="field-hint approver-hint" title="默认流程：一级由系统管理员或管理人员审核，二级由财务复核，三级由老板确认；审核人不能审核本人提交的报销。">每级可配多人，任一人处理即可；未配置时按默认流程。</p>
+      {/if}
       {#if approverError}<p class="employee-error" role="alert">{approverError}</p>{/if}
       {#if approverSuccess}<p class="employee-success" role="status">{approverSuccess}</p>{/if}
-      <div class="employee-table-wrap approver-table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>部门</th>
-              <th>一级审核者<small class="employee-role-summary">{defaultApproverHint(1)}</small></th>
-              <th>二级审核者<small class="employee-role-summary">{defaultApproverHint(2)}</small></th>
-              <th>三级审核者<small class="employee-role-summary">{defaultApproverHint(3)}</small></th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each departments as department}
+      {#if approverCandidates.length || departments.some(approverConfigured)}
+        <div class="employee-table-wrap approver-table-wrap">
+          <table>
+            <thead>
               <tr>
-                <td><b>{department}</b></td>
-                {#each [1, 2, 3] as layer}
+                <th>部门</th>
+                <th>一级审核者</th>
+                <th>二级审核者</th>
+                <th>三级审核者</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each departments as department}
+                {@const dirty = approverDirty(department)}
+                {@const configured = approverConfigured(department)}
+                <tr>
                   <td>
-                    <div class="approver-cell">
-                      {#each approverCandidates as employee}
-                        <label class="approver-option">
-                          <input
-                            type="checkbox"
-                            checked={approverIds(department, layer as 1 | 2 | 3).includes(employee.catsco_uid)}
-                            disabled={approverSaving === department}
-                            onchange={(event) => toggleApprover(department, layer as 1 | 2 | 3, employee.catsco_uid, event.currentTarget.checked)}
-                          />
-                          <span>{employee.display_name || employee.username}</span>
-                          <small>{employee.department || '未设部门'}</small>
-                        </label>
+                    <b>{department}</b>
+                    {#if dirty}<small class="approver-state is-dirty">未保存</small>
+                    {:else if configured}<small class="approver-state is-configured">已配置</small>{/if}
+                  </td>
+                  {#each [1, 2, 3] as layer}
+                    {@const ids = approverIds(department, layer as 1 | 2 | 3)}
+                    <td>
+                      <div class="approver-cell">
+                        {#if ids.length}<div class="approver-cell-head"><span>已选 {ids.length} 人</span></div>{/if}
+                        {#each approverCandidatesFor(department, layer as 1 | 2 | 3) as employee (employee.catsco_uid)}
+                          <label class="approver-option">
+                            <input
+                              type="checkbox"
+                              checked={ids.includes(employee.catsco_uid)}
+                              disabled={approverSaving === department}
+                              onchange={(event) => toggleApprover(department, layer as 1 | 2 | 3, employee.catsco_uid, event.currentTarget.checked)}
+                            />
+                            <span>{employee.display_name || employee.username}</span>
+                            <small>{employee.department || '未设部门'}{#if !Boolean(employee.active) || employee.role === 'pending'} · 已停用{/if}</small>
+                          </label>
+                        {:else}
+                          <span class="muted" title={approverSearch ? '没有匹配的审核人' : '暂无可选审核人'}>—</span>
+                        {/each}
+                      </div>
+                    </td>
+                  {/each}
+                  <td>
+                    <div class="employee-row-actions">
+                      {#if dirty}
+                        <button class="primary-action" type="button" disabled={approverSaving === department} onclick={() => saveDepartmentApprovers(department)}>{approverSaving === department ? '保存中...' : '保存'}</button>
                       {:else}
-                        <span class="muted">暂无可选员工</span>
-                      {/each}
+                        <span class="approver-saved" title="没有未保存的修改"><Check size={16} /><span class="visually-hidden">没有未保存的修改</span></span>
+                      {/if}
                     </div>
                   </td>
-                {/each}
-                <td>
-                  <div class="employee-row-actions">
-                    <button class="primary-action" type="button" disabled={approverSaving === department} onclick={() => saveDepartmentApprovers(department)}>
-                      {approverSaving === department ? '保存中...' : '保存'}
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {:else}
+        <div class="table-panel"><div class="empty-table">暂无可选审核人，请先添加或启用员工。</div></div>
+      {/if}
     </section>
   {/if}
 
@@ -765,6 +859,64 @@
     </section>
   {/if}
 </section>
+
+{#if roleGuideOpen}
+  <div class="project-modal-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) closeRoleGuide(); }}>
+    <div class="project-modal role-guide-modal" role="dialog" aria-modal="true" aria-labelledby="role-guide-title">
+      <div class="project-modal-head">
+        <div>
+          <p class="section-kicker">权限说明</p>
+          <h2 id="role-guide-title">角色权限说明</h2>
+          <span>{guideRoles.length} 类业务身份 · 当前共 {employees.length} 位员工</span>
+        </div>
+        <button class="icon-control" type="button" aria-label="关闭角色权限说明" onclick={closeRoleGuide}><X size={18} /></button>
+      </div>
+      <div class="project-modal-body role-guide-body">
+        <div class="role-guide-toolbar">
+          <label class="search-field"><Search size={16} /><input bind:this={roleGuideSearchInput} bind:value={roleGuideQuery} aria-label="搜索角色权限" placeholder="搜索身份或权限关键词，如“导出”" /></label>
+          {#if roleGuideQuery}<button class="link-action" type="button" onclick={showAllRoles}>清空搜索</button><span class="role-guide-result" aria-live="polite">显示 {guideRoleEntries.length} / {guideRoles.length} 类身份</span>{/if}
+        </div>
+        <p class="role-guide-note"><ShieldCheck size={14} /><span>{roleAssignHint}</span></p>
+        <div class="role-guide-grid">
+          {#each guideRoleEntries as role}
+            {@const info = roleInfo(role)}
+            {@const count = roleCounts[role] || 0}
+            <article class="role-guide-card" class:is-highlighted={roleGuideFocusRole === role}>
+              <div class="role-guide-card-head">
+                <h3 class="role-guide-badge" class:is-pending={role === 'pending'}>{info.label}</h3>
+                <div class="role-guide-card-meta">
+                  {#if role === currentRole}<span class="role-guide-current">当前身份</span>{/if}
+                  <span class="role-guide-count">{count} 位员工</span>
+                </div>
+              </div>
+              <p class="role-guide-summary">{info.summary}</p>
+              <ul class="role-guide-permissions">
+                {#each info.permissions as permission}
+                  <li><CircleCheck size={14} /><span>{permission}</span></li>
+                {:else}
+                  <li><span>暂无权限说明</span></li>
+                {/each}
+              </ul>
+              <div class="role-guide-card-footer">
+                <button class="link-action role-guide-filter" type="button" onclick={() => filterByRole(role)}>筛选员工<ArrowRight size={14} /></button>
+              </div>
+            </article>
+          {:else}
+            <div class="role-guide-empty">
+              <Search size={18} />
+              <span>没有匹配的角色或权限，换个关键词试试。</span>
+              <button class="outline-action" type="button" onclick={showAllRoles}>显示全部身份</button>
+            </div>
+          {/each}
+        </div>
+      </div>
+      <div class="project-modal-footer role-guide-footer">
+        <span>系统管理员账号固定；员工刷新页面后生效。</span>
+        <button class="outline-action" type="button" onclick={closeRoleGuide}>关闭</button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 {#if createOpen}
   <div class="project-modal-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) closeCreate(); }}>

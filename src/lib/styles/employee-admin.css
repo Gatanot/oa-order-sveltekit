@@ -32,14 +32,381 @@
   color: var(--muted);
 }
 
-.employee-role-guide .table-panel {
+/* 角色权限说明：改为弹窗展示，卡片按身份拆分，支持搜索与直接筛选员工。 */
+.role-guide-modal {
+  width: min(880px, 100%);
+}
+
+.role-guide-body {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+.role-guide-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.role-guide-toolbar .search-field {
+  display: flex;
+  max-width: 390px;
+  flex: 1 1 260px;
+  align-items: center;
+}
+
+.role-guide-modal .search-field input {
+  height: 34px;
+  min-height: 34px;
+  margin: 0;
+  padding: 0 0 0 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.role-guide-modal .search-field input:focus {
+  border: 0;
+  box-shadow: none;
+}
+
+.role-guide-toolbar .link-action {
+  color: var(--blue);
+}
+
+.role-guide-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.role-guide-note svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.role-guide-result {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.role-guide-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.role-guide-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 9px;
+  padding: 14px 16px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.role-guide-card.is-highlighted {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 14%, transparent);
+}
+
+.role-guide-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.role-guide-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.role-guide-current {
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.role-guide-badge {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  margin: 0;
+  padding: 0 9px;
+  border-radius: 6px;
+  background: var(--color-brand-50);
+  color: var(--blue-strong);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.role-guide-badge.is-pending {
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
+.role-guide-count {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.role-guide-summary {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.role-guide-permissions {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.role-guide-permissions li {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.role-guide-permissions li svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--teal);
+}
+
+.role-guide-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.role-guide-card-footer .link-action {
+  gap: 5px;
+  padding-inline: 0;
+  color: var(--blue);
+}
+
+.role-guide-card-footer .link-action:hover {
+  background: transparent;
+  color: var(--blue-strong);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.role-guide-filter {
+  gap: 5px;
+}
+
+.role-guide-empty {
+  display: flex;
+  grid-column: 1 / -1;
+  min-height: 160px;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* 首页统计同时作为快捷筛选入口，保留原有分隔线与数字样式。 */
+.employee-stat {
+  display: flex;
+  width: 100%;
+  min-height: 68px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.employee-stat span {
+  color: var(--muted);
+  transition: color 140ms ease;
+}
+
+.employee-stat b {
+  transition: color 140ms ease;
+}
+
+.employee-stat:hover span,
+.employee-stat:hover b,
+.employee-stat.is-active b {
+  color: var(--blue);
+}
+
+.employee-stat:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}
+
+.employee-role-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.employee-role-title b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.employee-role-title .employee-role-summary {
+  flex: 1;
+}
+
+.employee-role-info {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  flex: 0 0 22px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.employee-role-info:hover {
+  background: var(--cc-hover);
+  color: var(--blue);
+}
+
+.employee-dirty-tag {
+  display: inline-flex;
+  min-height: 20px;
+  align-items: center;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 5px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: 11px;
+  font-weight: 500;
+  vertical-align: middle;
+}
+
+/* 审批设置：搜索贴近表头，空单元格只保留一个占位符。 */
+.approver-heading {
+  align-items: center;
+  gap: 12px;
+}
+
+.approver-search-group {
+  display: flex;
+  min-width: 220px;
+  flex: 0 1 340px;
+  align-items: center;
+  gap: 6px;
+}
+
+.approver-search {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.approver-search-clear {
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  flex-basis: 30px;
+}
+
+.approver-hint {
   margin: 0 0 12px;
 }
 
-.employee-role-guide td {
-  white-space: normal;
+.approver-saved {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
 }
 
+.approver-state {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.approver-state.is-configured {
+  color: var(--teal);
+}
+
+.approver-state.is-dirty {
+  color: var(--amber);
+}
+
+.approver-cell-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+@media (max-width: 760px) {
+  .role-guide-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .role-guide-result {
+    margin-left: 0;
+  }
+
+  .approver-search-group {
+    min-width: 0;
+    flex-basis: 100%;
+  }
+}
 /* 执行公司只有名称与操作两列，不沿用员工明细的固定列宽。 */
 .employee-page .execution-company-admin .employee-table-wrap table {
   min-width: 0;
