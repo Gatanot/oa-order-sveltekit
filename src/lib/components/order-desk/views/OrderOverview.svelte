@@ -25,6 +25,35 @@
   const somePageSelected = $derived(desk.pagedOrders.some((order: any) => desk.bulkOrderIds.includes(order.id)));
   const hasExtraColumns = $derived(desk.visibleOrderColumns.some((key: string) => ['source', 'designer', 'creator', 'delivery'].includes(key)));
   const hasFilters = $derived([desk.search, desk.filterCustomer, desk.filterProject, desk.filterPayment, desk.filterFrom, desk.filterTo, desk.filterDesigner, desk.filterPlanner, desk.filterOwner, desk.filterCreator].some(Boolean));
+  // 详情按「下单明细」展示：把同名成本并入产品行，只有成本没有产品的历史行单独保留。
+  const detailLines = $derived.by(() => {
+    const order = desk.detailOrder;
+    if (!order) return [];
+    const pending = (order.costs || []).map((cost: any) => ({ ...cost }));
+    const lineTotal = (item: any) => Number(item.subtotal ?? Number(item.quantity || 0) * Number(item.unit_price ?? item.cost_unit ?? 0));
+    const lines = (order.products || []).map((product: any) => {
+      const name = String(product.name || '').trim().toLowerCase();
+      const index = name ? pending.findIndex((cost: any) => String(cost.name || '').trim().toLowerCase() === name) : -1;
+      const cost = index >= 0 ? pending.splice(index, 1)[0] : null;
+      return {
+        line_id: product.line_id,
+        name: product.name,
+        specification: product.specification || '',
+        quantity: product.quantity,
+        unit: product.unit || '项',
+        unit_price: Number(product.unit_price || 0),
+        subtotal: lineTotal(product),
+        vendor: cost?.vendor || '',
+        cost: cost ? lineTotal(cost) : 0,
+        advance: Boolean(product.advance),
+        remark: product.remark || ''
+      };
+    });
+    for (const cost of pending) {
+      lines.push({ line_id: cost.id, name: cost.name, specification: '', quantity: cost.quantity, unit: cost.unit || '项', unit_price: 0, subtotal: 0, vendor: cost.vendor || '', cost: lineTotal(cost), advance: false, remark: '' });
+    }
+    return lines;
+  });
   function activateRow(order: any) {
     if (desk.bulkMode) desk.toggleBulkOrder(order.id);
     else desk.openDetail(order);
@@ -45,8 +74,7 @@
     <div class="detail-card">
       <div class="section-heading"><div><p class="section-kicker">订单详情</p><h2>{desk.detailOrder.code}</h2><span>{desk.detailOrder.customer_name} · {desk.detailOrder.project_name}</span></div><div class="top-actions"><button class="outline-action" onclick={() => desk.navigate('/orders')}>返回列表</button>{#if desk.canCompleteOrder(desk.detailOrder)}<button class="primary-action" onclick={() => desk.openCompleteOrder(desk.detailOrder)}>标记完成</button>{/if}{#if desk.canWrite}<button class="outline-action" onclick={() => desk.editOrder(desk.detailOrder)}>编辑订单</button>{/if}</div></div>
       <div class="info-grid"><div><small>订单来源</small><b>{desk.detailOrder.order_source || "—"}</b></div><div><small>录入人 / 开单员</small><b>{desk.detailOrder.created_by || "—"}</b></div><div><small>指定设计师</small><b>{desk.detailOrder.designer || "—"}</b></div><div><small>指定策划人</small><b>{desk.detailOrder.planner || "—"}</b></div><div><small>项目负责人</small><b>{desk.detailOrder.project_owner || "—"}</b></div><div><small>执行公司</small><b>{desk.detailOrder.execution_company || "—"}</b></div><div><small>下单日期</small><b>{desk.detailOrder.order_date}</b></div><div><small>交货日期</small><b>{desk.detailOrder.delivery_date || "—"}</b></div><div><small>状态</small><b>{desk.detailOrder.status}</b></div><div><small>结款状态</small><b>{desk.detailOrder.payment_status || "未结款"}</b></div><div><small>销售总额</small><b>{desk.money(desk.detailOrder.quote_amount)}</b></div><div><small>制作成本</small><b>{desk.money(desk.detailOrder.cost_amount)}</b></div><div><small>关联报销</small><b>{desk.money((desk.detailOrder.advances || []).reduce((sum: number, item: any) => sum + Math.round(Number(item.amount || 0) * 100), 0))}</b></div><div><small>预计毛利</small><b>{desk.money(desk.detailOrder.quote_amount - desk.detailOrder.cost_amount - (desk.detailOrder.advances || []).reduce((sum: number, item: any) => sum + Math.round(Number(item.amount || 0) * 100), 0))}</b></div></div>
-      <h3>产品明细</h3><div class="table-panel"><div class="table-scroll"><table><thead><tr><th>序号</th><th>名称</th><th>单位</th><th>数量</th><th>单价</th><th>小计</th><th>制作要求</th><th>行备注</th></tr></thead><tbody>{#each desk.detailOrder.products as p, i}<tr><td>{i + 1}</td><td>{p.name}</td><td>{p.unit}</td><td>{p.quantity}</td><td>{Number(p.unit_price || 0).toFixed(2)}</td><td>{Number(p.subtotal || Number(p.quantity || 0) * Number(p.unit_price || 0)).toFixed(2)}</td><td>{p.specification || "—"}</td><td>{p.remark || "—"}</td></tr>{/each}</tbody></table></div></div>
-      {#if desk.detailOrder.costs?.length}<h3>固定成本</h3><div class="table-panel"><div class="table-scroll"><table><thead><tr><th>项目</th><th>供应商</th><th>单位</th><th>数量</th><th>单价</th><th>小计</th></tr></thead><tbody>{#each desk.detailOrder.costs as c}<tr><td>{c.name}</td><td>{c.vendor}</td><td>{c.unit || "项"}</td><td>{c.quantity}</td><td>{Number(c.unit_price || 0).toFixed(2)}</td><td>{Number(c.subtotal || Number(c.quantity || 0) * Number(c.unit_price || 0)).toFixed(2)}</td></tr>{/each}</tbody></table></div></div>{/if}
+      <h3>下单明细</h3><div class="table-panel"><div class="table-scroll"><table><thead><tr><th>序号</th><th>产品名称</th><th>规格和技术要求</th><th>数量</th><th>单位</th><th>单价</th><th>小计</th><th>供应商</th><th>成本</th><th>个人垫付</th></tr></thead><tbody>{#each detailLines as line, i}<tr><td>{i + 1}</td><td>{line.name}</td><td class="detail-spec">{line.specification || "—"}{#if line.remark}<small class="detail-remark">备注：{line.remark}</small>{/if}</td><td>{line.quantity}</td><td>{line.unit}</td><td>{line.unit_price.toFixed(2)}</td><td>{line.subtotal.toFixed(2)}</td><td>{line.vendor || "—"}</td><td>{line.cost.toFixed(2)}</td><td>{#if line.advance}<span class="advance-detail">已垫付</span>{:else}—{/if}</td></tr>{/each}</tbody></table></div></div>
       <h3>关联报销</h3>{#if desk.detailOrder.advances?.length}<div class="table-panel"><div class="table-scroll"><table><thead><tr><th>报销人</th><th>报销物品</th><th>垫付日期</th><th>金额</th><th>发票</th><th>状态</th></tr></thead><tbody>{#each desk.detailOrder.advances as advance}<tr><td>{advance.employee || desk.detailOrder.designer || "—"}</td><td>{advance.item || "—"}</td><td>{advance.date || desk.detailOrder.order_date}</td><td>{Number(advance.amount || 0).toFixed(2)}</td><td>{#if advance.attachment_id}<button class="attachment-link" type="button" onclick={() => desk.openAttachmentPreview(desk.reimbursementAttachmentUrl(advance.attachment_id), advance.invoice || '发票附件')}>{advance.invoice || "查看发票"}</button>{:else}{advance.invoice || "未上传"}{/if}</td><td><ReimbursementStatus status={advance.status || "待审核"} /></td></tr>{/each}</tbody></table></div></div>{:else}<p class="empty-table">本订单暂无关联报销，可在“我的报销”中发起报销并关联此订单。</p>{/if}
       <h3>备注 / 制作说明</h3><div class="order-note">{desk.detailOrder.note || "暂无备注。"}</div>
       <h3>设计图</h3>

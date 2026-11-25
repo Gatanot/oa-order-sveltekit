@@ -1183,7 +1183,7 @@ export function createOrderDesk(data: Data) {
   async function submitOrder(event: SubmitEvent) {
     event.preventDefault();
     const hasName = (value: string) => String(value || '').trim().length > 0;
-    // 成本和产品明细是订单的最小可保存单位；员工垫付改由报销页面发起并关联订单。
+    // 成本和产品明细是订单的最小可保存单位；勾选个人垫付的行由服务端在保存时自动生成报销。
     const validProducts = products.filter((item) => hasName(item.name));
     // 成本随产品明细自动匹配，提交时展开为订单成本行。
     const validCosts = validProducts
@@ -1201,6 +1201,13 @@ export function createOrderDesk(data: Data) {
       notify("请至少添加一项产品", true);
       return;
     }
+    const advanceIndex = validProducts.findIndex((item) => item.advance && !(Number(item.cost_unit) > 0));
+    if (advanceIndex >= 0) {
+      notify(`第 ${advanceIndex + 1} 项已开启个人垫付，请填写成本`, true);
+      return;
+    }
+    const hasAdvance = validProducts.some((item) => item.advance);
+    const wasEditing = Boolean(editingOrderId);
     busy = true;
     try {
       const payload = { customer_id: customerId, project_id: projectId, order_date: orderDate, delivery_date: deliveryDate, order_source: orderSource, designer, designer_uid: designerUid, planner, planner_uid: plannerUid, execution_company: executionCompany, payment_status: paymentStatus, status, created_by: createdBy.trim() || creatorName || "未填写", note, products: validProducts, costs: validCosts, idempotency_key: editingOrderId ? "" : (submissionKey ||= crypto.randomUUID()) };
@@ -1218,7 +1225,9 @@ export function createOrderDesk(data: Data) {
         }
       }
       replaceState(appPath("/orders"), {});
-      notify(editingOrderId ? "订单已更新" : "订单已保存");
+      notify(wasEditing
+        ? hasAdvance ? "订单已更新，个人垫付已同步到报销流程" : "订单已更新"
+        : hasAdvance ? "订单已保存，个人垫付已进入报销流程" : "订单已保存");
       view = "overview";
       editingOrderId = "";
       submissionKey = crypto.randomUUID();
@@ -1487,20 +1496,28 @@ export function createOrderDesk(data: Data) {
   // 固定厂商成本已并入产品明细：按同名把历史成本挂到产品行，无法对应的成本保留为仅含成本的明细行，避免编辑时丢失。
   function mergeCostsIntoProducts(productList: any[], costList: any[]): any[] {
     const pending = (costList || []).map((item) => ({ ...item }));
+    // 成本以行合计展示；用合计/数量反算单价，避免两位小数单价导致行合计回显偏差。
+    const costUnitOf = (cost: any, fallback: unknown) => {
+      const subtotal = Number(cost?.subtotal);
+      const quantity = Number(cost?.quantity);
+      if (Number.isFinite(subtotal) && subtotal > 0 && Number.isFinite(quantity) && quantity > 0) return subtotal / quantity;
+      return cost?.unit_price ?? cost?.cost_unit ?? fallback ?? 0;
+    };
     const merged = (productList || []).map((product) => {
       const name = String(product.name || "").trim().toLowerCase();
       const index = name ? pending.findIndex((cost) => String(cost.name || "").trim().toLowerCase() === name) : -1;
-      const base = { vendor: "", cost_unit: 0, ...product };
+      const base = { vendor: "", cost_unit: 0, line_id: crypto.randomUUID(), advance: false, ...product };
       if (index < 0) return base;
       const [cost] = pending.splice(index, 1);
-      return { ...base, vendor: cost.vendor || "", cost_unit: cost.unit_price ?? cost.cost_unit ?? base.cost_unit, cost_catalog_id: cost.catalog_id };
+      return { ...base, vendor: cost.vendor || "", cost_unit: costUnitOf(cost, base.cost_unit), cost_catalog_id: cost.catalog_id };
     });
     for (const cost of pending) {
-      merged.push({ name: cost.name, unit: cost.unit || "项", quantity: cost.quantity ?? 1, unit_price: 0, cost_unit: cost.unit_price ?? cost.cost_unit ?? 0, vendor: cost.vendor || "", specification: "", remark: "", cost_catalog_id: cost.catalog_id });
+      merged.push({ name: cost.name, unit: cost.unit || "项", quantity: cost.quantity ?? 1, unit_price: 0, cost_unit: costUnitOf(cost, 0), vendor: cost.vendor || "", specification: "", remark: "", cost_catalog_id: cost.catalog_id, line_id: crypto.randomUUID(), advance: false });
     }
     return merged;
   }
-  function addProduct() { products = [...products, { name: "", quantity: 1, unit: "项", unit_price: 0, cost_unit: 0, vendor: "", subtotal: 0, specification: "", remark: "" }]; orderFormDirty = true; }
+  function newProductRow() { return { name: "", quantity: 1, unit: "项", unit_price: 0, cost_unit: 0, vendor: "", subtotal: 0, specification: "", remark: "", line_id: crypto.randomUUID(), advance: false }; }
+  function addProduct() { products = [...products, newProductRow()]; orderFormDirty = true; }
   function removeProduct(index: number) { products = products.filter((_, i) => i !== index); orderFormDirty = true; }
   function updateProduct(index: number, key: string, value: unknown) {
     const product = products[index];
@@ -1515,6 +1532,19 @@ export function createOrderDesk(data: Data) {
     } else {
       products[index] = { ...product, [key]: value };
     }
+    products = [...products];
+    orderFormDirty = true;
+  }
+  // 界面按 02「下单明细」展示成本合计；内部仍以成本单价保存，便于同名成本库匹配。
+  function updateProductCost(index: number, value: unknown) {
+    const product = products[index];
+    if (!product) return;
+    const total = Number(value);
+    const quantity = Number(product.quantity);
+    const costUnit = Number.isFinite(total) && total >= 0 ? (Number.isFinite(quantity) && quantity > 0 ? total / quantity : total) : 0;
+    let formatted = costUnit.toFixed(4);
+    if (formatted.includes(".")) formatted = formatted.replace(/0+$/, "").replace(/\.$/, "");
+    products[index] = { ...product, cost_unit: formatted, cost_manual: true };
     products = [...products];
     orderFormDirty = true;
   }
@@ -1597,7 +1627,7 @@ export function createOrderDesk(data: Data) {
     createdBy = creatorName;
     note = "";
     noteFiles = [];
-    products = [{ name: "", quantity: 1, unit: "项", unit_price: 0, cost_unit: 0, vendor: "", subtotal: 0, specification: "", remark: "" }];
+    products = [newProductRow()];
     view = "entry";
     orderFormDirty = false;
   }
@@ -2143,6 +2173,7 @@ export function createOrderDesk(data: Data) {
   desk.addProduct = addProduct;
   desk.removeProduct = removeProduct;
   desk.updateProduct = updateProduct;
+  desk.updateProductCost = updateProductCost;
   desk.applyProductCatalog = applyProductCatalog;
   desk.matchProductCatalog = matchProductCatalog;
   desk.markOrderDirty = markOrderDirty;

@@ -14,6 +14,9 @@ export const PATCH: RequestHandler = async (event) => {
     const isParticipant = existing.created_by_uid === identity.uid || existing.designer_uid === identity.uid || existing.planner_uid === identity.uid;
     if (!canManage && !isParticipant) throw new Error('FORBIDDEN');
     if (!existing.created_by_uid) throw new Error('ORDER_CREATOR_UID_MISSING');
+    // 个人垫付的报销归属当前操作人，由服务端写入可信身份。
+    data.advance_employee = identity.displayName;
+    data.advance_employee_uid = identity.uid;
     // 参与者只能编辑订单内容，不能自行改动结款状态（由管理身份控制）。
     if (!canManage) data.payment_status = existing.payment_status;
     // 在写订单前先校验员工 UID，避免订单已提交后 setOrderEmployees 再抛错导致部分写入。

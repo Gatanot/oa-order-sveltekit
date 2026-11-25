@@ -64,6 +64,21 @@ styles. `AppInteractions.svelte` supplies tooltips and dialog focus management.
 - Narrow screens wrap filters and statistics; wide business tables scroll within
   their own containers.
 
+## Order Entry Refinements
+
+- Product entry follows the purchasing worksheet (`下单明细`) column order:
+  product name, specification and technical requirements, quantity, unit, unit
+  price, subtotal, supplier and cost. Product-name matching against quotation
+  and cost libraries is unchanged.
+- Cost is edited as the line total and converted back to a unit cost for storage,
+  so the displayed value matches the worksheet while name-based cost matching
+  still works. Order detail merges product and cost lines into the same column
+  order and marks paid-advance lines.
+- Each line has a `个人垫付` switch. When enabled, saving the order creates a
+  reimbursement for the current operator for that line's cost, linked to the
+  order line. Editing the order keeps pending reimbursements in sync, and
+  unticking the switch removes only reimbursements that have not entered review.
+
 ## Local Preview
 
 Start with `OA_TEST_AUTH_BYPASS=1`, `DATABASE_PATH=./data/preview-demo.db`,

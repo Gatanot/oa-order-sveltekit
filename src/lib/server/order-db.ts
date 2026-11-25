@@ -367,7 +367,8 @@ export function getOrderDb() {
             voucher_created_at TEXT, voucher_archived_at TEXT, created_at TEXT NOT NULL, employee_uid INTEGER,
             FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE
           );
-          INSERT INTO reimbursements_next SELECT * FROM reimbursements_simple;
+          INSERT INTO reimbursements_next(id,employee,item,amount,advance_date,order_id,invoice,note,status,reject_reason,reviewed_by,reviewed_at,reimbursed_by,reimbursed_at,voucher_no,voucher_created_at,voucher_archived_at,created_at,employee_uid)
+            SELECT id,employee,item,amount,advance_date,order_id,invoice,note,status,reject_reason,reviewed_by,reviewed_at,reimbursed_by,reimbursed_at,voucher_no,voucher_created_at,voucher_archived_at,created_at,employee_uid FROM reimbursements_simple;
           DROP TABLE reimbursements_simple;
           ALTER TABLE reimbursements_next RENAME TO reimbursements_simple;
           CREATE INDEX idx_simple_reimbursements_date ON reimbursements_simple(advance_date DESC);
@@ -617,6 +618,17 @@ export function getOrderDb() {
       const v30Violations = instance.pragma('foreign_key_check') as Array<Record<string, unknown>>;
       if (v30Violations.length) throw new Error(`v30 迁移后存在 ${v30Violations.length} 条外键异常`);
     }
+    // v31：个人垫付按订单行自动生成报销，记录来源行以避免重复创建。
+    if (appVersion < 31) {
+      instance.transaction(() => {
+        const reimbursementColumns = new Set((instance!.pragma('table_info(reimbursements_simple)') as Array<{ name: string }>).map((column) => column.name));
+        if (!reimbursementColumns.has('source_line_id')) instance!.exec("ALTER TABLE reimbursements_simple ADD COLUMN source_line_id TEXT NOT NULL DEFAULT ''");
+        instance!.exec(`
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_reimbursements_source_line ON reimbursements_simple(order_id,source_line_id) WHERE source_line_id <> '';
+          UPDATE schema_meta SET value='31' WHERE key='order_app_version';
+        `);
+      })();
+    }
     importBundledExcel(instance);
   }
   return instance;
@@ -832,23 +844,96 @@ function resolveEmployeeUidByName(db: Database.Database, name: string): number |
   return matches.length === 1 ? matches[0].catsco_uid : null;
 }
 
-function syncNormalizedOrderLines(db: Database.Database, orderId: string, products: Array<Record<string, unknown>>, costs: Array<Record<string, unknown>>) {
+function syncNormalizedOrderLines(db: Database.Database, orderId: string, products: Array<Record<string, unknown>>, costs: Array<Record<string, unknown>>): string[] {
+  // 保留订单内已有行的 id：个人垫付报销用行 id 关联，编辑订单时不能因为重写明细而丢失关联。
+  const existingLineIds = new Set((db.prepare('SELECT id FROM order_products WHERE order_id=?').all(orderId) as Array<{ id: string }>).map((row) => row.id));
+  const usedLineIds = new Set<string>();
+  const lineIds = products.map((item) => {
+    const requested = text(item.line_id);
+    const lineId = requested && existingLineIds.has(requested) && !usedLineIds.has(requested) ? requested : uuid();
+    usedLineIds.add(lineId);
+    return lineId;
+  });
   db.prepare('DELETE FROM order_products WHERE order_id=?').run(orderId);
   db.prepare('DELETE FROM order_costs WHERE order_id=?').run(orderId);
   const productInsert = db.prepare('INSERT INTO order_products(id,order_id,position,catalog_item_id,name,specification,remark,unit,quantity,unit_price,subtotal) VALUES(?,?,?,?,?,?,?,?,?,?,?)');
   const costInsert = db.prepare('INSERT INTO order_costs(id,order_id,position,catalog_item_id,name,vendor,unit,quantity,unit_price,subtotal) VALUES(?,?,?,?,?,?,?,?,?,?)');
-  products.forEach((item, index) => productInsert.run(uuid(), orderId, index, text(item.catalog_id) || null, text(item.name), text(item.specification), text(item.remark), text(item.unit) || '项', Number(item.quantity || 1), optionalMoneyToCents(item.unit_price), moneyToCents(lineTotalYuan(item))));
-  costs.forEach((item, index) => costInsert.run(uuid(), orderId, index, text(item.catalog_id) || null, text(item.name), text(item.vendor), text(item.unit) || '项', Number(item.quantity || 1), optionalMoneyToCents(item.unit_price), moneyToCents(lineTotalYuan(item))));
+  products.forEach((item, index) => productInsert.run(lineIds[index], orderId, index, text(item.catalog_id) || null, text(item.name), text(item.specification), text(item.remark), text(item.unit) || '项', Number(item.quantity || 1), optionalMoneyToCents(item.unit_price), moneyToCents(lineTotalYuan(item))));
+  // 成本单价允许由行成本合计反算（可能超过两位小数），入库时四舍五入到分，行小计仍按合计金额保存。
+  costs.forEach((item, index) => costInsert.run(uuid(), orderId, index, text(item.catalog_id) || null, text(item.name), text(item.vendor), text(item.unit) || '项', Number(item.quantity || 1), Math.round(Number(item.unit_price || 0) * 100), moneyToCents(lineTotalYuan(item))));
+  return lineIds;
+}
+
+type AdvanceActor = { name: string; uid: number | null };
+
+/** 个人垫付的报销金额取该行成本合计（数量 × 成本单价）。 */
+function advanceLineAmount(item: Record<string, unknown>): number {
+  const quantity = Number(item.quantity);
+  const costUnit = Number(item.cost_unit);
+  if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(costUnit) || costUnit < 0) return 0;
+  return Math.round(quantity * costUnit * 100);
+}
+
+function advanceItemName(item: Record<string, unknown>): string {
+  const name = text(item.name) || '订单产品';
+  const specification = text(item.specification).replace(/\s+/g, ' ').trim();
+  return (specification ? `${name}（${specification}）` : name).slice(0, 200);
+}
+
+/**
+ * 个人垫付：保存订单时按行同步报销记录。
+ * 待审核记录会跟随订单成本变化；取消垫付或删除行时只清理尚未进入审核流程的记录，
+ * 已审核/已付款的记录保留，避免影响财务流程。
+ */
+function syncOrderAdvanceReimbursements(
+  db: Database.Database,
+  order: { id: string; code: string; order_date: string },
+  products: Array<Record<string, unknown>>,
+  lineIds: string[],
+  actor: AdvanceActor
+) {
+  const existing = db.prepare("SELECT id,source_line_id,status FROM reimbursements_simple WHERE order_id=? AND source_line_id<>''").all(order.id) as Array<{ id: string; source_line_id: string; status: string }>;
+  const byLine = new Map(existing.map((row) => [row.source_line_id, row]));
+  const kept = new Set<string>();
+  products.forEach((product, index) => {
+    const lineId = lineIds[index];
+    if (!lineId || !product.advance) return;
+    const amount = advanceLineAmount(product);
+    if (amount <= 0) throw new Error(`第 ${index + 1} 项已开启个人垫付，请填写成本`);
+    const item = advanceItemName(product);
+    const note = `订单 ${order.code} 个人垫付自动生成`;
+    const row = byLine.get(lineId);
+    if (!row) {
+      if (!actor.name) throw new Error('个人垫付需要当前录入人身份');
+      const id = uuid();
+      db.prepare('INSERT INTO reimbursements_simple(id,employee,item,amount,advance_date,order_id,invoice,note,created_at,employee_uid,source_line_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+        .run(id, actor.name, item, amount, order.order_date, order.id, '', note, now(), actor.uid, lineId);
+      recordAudit(db, { actorName: actor.name, actorUid: actor.uid, action: 'create_advance', entityType: 'reimbursement', entityId: id, detail: { order_id: order.id, order_code: order.code, amount } });
+    } else if (['pending_review', 'rejected'].includes(row.status)) {
+      // 尚未进入多级审核前，金额跟随订单成本变化。
+      db.prepare('UPDATE reimbursements_simple SET amount=?,item=?,advance_date=?,note=? WHERE id=?')
+        .run(amount, item, order.order_date, note, row.id);
+    }
+    kept.add(lineId);
+  });
+  for (const row of existing) {
+    if (kept.has(row.source_line_id)) continue;
+    if (!['pending_review', 'rejected'].includes(row.status)) continue;
+    const files = db.prepare('SELECT storage_path FROM reimbursement_attachments WHERE reimbursement_id=?').all(row.id) as Array<{ storage_path: string }>;
+    db.prepare('DELETE FROM reimbursements_simple WHERE id=?').run(row.id);
+    for (const file of files) removeAttachmentFile(file.storage_path);
+    recordAudit(db, { actorName: actor.name, actorUid: actor.uid, action: 'delete_advance', entityType: 'reimbursement', entityId: row.id, detail: { order_id: order.id, order_code: order.code } });
+  }
 }
 
 function hydrateOrder(row: Record<string, unknown>): Record<string, any> {
   const db = getOrderDb();
-  const normalizedProducts = db.prepare(`SELECT op.catalog_item_id AS catalog_id,op.name,op.specification,op.remark,op.unit,op.quantity,op.unit_price / 100.0 AS unit_price,op.subtotal / 100.0 AS subtotal,qi.category
+  const normalizedProducts = db.prepare(`SELECT op.id AS line_id,op.catalog_item_id AS catalog_id,op.name,op.specification,op.remark,op.unit,op.quantity,op.unit_price / 100.0 AS unit_price,op.subtotal / 100.0 AS subtotal,qi.category
     FROM order_products op LEFT JOIN catalog_quote_items qi ON qi.id=op.catalog_item_id WHERE op.order_id=? ORDER BY op.position`).all(row.id) as Array<Record<string, unknown>>;
   const normalizedCosts = db.prepare('SELECT catalog_item_id AS catalog_id,name,vendor,unit,quantity,unit_price / 100.0 AS unit_price,subtotal / 100.0 AS subtotal FROM order_costs WHERE order_id=? ORDER BY position').all(row.id) as Array<Record<string, unknown>>;
   const products = normalizedProducts.length ? normalizedProducts : parseList(row.products_json);
   const costs = normalizedCosts.length ? normalizedCosts : parseList(row.costs_json);
-  const advances = (db.prepare(`SELECT r.id,r.employee,r.item,r.amount / 100.0 AS amount,r.advance_date AS date,r.invoice,r.note,r.status,
+  const advances = (db.prepare(`SELECT r.id,r.employee,r.item,r.amount / 100.0 AS amount,r.advance_date AS date,r.invoice,r.note,r.status,r.source_line_id,
     (SELECT ra.id FROM reimbursement_attachments ra WHERE ra.reimbursement_id=r.id ORDER BY ra.created_at DESC LIMIT 1) AS attachment_id,
     (SELECT COUNT(*) FROM reimbursement_attachments ra WHERE ra.reimbursement_id=r.id) AS attachment_count
     FROM reimbursements_simple r WHERE r.order_id=? ORDER BY r.advance_date,r.id`).all(row.id) as Array<Record<string, unknown>>).map((item) => ({ ...item, status: reimbursementStatusLabel(item.status) }));
@@ -866,12 +951,15 @@ function hydrateOrder(row: Record<string, unknown>): Record<string, any> {
     const value = Number(uid);
     return (Number.isSafeInteger(value) ? employeeNames.get(value) : '') || text(fallback);
   };
+  // 订单行是否处于个人垫付以自动报销记录为准，刷新/再次编辑时仍能正确回显开关。
+  const advanceLineIds = new Set(advances.map((item) => text((item as Record<string, unknown>).source_line_id)).filter(Boolean));
+  const hydratedProducts = products.map((item) => ({ ...item, advance: advanceLineIds.has(text(item.line_id)) }));
   return {
     ...row,
     created_by: displayName(row.created_by_uid, row.created_by),
     designer: displayName(row.designer_uid, row.designer),
     planner: displayName(row.planner_uid, row.planner),
-    status: normalizeOrderStatus(row.status), products, costs, advances,
+    status: normalizeOrderStatus(row.status), products: hydratedProducts, costs, advances,
     reimbursement_status: reimbursementStatusFor(advances)
   };
 }
@@ -1406,6 +1494,14 @@ export function createOrder(data: Record<string, unknown>) {
     if (!Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0) throw new Error('产品和成本数量必须大于 0');
     if (!Number.isFinite(Number(item.unit_price)) || Number(item.unit_price) < 0) throw new Error('产品和成本单价不能为负数');
   }
+  for (const [index, item] of products.entries()) {
+    if (item.advance && advanceLineAmount(item) <= 0) throw new Error(`第 ${index + 1} 项已开启个人垫付，请填写成本`);
+  }
+  // 个人垫付报销归属当前录入人；UID 仅接受可信身份传入的值。
+  const advanceActor: AdvanceActor = {
+    name: text(data.advance_employee) || text(data.created_by) || '填写人',
+    uid: Number.isSafeInteger(Number(data.advance_employee_uid)) && Number(data.advance_employee_uid) > 0 ? Number(data.advance_employee_uid) : null
+  };
   const primary = products[0] || costs[0];
   const serviceName = String(data.service_name || products.map((item) => text(item.name)).filter(Boolean).join('、') || costs.map((item) => text(item.name)).filter(Boolean).join('、') || primary.name || '订单').trim();
   if (!serviceName) throw new Error('请填写订单内容');
@@ -1419,7 +1515,8 @@ export function createOrder(data: Record<string, unknown>) {
   const costCents = costs.length ? costs.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0) : optionalMoneyToCents(data.cost_amount);
   db.transaction(() => {
     db.prepare('INSERT INTO orders_simple(id,code,customer_id,project_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,created_by,status,note,created_at,specification,is_extra,delivery_date,order_source,designer,planner,payment_status,products_json,costs_json,idempotency_key,execution_company) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id, code, customerId, projectId, serviceName, quantity, String(data.unit || products[0]?.unit || '项'), quoteCents, costCents, date, String(data.created_by || '填写人'), normalizeOrderStatus(data.status), String(data.note || '').trim(), created, text(data.specification || products[0]?.specification), data.is_extra ? 1 : 0, deliveryDate, orderSource, designer, planner, text(data.payment_status) || '未结款', JSON.stringify(products), JSON.stringify(costs), idempotencyKey, executionCompany);
-    syncNormalizedOrderLines(db, id, products, costs);
+    const lineIds = syncNormalizedOrderLines(db, id, products, costs);
+    syncOrderAdvanceReimbursements(db, { id, code, order_date: date }, products, lineIds, advanceActor);
   })();
   return hydrateOrder(db.prepare('SELECT * FROM orders_simple WHERE id=?').get(id) as Record<string, unknown>);
 }
@@ -1428,8 +1525,10 @@ export function updateOrder(id: string, data: Record<string, unknown>) {
   const db = getOrderDb();
   const existing = db.prepare('SELECT * FROM orders_simple WHERE id=?').get(id) as Record<string, unknown> | undefined;
   if (!existing) throw new Error('ORDER_NOT_FOUND');
-  const products = sanitizeLines(Array.isArray(data.products) ? data.products as Array<Record<string, unknown>> : parseList(existing.products_json), 'name');
-  const costs = sanitizeLines(Array.isArray(data.costs) ? data.costs as Array<Record<string, unknown>> : parseList(existing.costs_json), 'name');
+  const existingProducts = db.prepare('SELECT id AS line_id,catalog_item_id AS catalog_id,name,specification,remark,unit,quantity,unit_price / 100.0 AS unit_price,subtotal / 100.0 AS subtotal FROM order_products WHERE order_id=? ORDER BY position').all(id) as Array<Record<string, unknown>>;
+  const existingCosts = db.prepare('SELECT catalog_item_id AS catalog_id,name,vendor,unit,quantity,unit_price / 100.0 AS unit_price,subtotal / 100.0 AS subtotal FROM order_costs WHERE order_id=? ORDER BY position').all(id) as Array<Record<string, unknown>>;
+  const products = sanitizeLines(Array.isArray(data.products) ? data.products as Array<Record<string, unknown>> : existingProducts.length ? existingProducts : parseList(existing.products_json), 'name');
+  const costs = sanitizeLines(Array.isArray(data.costs) ? data.costs as Array<Record<string, unknown>> : existingCosts.length ? existingCosts : parseList(existing.costs_json), 'name');
   if (!products.length) throw new Error('请至少保留一项产品');
   const deliveryDate = text(data.delivery_date);
   const designer = text(data.designer);
@@ -1439,6 +1538,13 @@ export function updateOrder(id: string, data: Record<string, unknown>) {
     if (!Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0) throw new Error('产品和成本数量必须大于 0');
     if (!Number.isFinite(Number(item.unit_price)) || Number(item.unit_price) < 0) throw new Error('产品和成本单价不能为负数');
   }
+  for (const [index, item] of products.entries()) {
+    if (item.advance && advanceLineAmount(item) <= 0) throw new Error(`第 ${index + 1} 项已开启个人垫付，请填写成本`);
+  }
+  const advanceActor: AdvanceActor = {
+    name: text(data.advance_employee) || text(data.created_by) || text(existing.created_by),
+    uid: Number.isSafeInteger(Number(data.advance_employee_uid)) && Number(data.advance_employee_uid) > 0 ? Number(data.advance_employee_uid) : null
+  };
   const quote = products.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0);
   const cost = costs.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0);
   const service = products.map((item) => text(item.name)).filter(Boolean).join('、') || text(data.service_name) || String(existing.service_name);
@@ -1454,7 +1560,8 @@ export function updateOrder(id: string, data: Record<string, unknown>) {
   const orderSource = text(data.order_source);
   db.transaction(() => {
     db.prepare(`UPDATE orders_simple SET project_id=?,customer_id=?,service_name=?,quantity=?,unit=?,quote_amount=?,cost_amount=?,order_date=?,delivery_date=?,order_source=?,designer=?,planner=?,execution_company=?,created_by=?,status=?,payment_status=?,note=?,specification=?,products_json=?,costs_json=? WHERE id=?`).run(targetProjectId, targetCustomerId, service, Number(products[0]?.quantity || existing.quantity), text(products[0]?.unit || existing.unit), quote, cost, text(data.order_date || existing.order_date), deliveryDate, orderSource, designer, planner, executionCompany, text(data.created_by || existing.created_by), normalizeOrderStatus(data.status || existing.status), text(data.payment_status || existing.payment_status), text(data.note), text(products[0]?.specification || existing.specification), JSON.stringify(products), JSON.stringify(costs), id);
-    syncNormalizedOrderLines(db, id, products, costs);
+    const lineIds = syncNormalizedOrderLines(db, id, products, costs);
+    syncOrderAdvanceReimbursements(db, { id, code: text(existing.code), order_date: text(data.order_date || existing.order_date) }, products, lineIds, advanceActor);
   })();
   return hydrateOrder(db.prepare(`SELECT o.*,c.name customer_name,p.name project_name,p.owner project_owner FROM orders_simple o JOIN customers_simple c ON c.id=o.customer_id JOIN projects_simple p ON p.id=o.project_id WHERE o.id=?`).get(id) as Record<string, unknown>);
 }

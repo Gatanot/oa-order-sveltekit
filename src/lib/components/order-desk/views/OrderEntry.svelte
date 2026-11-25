@@ -2,7 +2,17 @@
   import { Check, FileText, Library, Paperclip, Plus, Trash2, X } from "lucide-svelte";
   import { getContext } from "svelte";
   const desk = getContext<any>("order-desk");
+  let costDrafts = $state<Record<string, string>>({});
   function productTotal(p: any) { return (Number(p.quantity || 0) * Number(p.unit_price || 0)).toFixed(2); }
+  function productCostTotal(p: any) { return (Number(p.quantity || 0) * Number(p.cost_unit || 0)).toFixed(2); }
+  function costInputValue(p: any) { return costDrafts[p?.line_id] ?? productCostTotal(p); }
+  function beginCostEdit(p: any) { if (p?.line_id) costDrafts[p.line_id] = productCostTotal(p); }
+  function editCost(index: number, p: any, event: Event) {
+    const value = (event.currentTarget as HTMLInputElement).value;
+    if (p?.line_id) costDrafts[p.line_id] = value;
+    desk.updateProductCost(index, value);
+  }
+  function endCostEdit(p: any) { if (p?.line_id) delete costDrafts[p.line_id]; }
   function productMatches(name: string, index: number) {
     const current = desk.products[index];
     if (current?.catalog_id) return [];
@@ -45,10 +55,35 @@
       <label class="compact-field">结款状态<select bind:value={desk.paymentStatus}><option>未结款</option><option>已结款</option></select></label>
     </div>
 
-    <div class="detail-editor"><div class="editor-heading"><h3>产品明细与成本</h3><button type="button" class="outline-action" onclick={desk.addProduct}><Plus size={15}/>添加产品</button></div>
-      {#if desk.products.length}<div class="repeat-header editor-row" aria-hidden="true"><span class="row-index-head">序号</span><div class="repeat-header-fields"><span>产品名称 · 可匹配报价库</span><span>单位</span><span>数量</span><span>销售单价（元）</span><span>成本单价（元）</span><span>供应商 · 同名成本自动匹配</span><span>小计（元）</span><span></span></div></div>{/if}
-      {#each desk.products as product, i}
-        <div class="product-row"><span class="row-index" aria-hidden="true">{i + 1}</span><div class="repeat-row editor-row"><div class="product-name-cell"><div class:catalog-matched={Boolean(product.catalog_id)} class="autocomplete-field"><input value={product.name} oninput={(e) => desk.updateProduct(i, 'name', e.currentTarget.value)} onblur={() => setTimeout(() => desk.matchProductCatalog(i), 120)} placeholder="输入产品名称以匹配报价库" />{#if product.catalog_id}<span class="catalog-match-mark" title="已匹配报价库"><Check size={13} />已匹配</span>{/if}{#if product.name && productMatches(product.name, i).length}<div class="suggestion-menu">{#each productMatches(product.name, i) as item}<button type="button" onmousedown={(event) => event.preventDefault()} onclick={() => desk.applyProductCatalog(i, item.id)}><span>{item.name}</span><small>{item.unit} · ¥{(item.price_incl_tax / 100).toFixed(2)} · {item.category || "报价库"}{item.source_owner || item.customer_name ? ` · ${item.source_owner || item.customer_name}` : ''}</small>{#if item.specification}<small class="suggestion-spec">{item.specification}</small>{/if}</button>{/each}</div>{/if}</div></div><input value={product.unit} oninput={(e) => desk.updateProduct(i, 'unit', e.currentTarget.value)} placeholder="单位" /><input type="number" inputmode="decimal" min="0.01" step="any" value={product.quantity} aria-label={`第 ${i + 1} 项产品数量`} oninput={(e) => desk.updateProduct(i, 'quantity', e.currentTarget.value)} placeholder="数量" /><input type="number" inputmode="decimal" min="0" step="0.01" value={product.unit_price} aria-label={`第 ${i + 1} 项产品销售单价`} oninput={(e) => desk.updateProduct(i, 'unit_price', e.currentTarget.value)} placeholder="销售单价" /><div class="autocomplete-field cost-field"><input type="number" inputmode="decimal" min="0" step="0.01" value={product.cost_unit} aria-label={`第 ${i + 1} 项产品成本单价`} oninput={(e) => desk.updateProduct(i, 'cost_unit', e.currentTarget.value)} placeholder="成本单价" /><button type="button" class="cost-picker-toggle" title="从成本库选择" aria-label={`从成本库选择第 ${i + 1} 项成本`} onclick={(event) => { event.stopPropagation(); desk.toggleCostPicker(i); }}><Library size={13} /></button>{#if desk.costPickerIndex === i}<div class="suggestion-menu cost-suggestion-menu">{#each desk.costOptions(i) as item}<button type="button" onmousedown={(event) => event.preventDefault()} onclick={() => desk.applyCostOption(i, item)}><span>{item.name}</span><small>¥{(item.cost_unit / 100).toFixed(2)} · {item.unit || "项"}{item.category ? ` · ${item.category}` : ""}{item.source_owner || item.customer_name ? ` · ${item.source_owner || item.customer_name}` : ""}</small></button>{:else}<span class="muted cost-empty">成本库暂无可选成本项</span>{/each}</div>{/if}</div><div class="autocomplete-field"><input value={product.vendor || ''} oninput={(e) => desk.updateProduct(i, 'vendor', e.currentTarget.value)} placeholder="供应商（自动匹配）" />{#if product.cost_catalog_id}<span class="catalog-match-mark" title="已匹配成本库"><Check size={13} />已匹配</span>{/if}</div><input readonly aria-label={`第 ${i + 1} 项产品小计`} value={productTotal(product)} placeholder="小计" /><button type="button" class="delete-action" onclick={() => desk.removeProduct(i)} aria-label="删除产品"><Trash2 size={15}/></button><div class="product-note-fields"><textarea class="product-spec-field" value={product.specification || ''} oninput={(e) => desk.updateProduct(i, 'specification', e.currentTarget.value)} placeholder="规格及制作要求（选填）"></textarea><textarea class="product-remark-field" aria-label={`第 ${i + 1} 项行备注`} value={product.remark || ''} oninput={(e) => desk.updateProduct(i, 'remark', e.currentTarget.value)} placeholder="行备注（选填，仅本行，例如：客户指定品牌 / 含安装）"></textarea></div></div></div>
+    <div class="detail-editor"><div class="editor-heading"><h3>下单明细</h3><button type="button" class="outline-action" onclick={desk.addProduct}><Plus size={15}/>添加产品</button></div>
+      {#if desk.products.length}
+        <div class="repeat-header editor-row" aria-hidden="true"><span class="row-index-head">序号</span><div class="repeat-header-fields"><span>产品名称 · 可匹配报价库</span><span>规格和技术要求</span><span>数量</span><span>单位</span><span>单价（元）</span><span>小计（元）</span><span>供应商 · 同名成本自动匹配</span><span>成本（元）</span><span>个人垫付</span><span></span></div></div>
+      {/if}
+      {#each desk.products as product, i (product.line_id || i)}
+        <div class="product-row">
+          <span class="row-index" aria-hidden="true">{i + 1}</span>
+          <div class="repeat-row editor-row">
+            <div class="product-name-cell"><div class:catalog-matched={Boolean(product.catalog_id)} class="autocomplete-field"><input value={product.name} oninput={(e) => desk.updateProduct(i, 'name', e.currentTarget.value)} onblur={() => setTimeout(() => desk.matchProductCatalog(i), 120)} placeholder="输入产品名称以匹配报价库" />{#if product.catalog_id}<span class="catalog-match-mark" title="已匹配报价库"><Check size={13} />已匹配</span>{/if}{#if product.name && productMatches(product.name, i).length}<div class="suggestion-menu">{#each productMatches(product.name, i) as item}<button type="button" onmousedown={(event) => event.preventDefault()} onclick={() => desk.applyProductCatalog(i, item.id)}><span>{item.name}</span><small>{item.unit} · ¥{(item.price_incl_tax / 100).toFixed(2)} · {item.category || "报价库"}{item.source_owner || item.customer_name ? ` · ${item.source_owner || item.customer_name}` : ''}</small>{#if item.specification}<small class="suggestion-spec">{item.specification}</small>{/if}</button>{/each}</div>{/if}</div></div>
+            <div class="product-spec-cell">
+              <textarea class="product-spec-field" aria-label={`第 ${i + 1} 项规格和技术要求`} value={product.specification || ''} oninput={(e) => desk.updateProduct(i, 'specification', e.currentTarget.value)} placeholder="规格和技术要求"></textarea>
+              <textarea class="product-remark-field" aria-label={`第 ${i + 1} 项行备注`} value={product.remark || ''} oninput={(e) => desk.updateProduct(i, 'remark', e.currentTarget.value)} placeholder="行备注（选填，仅内部留痕）"></textarea>
+            </div>
+            <input type="number" inputmode="decimal" min="0.01" step="any" value={product.quantity} aria-label={`第 ${i + 1} 项产品数量`} oninput={(e) => desk.updateProduct(i, 'quantity', e.currentTarget.value)} placeholder="数量" />
+            <input value={product.unit} oninput={(e) => desk.updateProduct(i, 'unit', e.currentTarget.value)} placeholder="单位" />
+            <input type="number" inputmode="decimal" min="0" step="0.01" value={product.unit_price} aria-label={`第 ${i + 1} 项产品单价`} oninput={(e) => desk.updateProduct(i, 'unit_price', e.currentTarget.value)} placeholder="单价" />
+            <input readonly aria-label={`第 ${i + 1} 项产品小计`} value={productTotal(product)} placeholder="小计" />
+            <div class="autocomplete-field"><input value={product.vendor || ''} oninput={(e) => desk.updateProduct(i, 'vendor', e.currentTarget.value)} placeholder="供应商（自动匹配）" />{#if product.cost_catalog_id}<span class="catalog-match-mark" title="已匹配成本库"><Check size={13} />已匹配</span>{/if}</div>
+            <div class="autocomplete-field cost-field"><input type="number" inputmode="decimal" min="0" step="any" value={costInputValue(product)} aria-label={`第 ${i + 1} 项产品成本`} onfocus={() => beginCostEdit(product)} oninput={(e) => editCost(i, product, e)} onblur={() => endCostEdit(product)} placeholder="成本" /><button type="button" class="cost-picker-toggle" title="从成本库选择" aria-label={`从成本库选择第 ${i + 1} 项成本`} onclick={(event) => { event.stopPropagation(); desk.toggleCostPicker(i); }}><Library size={13} /></button>{#if desk.costPickerIndex === i}<div class="suggestion-menu cost-suggestion-menu">{#each desk.costOptions(i) as item}<button type="button" onmousedown={(event) => event.preventDefault()} onclick={() => desk.applyCostOption(i, item)}><span>{item.name}</span><small>¥{(item.cost_unit / 100).toFixed(2)} · {item.unit || "项"}{item.category ? ` · ${item.category}` : ""}{item.source_owner || item.customer_name ? ` · ${item.source_owner || item.customer_name}` : ""}</small></button>{:else}<span class="muted cost-empty">成本库暂无可选成本项</span>{/each}</div>{/if}</div>
+            <div class="advance-cell">
+              <button type="button" role="switch" aria-checked={Boolean(product.advance)} aria-label={`第 ${i + 1} 项个人垫付`} class="advance-switch" class:is-on={Boolean(product.advance)} onclick={() => desk.updateProduct(i, 'advance', !product.advance)}>
+                <span class="advance-track" aria-hidden="true"><span class="advance-thumb"></span></span>
+                <span class="advance-label">个人垫付</span>
+              </button>
+              {#if product.advance}<small class="advance-hint">由{desk.creatorName || '录入人'}垫付</small>{/if}
+            </div>
+            <button type="button" class="delete-action" onclick={() => desk.removeProduct(i)} aria-label="删除产品"><Trash2 size={15}/></button>
+          </div>
+        </div>
       {:else}<p class="empty-table">请添加至少一项产品</p>{/each}
     </div>
     <div class="form-grid"><label class="full">订单备注 / 交付说明<textarea bind:value={desk.note} placeholder="整单级说明：交付口径、来源或其他需要留痕的信息；单行说明请填上方的行备注"></textarea></label>
@@ -63,6 +98,6 @@
         {/if}
       </div>
     </div>
-    <div class="form-footer"><span>至少添加一项产品；填写产品名称会自动匹配同名的报价和成本项；未选择项目时自动归入该客户的非分配项目。</span><div class="submit-dropdown"><button class="primary-action" disabled={desk.busy || desk.uploadingFiles || !desk.customerId}>{desk.busy || desk.uploadingFiles ? "保存中..." : "保存订单"}</button></div></div>
+    <div class="form-footer"><span>至少添加一项产品；填写产品名称会自动匹配同名的报价和成本项；勾选个人垫付的产品，订单保存后会按成本自动生成当前录入人的报销记录。</span><div class="submit-dropdown"><button class="primary-action" disabled={desk.busy || desk.uploadingFiles || !desk.customerId}>{desk.busy || desk.uploadingFiles ? "保存中..." : "保存订单"}</button></div></div>
   </form>
 </section>
