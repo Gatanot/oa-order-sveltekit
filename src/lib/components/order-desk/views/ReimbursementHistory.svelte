@@ -8,6 +8,14 @@
   let detailItem = $state<any>(null);
   let attachmentsByOrder = $state<Record<string, Array<any>>>({});
   let peopleExpanded = $state(false);
+  function approvalActionLabel(action: string) {
+    return ({ approved: '审核通过', rejected: '打回', executed: '确认执行', resubmitted: '重新提交', submitted: '提交报销' } as Record<string, string>)[action] || action;
+  }
+  function approvalLayerLabel(layer: number) {
+    if (layer === 0) return '提交';
+    if (layer >= 4) return '执行';
+    return `${layer}级审核`;
+  }
   const filterFields = $derived([
     { key: 'historySearch', label: '搜索', type: 'search' as const, value: desk.historySearch, placeholder: '单据 / 订单 / 物品 / 报销人' },
     { key: 'historyProject', label: '项目', value: desk.historyProject, options: [{ value: '', label: '全部项目' }, ...desk.projects.map((item: any) => ({ value: item.id, label: item.name }))] },
@@ -121,7 +129,7 @@
       <div class="export-drawer reimbursement-detail" role="dialog" aria-modal="true" aria-labelledby="history-detail-title">
         <div class="drawer-head"><div><p class="section-kicker">报销单据</p><h2 id="history-detail-title">{detailItem.voucher_no || "报销单据"}</h2><span>{detailItem.source_type || "订单报销"} · {detailItem.reimbursement_status}</span></div><button class="icon-control" aria-label="关闭报销单据" onclick={() => detailItem = null}><X size={18} /></button></div>
         <div class="drawer-body">
-          <ol class="reimbursement-progress" aria-label="报销进度">{#each ["提交报销", "管理人审核", "财务复核", "老板确认", "财务执行"] as step, index}<li class="completed"><span>{index + 1}</span>{step}</li>{/each}</ol>
+          <ol class="reimbursement-progress" aria-label="报销进度">{#each ["提交报销", "一级审核", "二级审核", "三级审核", "财务执行"] as step, index}<li class="completed"><span>{index + 1}</span>{step}</li>{/each}</ol>
           <div class="voucher-grid">
             <div><small>单据编号</small><b>{detailItem.voucher_no || "—"}</b></div>
             <div><small>报销人</small><b>{detailItem.employee}</b></div>
@@ -133,6 +141,7 @@
             <div><small>客户 / 项目</small><b>{detailItem.customer_name ? `${detailItem.customer_name} · ` : ""}{detailItem.project_name || "内务报销"}</b></div>
             <div class="voucher-full"><small>发票附件</small>{#if detailItem.attachment_count}<button class="link-action voucher-attachment-button" type="button" onclick={() => showAttachments(detailItem)}>{detailItem.invoice || "查看附件"} · {detailItem.attachment_count} 个</button>{:else}<b>{detailItem.invoice || "未上传"}</b>{/if}{#if attachmentsByOrder[detailItem.id]?.length}<ul class="voucher-attachments">{#each attachmentsByOrder[detailItem.id] as file}<li><button class="attachment-link" type="button" onclick={() => desk.openAttachmentPreview(desk.reimbursementAttachmentUrl(file.id), file.file_name, file.mime_type)}><Paperclip size={13}/><span>{file.file_name}</span><small>{desk.formatFileSize(file.file_size)}</small></button></li>{/each}</ul>{/if}</div>
             <div class="voucher-full"><small>备注</small><b>{detailItem.note || "—"}</b></div>
+            {#if detailItem.approval_history?.length}<div class="voucher-full approval-history"><small>审批记录</small><ul>{#each detailItem.approval_history as record}<li><b>{approvalLayerLabel(record.layer)}</b><span>{record.approver_name || "系统"} · {approvalActionLabel(record.action)}</span><small>{record.created_at.slice(0, 19).replace("T", " ")}{record.comment ? ` · ${record.comment}` : ""}</small></li>{/each}</ul></div>{/if}
           </div>
         </div>
       </div>

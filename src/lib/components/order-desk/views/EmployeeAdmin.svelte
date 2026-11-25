@@ -17,6 +17,13 @@
     canManage?: boolean;
   };
   type EmployeeDraft = { display_name: string; department: string; role: string; active: boolean };
+  type ApproverUser = { employee_uid: number; display_name: string; username: string; role: string };
+  type DepartmentApproverConfig = {
+    departments: string[];
+    layers: Array<{ layer: number; status: string; defaultRoles: string[] }>;
+    approvers: Record<string, Record<string, ApproverUser[]>>;
+  };
+  type ApproverLayerDraft = { '1': number[]; '2': number[]; '3': number[] };
   type ExecutionCompany = { id: string; name: string; sort_order?: number; created_at?: string; updated_at?: string };
   type RoleMeta = { label: string; summary: string; permissions: string[] };
 
@@ -93,6 +100,11 @@
   let employeeError = $state('');
   let employeeSuccess = $state('');
   let loadingEmployees = $state(Boolean(desk.canManageEmployees));
+  let approverConfig = $state<DepartmentApproverConfig | null>(null);
+  let approverDraft = $state<Record<string, ApproverLayerDraft>>({});
+  let approverSaving = $state('');
+  let approverError = $state('');
+  let approverSuccess = $state('');
   let savingEmployee = $state(false);
   let creatingEmployee = $state(false);
   let editingUid = $state<number | null>(null);
@@ -116,6 +128,10 @@
   ).map((employee) => employee.catsco_uid)));
   const visibleEmployees = $derived(employees.filter((employee) => matchingEmployeeIds.has(employee.catsco_uid)));
   const hasActiveFilters = $derived(filters.search !== '' || filters.department !== '' || filters.role !== '' || filters.active !== '');
+  // 审核人候选取启用中的正式员工；任意部门员工都可以被配置为其他部门的审核人。
+  const approverCandidates = $derived(employees
+    .filter((employee) => Boolean(employee.active) && employee.role !== 'pending')
+    .sort((a, b) => a.department.localeCompare(b.department, 'zh-CN') || a.display_name.localeCompare(b.display_name, 'zh-CN')));
 
   // 当前操作者可授予的身份；管理人员不能授予管理、财务或老板身份。
   const assignableRoles = $derived.by(() => {
@@ -180,6 +196,70 @@
     } finally {
       loadingEmployees = false;
     }
+  }
+
+  // ── 报销三级审批设置 ──────────────────────────────────────────
+  function emptyLayerDraft(): ApproverLayerDraft {
+    return { '1': [], '2': [], '3': [] };
+  }
+  function applyApproverConfig(config: DepartmentApproverConfig) {
+    approverConfig = config;
+    const draft: Record<string, ApproverLayerDraft> = {};
+    for (const department of config.departments) {
+      const layerDraft = emptyLayerDraft();
+      for (const layer of ['1', '2', '3'] as const) {
+        layerDraft[layer] = (config.approvers?.[department]?.[layer] || []).map((approver) => Number(approver.employee_uid));
+      }
+      draft[department] = layerDraft;
+    }
+    approverDraft = draft;
+  }
+  async function loadApproverConfig() {
+    try {
+      const result = await api.get<{ data: DepartmentApproverConfig }>('/api/department-approvers');
+      applyApproverConfig(result.data);
+    } catch (reason) {
+      approverError = reason instanceof Error ? reason.message : '审批设置加载失败';
+    }
+  }
+  function approverIds(department: string, layer: 1 | 2 | 3) {
+    return approverDraft[department]?.[String(layer) as '1' | '2' | '3'] || [];
+  }
+  function toggleApprover(department: string, layer: 1 | 2 | 3, uid: number, checked: boolean) {
+    const current = approverIds(department, layer);
+    const next = checked ? [...new Set([...current, uid])] : current.filter((value) => value !== uid);
+    approverDraft = {
+      ...approverDraft,
+      [department]: {
+        ...(approverDraft[department] || emptyLayerDraft()),
+        [layer]: next
+      }
+    };
+    approverError = '';
+    approverSuccess = '';
+  }
+  async function saveDepartmentApprovers(department: string) {
+    if (approverSaving) return;
+    approverSaving = department;
+    approverError = '';
+    approverSuccess = '';
+    try {
+      const result = await api.patch<{ data: DepartmentApproverConfig }>('/api/department-approvers', {
+        department,
+        layers: approverDraft[department] || emptyLayerDraft()
+      });
+      applyApproverConfig(result.data);
+      approverSuccess = `已保存${department}的三级审批设置`;
+    } catch (reason) {
+      approverError = reason instanceof Error ? reason.message : '审批设置保存失败';
+    } finally {
+      approverSaving = '';
+    }
+  }
+  function defaultApproverHint(layer: 1 | 2 | 3) {
+    const roles = approverConfig?.layers.find((item) => item.layer === layer)?.defaultRoles || [];
+    if (!roles.length) return '未配置时使用默认角色';
+    return `未配置时按角色兜底：${roles.map((role) => roleLabel(role)).join('、')}`;
   }
   function clearFilters() {
     filters = { search: '', department: '', role: '', active: '' };
@@ -417,7 +497,10 @@
   }
 
   onMount(async () => {
-    if (canManageEmployees) await loadEmployees();
+    if (canManageEmployees) {
+      await loadEmployees();
+      await loadApproverConfig();
+    }
     if (canManageExecutionCompanies) await loadExecutionCompanies();
   });
 </script>
@@ -567,6 +650,62 @@
                   <div class="empty-table">
                     {loadingEmployees ? '加载中...' : employees.length ? '没有符合筛选条件的员工。' : employeeError ? '员工列表加载失败。' : '暂无员工。'}
                     {#if !loadingEmployees && hasActiveFilters}<button class="outline-action" type="button" onclick={clearFilters}>清空筛选</button>{/if}
+                  </div>
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="employee-admin approver-admin">
+      <div class="table-tools workbench-table-tools">
+        <div class="order-table-heading"><h3>报销三级审批设置</h3><span class="filter-result">按报销人所属部门匹配</span></div>
+      </div>
+      <p class="field-hint">每一级可配置多名审核人，其中任一人处理即可；审核人不能审核本人提交的报销。未配置的部门继续按默认角色兜底。</p>
+      {#if approverError}<p class="employee-error" role="alert">{approverError}</p>{/if}
+      {#if approverSuccess}<p class="employee-success" role="status">{approverSuccess}</p>{/if}
+      <div class="employee-table-wrap approver-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>部门</th>
+              <th>一级审核者<small class="employee-role-summary">{defaultApproverHint(1)}</small></th>
+              <th>二级审核者<small class="employee-role-summary">{defaultApproverHint(2)}</small></th>
+              <th>三级审核者<small class="employee-role-summary">{defaultApproverHint(3)}</small></th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each departments as department}
+              <tr>
+                <td><b>{department}</b></td>
+                {#each [1, 2, 3] as layer}
+                  <td>
+                    <div class="approver-cell">
+                      {#each approverCandidates as employee}
+                        <label class="approver-option">
+                          <input
+                            type="checkbox"
+                            checked={approverIds(department, layer as 1 | 2 | 3).includes(employee.catsco_uid)}
+                            disabled={approverSaving === department}
+                            onchange={(event) => toggleApprover(department, layer as 1 | 2 | 3, employee.catsco_uid, event.currentTarget.checked)}
+                          />
+                          <span>{employee.display_name || employee.username}</span>
+                          <small>{employee.department || '未设部门'}</small>
+                        </label>
+                      {:else}
+                        <span class="muted">暂无可选员工</span>
+                      {/each}
+                    </div>
+                  </td>
+                {/each}
+                <td>
+                  <div class="employee-row-actions">
+                    <button class="primary-action" type="button" disabled={approverSaving === department} onclick={() => saveDepartmentApprovers(department)}>
+                      {approverSaving === department ? '保存中...' : '保存'}
+                    </button>
                   </div>
                 </td>
               </tr>

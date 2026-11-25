@@ -45,3 +45,105 @@
   min-width: 0;
   table-layout: auto;
 }
+
+/* 报销三级审批：每个部门一行，沿用员工列表的表格、间距和控件语言。 */
+.approver-admin {
+  margin-top: 32px;
+}
+
+.employee-page .approver-admin .employee-table-wrap table {
+  min-width: 760px;
+  table-layout: fixed;
+}
+
+.employee-page .approver-admin .employee-table-wrap :is(th, td):nth-child(1) {
+  width: 13%;
+}
+
+.employee-page .approver-admin .employee-table-wrap :is(th, td):nth-child(2),
+.employee-page .approver-admin .employee-table-wrap :is(th, td):nth-child(3),
+.employee-page .approver-admin .employee-table-wrap :is(th, td):nth-child(4) {
+  width: 25%;
+}
+
+.employee-page .approver-admin .employee-table-wrap :is(th, td):nth-child(5) {
+  width: 12%;
+}
+
+.approver-table-wrap td {
+  vertical-align: top;
+}
+
+.approver-table-wrap th small {
+  margin-top: 4px;
+  font-weight: 400;
+}
+
+.approver-cell {
+  display: flex;
+  max-height: 176px;
+  min-width: 0;
+  overflow-y: auto;
+  flex-direction: column;
+  gap: 1px;
+  padding: 2px 0;
+  scrollbar-width: thin;
+}
+
+.approver-option {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px;
+  border-radius: var(--cc-radius-sm);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.approver-option:hover {
+  background: var(--cc-hover);
+}
+
+.approver-option:has(input:checked) {
+  background: var(--blue-soft);
+}
+
+/* 审批人多选是普通复选框；员工表的开关样式仅用于启用状态。 */
+.employee-page .approver-admin .employee-table-wrap input[type="checkbox"] {
+  position: static;
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  appearance: auto;
+  background: none;
+  accent-color: var(--blue);
+}
+
+.employee-page .approver-admin .employee-table-wrap input[type="checkbox"]::before {
+  content: none;
+}
+
+.approver-option span {
+  overflow: hidden;
+  flex: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.approver-option small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.approver-admin .employee-error,
+.approver-admin .employee-success {
+  margin-top: 12px;
+}

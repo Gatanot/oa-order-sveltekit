@@ -3,7 +3,6 @@ import { pushState, replaceState } from "$app/navigation";
 import type * as XLSXType from "xlsx";
 import type { PublicArtifactVisitor } from "$lib/artifact-visitor";
 import { api, appPath, currentAppPath } from "$lib/api";
-import { reimbursementNextStatus } from "$lib/permissions";
 import { hasAnyRole, orderCreateRoles, orderExportRoles, orderManageRoles, orderViewAllRoles, reimbursementActionRoles, reimbursementViewAllRoles, catalogViewRoles, catalogManageRoles, employeeManageRoles, executionCompanyManageRoles } from "$lib/permissions";
 
 const apiFetch = (input: RequestInfo | URL, init?: RequestInit) =>
@@ -81,6 +80,16 @@ const apiFetch = (input: RequestInfo | URL, init?: RequestInit) =>
   type Reimbursement = Order & {
     reimbursement_status: string;
     attachment_count: number;
+    department?: string;
+    approval_layer?: number | null;
+    current_approvers?: Array<{ uid: number | null; name: string; role?: string }>;
+    using_default_approvers?: boolean;
+    approval_history?: Array<{ id: string; layer: number; action: string; approver_uid: number | null; approver_name: string; comment: string; created_at: string }>;
+    can_act?: boolean;
+    can_reject?: boolean;
+    next_status?: string | null;
+    next_action_label?: string;
+    reject_action_label?: string;
   };
 
 const ARTIFACT_GATEWAY_HOSTS = new Set(["artifact.catsco.cc", "artifact.catsco.cn"]);
@@ -101,12 +110,14 @@ export type Data = {
     historyReimbursements: Reimbursement[];
     visitor: PublicArtifactVisitor;
     identity: { uid: number; username: string; displayName: string; role: string; department: string; active: boolean };
+    canReviewReimbursements?: boolean;
+    canViewAllReimbursements?: boolean;
   };
 
 
 export function createOrderDesk(data: Data) {
   let view = $state<"overview" | "entry" | "catalog" | "reimbursements" | "review" | "history" | "employees">("overview");
-  let workMode = $state<"view" | "entry" | "finance">(hasAnyRole(data.identity, reimbursementActionRoles) ? "finance" : "entry");
+  let workMode = $state<"view" | "entry" | "finance">(data.canReviewReimbursements || hasAnyRole(data.identity, reimbursementActionRoles) ? "finance" : "entry");
   let isEmbedded = $state(false);
   let onArtifactGateway = $state(false);
   let customers = $state(data.customers);
@@ -452,8 +463,8 @@ export function createOrderDesk(data: Data) {
     ]),
   ]);
   const completeOrderNeedsDesign = $derived(Boolean(completeOrderTarget) && data.identity.uid === completeOrderTarget?.designer_uid);
-  const canReviewReimbursements = $derived(hasAnyRole(data.identity, reimbursementActionRoles));
-  const canViewAllReimbursements = $derived(hasAnyRole(data.identity, reimbursementViewAllRoles));
+  const canReviewReimbursements = $derived(Boolean(data.canReviewReimbursements) || hasAnyRole(data.identity, reimbursementActionRoles));
+  const canViewAllReimbursements = $derived(Boolean(data.canViewAllReimbursements) || hasAnyRole(data.identity, reimbursementViewAllRoles));
   function matchesReimbursementFilters(item: any) {
     return (
       (!reimbursementProject || item.project_id === reimbursementProject) &&
@@ -472,17 +483,17 @@ export function createOrderDesk(data: Data) {
   const reimbursementSummaryRows = $derived(reviewReimbursementRows);
   const reimbursementStats = $derived({
     total: myReimbursementRows.length,
-    pendingReview: myReimbursementRows.filter((item: any) => item.reimbursement_status === "已提交待审核").length,
-    pendingReviewAmount: myReimbursementRows.filter((item: any) => item.reimbursement_status === "已提交待审核").reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
-    pendingPay: myReimbursementRows.filter((item: any) => item.reimbursement_status === "已确认待执行").length,
+    pendingReview: myReimbursementRows.filter((item: any) => item.reimbursement_status === "待一级审核").length,
+    pendingReviewAmount: myReimbursementRows.filter((item: any) => item.reimbursement_status === "待一级审核").reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
+    pendingPay: myReimbursementRows.filter((item: any) => item.reimbursement_status === "待执行").length,
     paid: myReimbursementRows.filter((item: any) => item.reimbursement_status === "已执行").length,
     rejected: myReimbursementRows.filter((item: any) => item.reimbursement_status === "已打回").length,
     amount: myReimbursementRows.reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
-    pendingPayAmount: myReimbursementRows.filter((item: any) => item.reimbursement_status === "已确认待执行").reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
+    pendingPayAmount: myReimbursementRows.filter((item: any) => item.reimbursement_status === "待执行").reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
   });
   const reimbursementPaymentSummary = $derived(
     reimbursementSummaryRows
-      .filter((item: any) => item.reimbursement_status === "已确认待执行")
+      .filter((item: any) => item.reimbursement_status === "待执行")
       .reduce((groups: Array<any>, item: any) => {
         const employee = item.employee || "未填写";
         const existing = groups.find((group) => group.employee === employee);
@@ -503,14 +514,14 @@ export function createOrderDesk(data: Data) {
       .map((item: any) => ({ ...item, voucherNo: item.voucher_no })),
   );
   const selectedApprovableRows = $derived(
-    reviewReimbursementRows.filter((item: any) => selectedReimbursementIds.includes(item.id) && reimbursementNextStatus(item.reimbursement_status, data.identity?.role)),
+    reviewReimbursementRows.filter((item: any) => selectedReimbursementIds.includes(item.id) && item.can_act && item.next_status),
   );
   const selectedApprovableCount = $derived(selectedApprovableRows.length);
   const selectedApprovableTargets = $derived(
-    [...new Set(selectedApprovableRows.map((item: any) => reimbursementNextStatus(item.reimbursement_status, data.identity?.role)).filter((value): value is string => Boolean(value)))],
+    [...new Set(selectedApprovableRows.map((item: any) => item.next_status).filter((value): value is string => Boolean(value)))],
   );
   const selectedRejectableCount = $derived(
-    reviewReimbursementRows.filter((item: any) => selectedReimbursementIds.includes(item.id) && reimbursementNextStatus(item.reimbursement_status, data.identity?.role) && item.reimbursement_status !== "已确认待执行").length,
+    reviewReimbursementRows.filter((item: any) => selectedReimbursementIds.includes(item.id) && item.can_reject).length,
   );
   const creators = $derived([
     ...new Set(orders.map((o) => o.created_by).filter(Boolean)),
@@ -612,7 +623,7 @@ export function createOrderDesk(data: Data) {
     creatorName = identityName;
     createdBy = identityName;
     // 工作权限由服务端核验的身份决定，不再由浏览器工作模式或用户手动切换。
-    workMode = hasAnyRole(data.identity, reimbursementActionRoles) ? "finance" : "entry";
+    workMode = data.canReviewReimbursements || hasAnyRole(data.identity, reimbursementActionRoles) ? "finance" : "entry";
     let restoringHistory = false;
     const escape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -896,12 +907,11 @@ export function createOrderDesk(data: Data) {
     return (await response.json()).data as Array<any>;
   }
   function batchAdvanceReimbursements() {
-    const role = data.identity?.role;
-    const targets = reimbursementRows().filter((item: any) => selectedReimbursementIds.includes(item.id) && reimbursementNextStatus(item.reimbursement_status, role));
+    const targets = reimbursementRows().filter((item: any) => selectedReimbursementIds.includes(item.id) && item.can_act && item.next_status);
     if (!targets.length) { notify("请选择待处理记录", true); return; }
     const groups = new Map<string, Array<any>>();
     for (const item of targets) {
-      const target = reimbursementNextStatus(item.reimbursement_status, role) as string;
+      const target = item.next_status as string;
       groups.set(target, [...(groups.get(target) || []), item]);
     }
     const run = async () => {
@@ -937,7 +947,7 @@ export function createOrderDesk(data: Data) {
     notify(`正在导出 ${rows.length} 条报销记录`);
   }
   function batchMarkReimbursed() {
-    const targets = reviewReimbursements.filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "已确认待执行");
+    const targets = reviewReimbursements.filter((item: any) => selectedReimbursementIds.includes(item.id) && item.reimbursement_status === "待执行");
     if (!targets.length) { notify("请选择待打款记录", true); return; }
     const total = targets.reduce((sum, item: any) => sum + Number(item.advance_amount || 0), 0);
     askConfirm("确认批量打款", `确认将 ${targets.length} 笔、合计 ${money(total)} 标记为已报销？此状态不能直接撤回。`, async () => {
@@ -952,7 +962,7 @@ export function createOrderDesk(data: Data) {
     });
   }
   async function exportPaymentSummary() {
-    const rows = reimbursementSummaryRows.filter((item: any) => item.reimbursement_status === "已确认待执行");
+    const rows = reimbursementSummaryRows.filter((item: any) => item.reimbursement_status === "待执行");
     if (!rows.length) { notify("当前筛选暂无待付款记录", true); return; }
     const params = new URLSearchParams({ mode: "payment", actor: creatorName || "财务人员" });
     if (reimbursementProject) params.set("project", reimbursementProject);
@@ -964,7 +974,7 @@ export function createOrderDesk(data: Data) {
   }
   function selectEmployeePayments(employee: string) {
     const targets = reimbursementSummaryRows
-      .filter((item: any) => item.employee === employee && item.reimbursement_status === "已确认待执行")
+      .filter((item: any) => item.employee === employee && item.reimbursement_status === "待执行")
       .map((item: any) => item.id);
     const allSelected = targets.length > 0 && targets.every((id: string) => selectedReimbursementIds.includes(id));
     selectedReimbursementIds = allSelected
@@ -972,7 +982,7 @@ export function createOrderDesk(data: Data) {
       : [...new Set([...selectedReimbursementIds, ...targets])];
   }
   function markEmployeeReimbursed(employee: string) {
-    const targets = reimbursementSummaryRows.filter((item: any) => item.employee === employee && item.reimbursement_status === "已确认待执行");
+    const targets = reimbursementSummaryRows.filter((item: any) => item.employee === employee && item.reimbursement_status === "待执行");
     if (!targets.length) { notify("该员工暂无待付款报销", true); return; }
     const total = targets.reduce((sum, item: any) => sum + Number(item.advance_amount || 0), 0);
     askConfirm("确认已打款", `确认已向 ${employee} 支付 ${targets.length} 笔、合计 ${money(total)}？此状态不能直接撤回。`, async () => {
@@ -1016,8 +1026,7 @@ export function createOrderDesk(data: Data) {
     reimbursementRejectOpen = true;
   }
   function batchRejectReimbursements() {
-    const role = data.identity?.role;
-    const targets = reimbursementRows().filter((item: any) => selectedReimbursementIds.includes(item.id) && reimbursementNextStatus(item.reimbursement_status, role) && item.reimbursement_status !== "已确认待执行");
+    const targets = reimbursementRows().filter((item: any) => selectedReimbursementIds.includes(item.id) && item.can_reject);
     if (!targets.length) { notify("请选择可打回的记录", true); return; }
     reimbursementRejectIds = targets.map((item: any) => item.id);
     reimbursementRejectReason = "附件不清晰，请重新上传";
@@ -1052,7 +1061,7 @@ export function createOrderDesk(data: Data) {
         const response = await apiFetch(`/api/reimbursements/${encodeURIComponent(item.id)}/attachments`, { method: "POST", body: form });
         if (!response.ok) throw new Error((await response.json()).message || "发票上传失败");
         await refresh();
-        notify("发票已重新上传，等待财务核验");
+        notify("发票已重新上传，等待一级审核");
       } catch (e) { notify(e instanceof Error ? e.message : "发票上传失败", true); }
       finally { busy = false; }
     };
@@ -1919,7 +1928,7 @@ export function createOrderDesk(data: Data) {
   // 设计师、策划人员只需要处理自己的订单，不展示销售/成本/毛利等统计汇总。
   Object.defineProperty(desk, "showOrderStatistics", { get: () => !["designer", "planner"].includes(data.identity.role) });
   Object.defineProperty(desk, "canViewAllReimbursements", { get: () => canViewAllReimbursements });
-  Object.defineProperty(desk, "canManageReimbursements", { get: () => hasAnyRole(data.identity, reimbursementActionRoles) });
+  Object.defineProperty(desk, "canManageReimbursements", { get: () => canReviewReimbursements });
   Object.defineProperty(desk, "canDeleteOrders", { get: () => hasAnyRole(data.identity, orderManageRoles) });
   Object.defineProperty(desk, "canManageCatalog", { get: () => hasAnyRole(data.identity, catalogManageRoles) });
   Object.defineProperty(desk, "canViewCatalog", { get: () => hasAnyRole(data.identity, catalogViewRoles) });

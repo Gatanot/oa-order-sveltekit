@@ -6,7 +6,16 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import * as XLSX from 'xlsx';
 import XLSXStyle from 'xlsx-js-style';
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
-import { reimbursementNextStatus } from '$lib/permissions';
+import {
+  ADMIN_UID,
+  departments,
+  reimbursementNextCodeForLayer,
+  reimbursementStatusCode,
+  reimbursementStatusLabel,
+  reimbursementStepForStatus,
+  reimbursementWorkflow,
+  type ReimbursementStatusCode
+} from '$lib/permissions';
 
 export const databasePath = resolve(process.env.DATABASE_PATH || './data/oa.db');
 export const attachmentDir = resolve(dirname(databasePath), 'attachments');
@@ -333,6 +342,30 @@ export function getOrderDb() {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      -- 按部门配置三级报销审核人；同一部门同一级可配置多人。
+      CREATE TABLE IF NOT EXISTS department_approvers (
+        id TEXT PRIMARY KEY,
+        department TEXT NOT NULL,
+        layer INTEGER NOT NULL CHECK(layer BETWEEN 1 AND 3),
+        employee_uid INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(department,layer,employee_uid),
+        FOREIGN KEY(employee_uid) REFERENCES employees(catsco_uid) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_department_approvers ON department_approvers(department,layer);
+      -- 每次审核/打回/重新提交都留痕，便于报销详情展示完整审批链。
+      CREATE TABLE IF NOT EXISTS reimbursement_approvals (
+        id TEXT PRIMARY KEY,
+        reimbursement_id TEXT NOT NULL,
+        layer INTEGER NOT NULL,
+        action TEXT NOT NULL,
+        approver_uid INTEGER,
+        approver_name TEXT NOT NULL DEFAULT '',
+        comment TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(reimbursement_id) REFERENCES reimbursements_simple(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_reimbursement_approvals ON reimbursement_approvals(reimbursement_id,created_at);
     `);
     // 首次初始化时写入默认执行公司，与原前端内置的三项默认值保持一致。
     const executionCompanyCount = (instance.prepare('SELECT COUNT(*) AS count FROM execution_companies').get() as { count: number }).count;
@@ -350,6 +383,7 @@ export function getOrderDb() {
     if (!productColumns.has('remark')) instance.exec("ALTER TABLE order_products ADD COLUMN remark TEXT NOT NULL DEFAULT ''");
     const reimbursementColumns = new Set((instance.pragma('table_info(reimbursements_simple)') as Array<{ name: string }>).map((column) => column.name));
     if (!reimbursementColumns.has('employee_uid')) instance.exec('ALTER TABLE reimbursements_simple ADD COLUMN employee_uid INTEGER');
+    if (!reimbursementColumns.has('department')) instance.exec("ALTER TABLE reimbursements_simple ADD COLUMN department TEXT NOT NULL DEFAULT ''");
     const auditColumns = new Set((instance.pragma('table_info(audit_logs)') as Array<{ name: string }>).map((column) => column.name));
     if (!auditColumns.has('actor_uid')) instance.exec('ALTER TABLE audit_logs ADD COLUMN actor_uid INTEGER');
     // 用数值比较而不是 !== 逐个排除：v27 的库第二次启动时，旧写法会把版本退回 25 并重复执行 v26，
@@ -365,10 +399,11 @@ export function getOrderDb() {
             reject_reason TEXT NOT NULL DEFAULT '', reviewed_by TEXT NOT NULL DEFAULT '', reviewed_at TEXT,
             reimbursed_by TEXT NOT NULL DEFAULT '', reimbursed_at TEXT, voucher_no TEXT NOT NULL DEFAULT '',
             voucher_created_at TEXT, voucher_archived_at TEXT, created_at TEXT NOT NULL, employee_uid INTEGER,
+            department TEXT NOT NULL DEFAULT '',
             FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE
           );
-          INSERT INTO reimbursements_next(id,employee,item,amount,advance_date,order_id,invoice,note,status,reject_reason,reviewed_by,reviewed_at,reimbursed_by,reimbursed_at,voucher_no,voucher_created_at,voucher_archived_at,created_at,employee_uid)
-            SELECT id,employee,item,amount,advance_date,order_id,invoice,note,status,reject_reason,reviewed_by,reviewed_at,reimbursed_by,reimbursed_at,voucher_no,voucher_created_at,voucher_archived_at,created_at,employee_uid FROM reimbursements_simple;
+          INSERT INTO reimbursements_next(id,employee,item,amount,advance_date,order_id,invoice,note,status,reject_reason,reviewed_by,reviewed_at,reimbursed_by,reimbursed_at,voucher_no,voucher_created_at,voucher_archived_at,created_at,employee_uid,department)
+            SELECT id,employee,item,amount,advance_date,order_id,invoice,note,status,reject_reason,reviewed_by,reviewed_at,reimbursed_by,reimbursed_at,voucher_no,voucher_created_at,voucher_archived_at,created_at,employee_uid,department FROM reimbursements_simple;
           DROP TABLE reimbursements_simple;
           ALTER TABLE reimbursements_next RENAME TO reimbursements_simple;
           CREATE INDEX idx_simple_reimbursements_date ON reimbursements_simple(advance_date DESC);
@@ -629,6 +664,17 @@ export function getOrderDb() {
         `);
       })();
     }
+    // v32：报销改为按部门配置的三级审核；旧数据按报销人补全部门，未配置部门时继续按原角色兜底。
+    if (appVersion < 32) {
+      instance.transaction(() => {
+        instance!.exec(`
+          UPDATE reimbursements_simple
+            SET department=COALESCE((SELECT department FROM employees WHERE employees.catsco_uid=reimbursements_simple.employee_uid),'')
+            WHERE department='';
+          UPDATE schema_meta SET value='32' WHERE key='order_app_version';
+        `);
+      })();
+    }
     importBundledExcel(instance);
   }
   return instance;
@@ -816,24 +862,227 @@ function parseList(value: unknown): Array<Record<string, unknown>> {
 }
 
 
-type ReimbursementStatus = 'pending_review' | 'pending_recheck' | 'pending_confirmation' | 'rejected' | 'pending_payment' | 'paid';
-const reimbursementStatusLabels: Record<ReimbursementStatus, string> = {
-  pending_review: '已提交待审核', pending_recheck: '已审核待复核', pending_confirmation: '已复核待确认', rejected: '已打回', pending_payment: '已确认待执行', paid: '已执行'
-};
-function reimbursementStatusCode(value: unknown): ReimbursementStatus {
-  const status = text(value);
-  const aliases: Record<string, ReimbursementStatus> = { '待核验': 'pending_review', '待审核': 'pending_review', '已提交待审核': 'pending_review', '已审核待复核': 'pending_recheck', '已审核待符合': 'pending_recheck', '已复核待确认': 'pending_confirmation', '已打回': 'rejected', '待报销': 'pending_payment', '待打款': 'pending_payment', '已确认待执行': 'pending_payment', '已报销': 'paid', '已执行': 'paid' };
-  return aliases[status] || (status in reimbursementStatusLabels ? status as ReimbursementStatus : 'pending_review');
-}
-function reimbursementStatusLabel(value: unknown): string { return reimbursementStatusLabels[reimbursementStatusCode(value)]; }
 function reimbursementStatusFor(advances: Array<Record<string, unknown>>): string {
   if (!advances.length) return '无需报销';
-  if (advances.some((item) => reimbursementStatusCode(item.status) === 'pending_review')) return '已提交待审核';
-  if (advances.some((item) => reimbursementStatusCode(item.status) === 'rejected')) return '已打回';
-  if (advances.some((item) => reimbursementStatusCode(item.status) === 'pending_recheck')) return '已审核待复核';
-  if (advances.some((item) => reimbursementStatusCode(item.status) === 'pending_confirmation')) return '已复核待确认';
-  if (advances.some((item) => reimbursementStatusCode(item.status) === 'pending_payment')) return '已确认待执行';
-  return '已执行';
+  if (advances.some((item) => reimbursementStatusCode(item.status) === 'pending_review')) return reimbursementStatusLabel('pending_review');
+  if (advances.some((item) => reimbursementStatusCode(item.status) === 'rejected')) return reimbursementStatusLabel('rejected');
+  if (advances.some((item) => reimbursementStatusCode(item.status) === 'pending_recheck')) return reimbursementStatusLabel('pending_recheck');
+  if (advances.some((item) => reimbursementStatusCode(item.status) === 'pending_confirmation')) return reimbursementStatusLabel('pending_confirmation');
+  if (advances.some((item) => reimbursementStatusCode(item.status) === 'pending_payment')) return reimbursementStatusLabel('pending_payment');
+  return reimbursementStatusLabel('paid');
+}
+
+export type DepartmentApproverRow = {
+  id: string;
+  department: string;
+  layer: number;
+  employee_uid: number;
+  display_name: string;
+  username: string;
+  role: string;
+  active: number;
+};
+export type ReimbursementApprover = { employee_uid: number | null; display_name: string; username: string; role: string };
+export type ReimbursementApprovalHistory = {
+  id: string;
+  layer: number;
+  action: string;
+  approver_uid: number | null;
+  approver_name: string;
+  comment: string;
+  created_at: string;
+};
+
+const defaultApproverRoleLabels: Record<string, string> = {
+  admin: '系统管理员',
+  manager: '管理人员',
+  finance: '财务',
+  owner: '老板'
+};
+
+function listDepartmentApproverRows(department?: string, layer?: number): DepartmentApproverRow[] {
+  const filters: string[] = [];
+  const args: Array<string | number> = [];
+  if (department) { filters.push('da.department=?'); args.push(department); }
+  if (layer) { filters.push('da.layer=?'); args.push(layer); }
+  const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+  return getOrderDb().prepare(`SELECT da.id,da.department,da.layer,da.employee_uid,
+    COALESCE(NULLIF(e.display_name,''),NULLIF(e.username,''),CAST(da.employee_uid AS TEXT)) AS display_name,
+    COALESCE(e.username,'') AS username,COALESCE(e.role,'') AS role,COALESCE(e.active,0) AS active
+    FROM department_approvers da LEFT JOIN employees e ON e.catsco_uid=da.employee_uid
+    ${where} ORDER BY da.department,da.layer,e.display_name`).all(...args) as DepartmentApproverRow[];
+}
+
+/** 一次读取全部部门配置，供报销列表批量补充当前审核人，避免逐行查询。 */
+function departmentApproverBuckets() {
+  const buckets = new Map<string, Map<number, ReimbursementApprover[]>>();
+  for (const row of listDepartmentApproverRows()) {
+    const layers = buckets.get(row.department) || new Map<number, ReimbursementApprover[]>();
+    const approvers = layers.get(row.layer) || [];
+    approvers.push({ employee_uid: row.employee_uid, display_name: row.display_name, username: row.username, role: row.role });
+    layers.set(row.layer, approvers);
+    buckets.set(row.department, layers);
+  }
+  return buckets;
+}
+
+function approversForRow(row: { status: string; department?: string }, buckets?: ReturnType<typeof departmentApproverBuckets>) {
+  const step = reimbursementStepForStatus(row.status);
+  if (!step) return { step: null, approvers: [] as ReimbursementApprover[], usingDefault: false };
+  const configured = (buckets || departmentApproverBuckets()).get(text((row as any).department))?.get(step.layer) || [];
+  if (configured.length) return { step, approvers: configured, usingDefault: false };
+  // 部门尚未配置时按原有角色兜底，避免升级后旧流程立刻中断。
+  const fallback = step.defaultRoles.map((role) => ({
+    employee_uid: null,
+    display_name: defaultApproverRoleLabels[role] || role,
+    username: '',
+    role
+  }));
+  return { step, approvers: fallback, usingDefault: true };
+}
+
+/** 当前身份是否负责该报销的当前节点。部门配置了审核人时，仅配置人员可处理。 */
+export function canActOnReimbursement(
+  row: { status: string; department?: string; employee_uid?: number | null },
+  identity: { uid: number; role: string } | null | undefined,
+  buckets?: ReturnType<typeof departmentApproverBuckets>
+): boolean {
+  if (!identity) return false;
+  const step = reimbursementStepForStatus(row.status);
+  if (!step) return false;
+  if (row.employee_uid != null && Number(row.employee_uid) === identity.uid && identity.uid !== ADMIN_UID) return false;
+  if (step.layer === 4) return (step.defaultRoles as readonly string[]).includes(identity.role);
+  const configured = (buckets || departmentApproverBuckets()).get(text(row.department))?.get(step.layer) || [];
+  if (configured.length) return configured.some((approver) => approver.employee_uid === identity.uid);
+  return (step.defaultRoles as readonly string[]).includes(identity.role);
+}
+
+/** 给列表行附加当前节点审核人和前端可执行动作。 */
+export function withReimbursementActions<T extends Record<string, any>>(
+  rows: T[],
+  identity: { uid: number; role: string } | null | undefined
+): Array<T & { can_act: boolean; can_reject: boolean; next_status: string | null; next_action_label: string; reject_action_label: string }> {
+  const buckets = departmentApproverBuckets();
+  return rows.map((row) => {
+    const step = reimbursementStepForStatus(row.status);
+    const canAct = canActOnReimbursement(row as any, identity, buckets);
+    const nextCode = canAct && step ? reimbursementNextCodeForLayer(step.layer) : null;
+    return {
+      ...row,
+      can_act: canAct,
+      can_reject: Boolean(canAct && step && step.layer < 4),
+      next_status: nextCode ? reimbursementStatusLabel(nextCode) : null,
+      next_action_label: step && canAct ? step.approveLabel : '',
+      reject_action_label: step && canAct && step.layer < 4 ? step.rejectLabel : ''
+    };
+  });
+}
+
+/** 给报销行补充部门、当前审核节点、审核人和审批记录。 */
+function withApprovalInfo<T extends Record<string, any>>(rows: T[]): T[] {
+  const buckets = departmentApproverBuckets();
+  const historyByReimbursement = new Map<string, ReimbursementApprovalHistory[]>();
+  const history = getOrderDb().prepare(`SELECT id,reimbursement_id,layer,action,approver_uid,approver_name,comment,created_at
+    FROM reimbursement_approvals ORDER BY created_at,id`).all() as Array<ReimbursementApprovalHistory & { reimbursement_id: string }>;
+  for (const item of history) {
+    const list = historyByReimbursement.get(item.reimbursement_id) || [];
+    list.push(item);
+    historyByReimbursement.set(item.reimbursement_id, list);
+  }
+  return rows.map((row) => {
+    const { step, approvers, usingDefault } = approversForRow(row as any, buckets);
+    return {
+      ...row,
+      department: text(row.department),
+      approval_layer: step?.layer ?? null,
+      current_approvers: approvers.map((approver) => ({ uid: approver.employee_uid, name: approver.display_name, role: approver.role })),
+      using_default_approvers: usingDefault,
+      approval_history: historyByReimbursement.get(String(row.id)) || []
+    };
+  });
+}
+
+export function isDepartmentApprover(uid: number): boolean {
+  return Boolean(getOrderDb().prepare('SELECT 1 FROM department_approvers WHERE employee_uid=? LIMIT 1').get(uid));
+}
+
+export function listDepartmentApproverConfig() {
+  const approvers: Record<string, Record<string, ReimbursementApprover[]>> = {};
+  for (const department of departments) approvers[department] = { '1': [], '2': [], '3': [] };
+  for (const row of listDepartmentApproverRows()) {
+    approvers[row.department] ||= { '1': [], '2': [], '3': [] };
+    approvers[row.department][String(row.layer)] ||= [];
+    approvers[row.department][String(row.layer)].push({
+      employee_uid: row.employee_uid,
+      display_name: row.display_name,
+      username: row.username,
+      role: row.role
+    });
+  }
+  return {
+    departments: [...departments],
+    layers: reimbursementWorkflow.slice(0, 3).map((step) => ({
+      layer: step.layer,
+      status: step.status,
+      defaultRoles: [...step.defaultRoles]
+    })),
+    approvers
+  };
+}
+
+export function setDepartmentApprovers(
+  department: string,
+  layers: Record<string, unknown>,
+  actor: { name?: string; uid?: number | null } = {}
+) {
+  const targetDepartment = text(department);
+  if (!departments.includes(targetDepartment as typeof departments[number])) throw new Error('INVALID_DEPARTMENT');
+  const db = getOrderDb();
+  const normalized: Array<{ layer: number; uid: number }> = [];
+  for (const layer of [1, 2, 3]) {
+    const values = Array.isArray((layers as any)[layer])
+      ? (layers as any)[layer]
+      : Array.isArray((layers as any)[String(layer)]) ? (layers as any)[String(layer)] : [];
+    for (const value of values) {
+      const uid = Number(value);
+      if (!Number.isSafeInteger(uid) || uid <= 0) throw new Error('INVALID_APPROVER');
+      if (!db.prepare('SELECT 1 FROM employees WHERE catsco_uid=?').get(uid)) throw new Error('APPROVER_NOT_FOUND');
+      if (!normalized.some((item) => item.layer === layer && item.uid === uid)) normalized.push({ layer, uid });
+    }
+  }
+  db.transaction(() => {
+    db.prepare('DELETE FROM department_approvers WHERE department=?').run(targetDepartment);
+    const insert = db.prepare('INSERT INTO department_approvers(id,department,layer,employee_uid,created_at) VALUES(?,?,?,?,?)');
+    for (const item of normalized) insert.run(uuid(), targetDepartment, item.layer, item.uid, now());
+    recordAudit(db, {
+      actorName: actor.name || '',
+      actorUid: actor.uid ?? null,
+      action: 'update_department_approvers',
+      entityType: 'department',
+      entityId: targetDepartment,
+      detail: { layers: { 1: normalized.filter((item) => item.layer === 1).map((item) => item.uid), 2: normalized.filter((item) => item.layer === 2).map((item) => item.uid), 3: normalized.filter((item) => item.layer === 3).map((item) => item.uid) } }
+    });
+  })();
+  return listDepartmentApproverConfig();
+}
+
+function employeeDepartment(db: Database.Database, uid: number | null | undefined): string {
+  if (!uid) return '';
+  const row = db.prepare('SELECT department FROM employees WHERE catsco_uid=?').get(uid) as { department: string } | undefined;
+  return text(row?.department);
+}
+
+function recordReimbursementApproval(
+  db: Database.Database,
+  reimbursementId: string,
+  layer: number,
+  action: string,
+  actorName: string,
+  actorUid: number | null,
+  comment = ''
+) {
+  db.prepare('INSERT INTO reimbursement_approvals(id,reimbursement_id,layer,action,approver_uid,approver_name,comment,created_at) VALUES(?,?,?,?,?,?,?,?)')
+    .run(uuid(), reimbursementId, layer, action, actorUid, actorName, comment, now());
 }
 
 /** 订单垫付仍以姓名录入，按姓名唯一匹配在职员工后写回稳定的 UID 关联。 */
@@ -895,6 +1144,7 @@ function syncOrderAdvanceReimbursements(
   const existing = db.prepare("SELECT id,source_line_id,status FROM reimbursements_simple WHERE order_id=? AND source_line_id<>''").all(order.id) as Array<{ id: string; source_line_id: string; status: string }>;
   const byLine = new Map(existing.map((row) => [row.source_line_id, row]));
   const kept = new Set<string>();
+  const department = employeeDepartment(db, actor.uid);
   products.forEach((product, index) => {
     const lineId = lineIds[index];
     if (!lineId || !product.advance) return;
@@ -906,13 +1156,13 @@ function syncOrderAdvanceReimbursements(
     if (!row) {
       if (!actor.name) throw new Error('个人垫付需要当前录入人身份');
       const id = uuid();
-      db.prepare('INSERT INTO reimbursements_simple(id,employee,item,amount,advance_date,order_id,invoice,note,created_at,employee_uid,source_line_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-        .run(id, actor.name, item, amount, order.order_date, order.id, '', note, now(), actor.uid, lineId);
+      db.prepare('INSERT INTO reimbursements_simple(id,employee,item,amount,advance_date,order_id,invoice,note,created_at,employee_uid,source_line_id,department) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
+        .run(id, actor.name, item, amount, order.order_date, order.id, '', note, now(), actor.uid, lineId, department);
       recordAudit(db, { actorName: actor.name, actorUid: actor.uid, action: 'create_advance', entityType: 'reimbursement', entityId: id, detail: { order_id: order.id, order_code: order.code, amount } });
     } else if (['pending_review', 'rejected'].includes(row.status)) {
       // 尚未进入多级审核前，金额跟随订单成本变化。
-      db.prepare('UPDATE reimbursements_simple SET amount=?,item=?,advance_date=?,note=? WHERE id=?')
-        .run(amount, item, order.order_date, note, row.id);
+      db.prepare("UPDATE reimbursements_simple SET amount=?,item=?,advance_date=?,note=?,department=CASE WHEN department='' THEN ? ELSE department END WHERE id=?")
+        .run(amount, item, order.order_date, note, department, row.id);
     }
     kept.add(lineId);
   });
@@ -1587,7 +1837,7 @@ export function listReimbursementOrders(filters: Record<string, string> = {}) {
     LEFT JOIN reimbursement_attachments ra ON ra.reimbursement_id = r.id
     GROUP BY r.id
     ORDER BY r.advance_date DESC, r.created_at DESC`).all() as Array<Record<string, any>>;
-  return rows.map((item) => ({
+  const result = rows.map((item) => ({
     ...item,
     id: item.id,
     order_id: item.order_id || '',
@@ -1619,6 +1869,7 @@ export function listReimbursementOrders(filters: Record<string, string> = {}) {
       ? item.reimbursement_status !== '已执行'
       : reimbursementStatusCode(item.reimbursement_status) === reimbursementStatusCode(filters.status)))
   );
+  return withApprovalInfo(result);
 }
 
 export function exportReimbursements(filters: Record<string, string>) {
@@ -1647,23 +1898,33 @@ export function createReimbursement(data: Record<string, unknown>, actorUid: num
   if (orderId && !getOrderDb().prepare('SELECT id FROM orders_simple WHERE id=?').get(orderId)) throw new Error('关联订单不存在');
   const id = uuid();
   const db = getOrderDb();
+  const department = employeeDepartment(db, actorUid);
   db.transaction(() => {
-    db.prepare('INSERT INTO reimbursements_simple(id,employee,item,amount,advance_date,order_id,invoice,note,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run(id, employee, item, amount, advanceDate, orderId || null, text(data.invoice), text(data.note), now());
-    recordAudit(db, { actorName: employee, actorUid, action: 'create', entityType: 'reimbursement', entityId: id, detail: { amount, order_id: orderId } });
+    db.prepare('INSERT INTO reimbursements_simple(id,employee,item,amount,advance_date,order_id,invoice,note,created_at,employee_uid,department) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+      .run(id, employee, item, amount, advanceDate, orderId || null, text(data.invoice), text(data.note), now(), actorUid, department);
+    recordAudit(db, { actorName: employee, actorUid, action: 'create', entityType: 'reimbursement', entityId: id, detail: { amount, order_id: orderId, department } });
+    recordReimbursementApproval(db, id, 0, 'submitted', employee, actorUid);
   })();
-  return { id, employee, item, amount, advance_date: advanceDate, order_id: orderId, reimbursement_status: '已提交待审核' };
+  return { id, employee, employee_uid: actorUid, department, item, amount, advance_date: advanceDate, order_id: orderId, reimbursement_status: reimbursementStatusLabel('pending_review') };
 }
 
-const reimbursementTransitions: Record<ReimbursementStatus, ReimbursementStatus[]> = {
+const reimbursementTransitions: Record<ReimbursementStatusCode, ReimbursementStatusCode[]> = {
   pending_review: ['pending_recheck', 'rejected'], pending_recheck: ['pending_confirmation', 'rejected'],
   pending_confirmation: ['pending_payment', 'rejected'], pending_payment: ['paid'], rejected: [], paid: []
 };
-export function canAdvanceReimbursement(status: string, target: string, role: string): boolean {
-  const from = reimbursementStatusCode(status);
+export function canAdvanceReimbursement(
+  row: { status: string; department?: string; employee_uid?: number | null },
+  target: string,
+  identity: { uid: number; role: string }
+): boolean {
+  const from = reimbursementStatusCode(row.status);
   const to = reimbursementStatusCode(target);
-  if (!reimbursementTransitions[from].includes(to)) return false;
-  const nextStatus = reimbursementNextStatus(reimbursementStatusLabel(from), role);
-  return Boolean(nextStatus && (to === 'rejected' || reimbursementStatusCode(nextStatus) === to));
+  if (!reimbursementTransitions[from]?.includes(to)) return false;
+  if (!canActOnReimbursement(row, identity)) return false;
+  const step = reimbursementStepForStatus(from);
+  if (!step) return false;
+  if (to === 'rejected') return step.layer < 4;
+  return reimbursementNextCodeForLayer(step.layer) === to;
 }
 
 export function updateReimbursement(id: string, status: string, actor: string, rejectReason = '', actorUid: number | null = null) {
@@ -1671,12 +1932,15 @@ export function updateReimbursement(id: string, status: string, actor: string, r
   const db = getOrderDb();
   const reimbursement = db.prepare('SELECT * FROM reimbursements_simple WHERE id=?').get(id) as Record<string, any> | undefined;
   if (!reimbursement) throw new Error('REIMBURSEMENT_NOT_FOUND');
-  if (!reimbursementTransitions[reimbursement.status as ReimbursementStatus]?.includes(target)) throw new Error('INVALID_REIMBURSEMENT_TRANSITION');
+  if (!reimbursementTransitions[reimbursement.status as ReimbursementStatusCode]?.includes(target)) throw new Error('INVALID_REIMBURSEMENT_TRANSITION');
   if (target === 'rejected' && !text(rejectReason)) throw new Error('请填写打回原因');
   const changedAt = now();
   db.transaction(() => {
     db.prepare(`UPDATE reimbursements_simple SET status=?, reject_reason=CASE WHEN ?='rejected' THEN ? WHEN ?='pending_review' THEN '' ELSE reject_reason END, reviewed_by=CASE WHEN ? IN ('pending_payment','rejected') THEN ? ELSE reviewed_by END, reviewed_at=CASE WHEN ? IN ('pending_payment','rejected') THEN ? ELSE reviewed_at END, reimbursed_by=CASE WHEN ?='paid' THEN ? ELSE reimbursed_by END, reimbursed_at=CASE WHEN ?='paid' THEN ? ELSE reimbursed_at END WHERE id=?`).run(target, target, rejectReason, target, target, actor, target, changedAt, target, actor, target, changedAt, id);
-    recordAudit(db, { actorName: actor, actorUid, action: 'status_change', entityType: 'reimbursement', entityId: id, fromValue: reimbursement.status, toValue: target, detail: { reject_reason: target === 'rejected' ? rejectReason : '' } });
+    const step = reimbursementStepForStatus(reimbursement.status);
+    const action = target === 'rejected' ? 'rejected' : target === 'paid' ? 'executed' : 'approved';
+    recordReimbursementApproval(db, id, step?.layer ?? 0, action, actor, actorUid, target === 'rejected' ? rejectReason : '');
+    recordAudit(db, { actorName: actor, actorUid, action: 'status_change', entityType: 'reimbursement', entityId: id, fromValue: reimbursement.status, toValue: target, detail: { reject_reason: target === 'rejected' ? rejectReason : '', layer: step?.layer ?? null } });
     if (target === 'pending_payment') ensureReimbursementVoucher(db, reimbursement, actor, actorUid, true);
   })();
   const updated = db.prepare('SELECT * FROM reimbursements_simple WHERE id=?').get(id) as Record<string, any>;
@@ -1691,13 +1955,16 @@ export function updateReimbursementsBatch(ids: string[], status: string, actor: 
   const db = getOrderDb();
   const rows = uniqueIds.map((id) => db.prepare('SELECT * FROM reimbursements_simple WHERE id=?').get(id) as Record<string, any> | undefined);
   if (rows.some((row) => !row)) throw new Error('REIMBURSEMENT_NOT_FOUND');
-  for (const row of rows as Array<Record<string, any>>) if (!reimbursementTransitions[row.status as ReimbursementStatus]?.includes(target)) throw new Error('INVALID_REIMBURSEMENT_TRANSITION');
+  for (const row of rows as Array<Record<string, any>>) if (!reimbursementTransitions[row.status as ReimbursementStatusCode]?.includes(target)) throw new Error('INVALID_REIMBURSEMENT_TRANSITION');
   const changedAt = now();
   db.transaction(() => {
     const update = db.prepare(`UPDATE reimbursements_simple SET status=?, reject_reason=CASE WHEN ?='rejected' THEN ? WHEN ?='pending_review' THEN '' ELSE reject_reason END, reviewed_by=CASE WHEN ? IN ('pending_payment','rejected') THEN ? ELSE reviewed_by END, reviewed_at=CASE WHEN ? IN ('pending_payment','rejected') THEN ? ELSE reviewed_at END, reimbursed_by=CASE WHEN ?='paid' THEN ? ELSE reimbursed_by END, reimbursed_at=CASE WHEN ?='paid' THEN ? ELSE reimbursed_at END WHERE id=?`);
     for (const row of rows as Array<Record<string, any>>) {
       update.run(target, target, rejectReason, target, target, actor, target, changedAt, target, actor, target, changedAt, row.id);
-      recordAudit(db, { actorName: actor, actorUid, action: 'status_change', entityType: 'reimbursement', entityId: row.id, fromValue: row.status, toValue: target, detail: { batch: true, reject_reason: target === 'rejected' ? rejectReason : '' } });
+      const step = reimbursementStepForStatus(row.status);
+      const action = target === 'rejected' ? 'rejected' : target === 'paid' ? 'executed' : 'approved';
+      recordReimbursementApproval(db, row.id, step?.layer ?? 0, action, actor, actorUid, target === 'rejected' ? rejectReason : '');
+      recordAudit(db, { actorName: actor, actorUid, action: 'status_change', entityType: 'reimbursement', entityId: row.id, fromValue: row.status, toValue: target, detail: { batch: true, reject_reason: target === 'rejected' ? rejectReason : '', layer: step?.layer ?? null } });
       if (target === 'pending_payment') ensureReimbursementVoucher(db, row, actor, actorUid, true);
     }
   })();
@@ -1769,17 +2036,24 @@ export function addStandaloneReimbursementAttachment(reimbursementId: string, fi
   writeFileSync(join(attachmentDir, storagePath), file.data);
   db.prepare('INSERT INTO reimbursement_attachments(id,reimbursement_id,file_name,mime_type,file_size,storage_path,attachment_kind,created_at) VALUES(?,?,?,?,?,?,?,?)').run(id, reimbursementId, safeName, mime, file.data.length, storagePath, 'invoice', now());
   const status = (reimbursement.status === 'rejected' ? 'pending_review' : reimbursement.status);
-  db.prepare("UPDATE reimbursements_simple SET invoice=?, status=?, reject_reason=CASE WHEN ?='pending_review' THEN '' ELSE reject_reason END WHERE id=?").run(safeName, status, status, reimbursementId);
-  recordAudit(db, { actorName: actor.name || reimbursement.employee, actorUid: actor.uid ?? null, action: reimbursement.status === 'rejected' ? 'reupload_attachment' : 'upload_attachment', entityType: 'reimbursement', entityId: reimbursementId, detail: { file_name: safeName, file_size: file.data.length } });
+  db.transaction(() => {
+    db.prepare("UPDATE reimbursements_simple SET invoice=?, status=?, reject_reason=CASE WHEN ?='pending_review' THEN '' ELSE reject_reason END WHERE id=?").run(safeName, status, status, reimbursementId);
+    if (reimbursement.status === 'rejected') {
+      recordReimbursementApproval(db, reimbursementId, 0, 'resubmitted', actor.name || reimbursement.employee, actor.uid ?? null, safeName);
+    }
+    recordAudit(db, { actorName: actor.name || reimbursement.employee, actorUid: actor.uid ?? null, action: reimbursement.status === 'rejected' ? 'reupload_attachment' : 'upload_attachment', entityType: 'reimbursement', entityId: reimbursementId, detail: { file_name: safeName, file_size: file.data.length } });
+  })();
   return { id, reimbursement_id: reimbursementId, file_name: safeName, mime_type: mime, file_size: file.data.length, created_at: now() };
 }
 
 export function getReimbursementAccessInfo(reimbursementId: string) {
-  return getOrderDb().prepare('SELECT id,employee,employee_uid,status FROM reimbursements_simple WHERE id=?').get(reimbursementId) as { id: string; employee: string; employee_uid: number | null; status: string } | undefined;
+  return getOrderDb().prepare('SELECT id,employee,employee_uid,status,department FROM reimbursements_simple WHERE id=?').get(reimbursementId) as { id: string; employee: string; employee_uid: number | null; status: string; department: string } | undefined;
 }
 
 export function setReimbursementEmployee(id: string, uid: number) {
-  getOrderDb().prepare('UPDATE reimbursements_simple SET employee_uid=? WHERE id=?').run(uid, id);
+  const db = getOrderDb();
+  db.prepare("UPDATE reimbursements_simple SET employee_uid=?,department=CASE WHEN department='' THEN ? ELSE department END WHERE id=?")
+    .run(uid, employeeDepartment(db, uid), id);
 }
 
 export function listReimbursementAttachments(reimbursementId: string) {
@@ -2021,9 +2295,9 @@ export function seedDemoOrdersAndReimbursements(requestedCount = 36, actorUid: n
     if (stage === 'rejected') {
       updateReimbursement(id, '已打回', '模拟管理人', '模拟数据：请补充清晰发票');
     } else {
-      if (stage !== 'pending_review') updateReimbursement(id, '已审核待复核', '模拟管理人');
-      if (['pending_confirmation', 'pending_payment', 'paid'].includes(stage)) updateReimbursement(id, '已复核待确认', '模拟财务');
-      if (['pending_payment', 'paid'].includes(stage)) updateReimbursement(id, '已确认待执行', '模拟老板');
+      if (stage !== 'pending_review') updateReimbursement(id, '待二级审核', '模拟管理人');
+      if (['pending_confirmation', 'pending_payment', 'paid'].includes(stage)) updateReimbursement(id, '待三级审核', '模拟财务');
+      if (['pending_payment', 'paid'].includes(stage)) updateReimbursement(id, '待执行', '模拟老板');
       if (stage === 'paid') updateReimbursement(id, '已执行', '模拟财务');
     }
     statusCounts[stage]++;
@@ -2077,7 +2351,10 @@ export function seedDemoOrdersAndReimbursements(requestedCount = 36, actorUid: n
         invoice: index % 4 === 0 ? '模拟电子发票.pdf' : '',
         note: `后台模拟报销 · 批次 ${batch}`,
       });
-      if (activeEmployees.length) db.prepare('UPDATE reimbursements_simple SET employee_uid=? WHERE id=?').run(resolveEmployeeUidByName(db, employee), reimbursement.id);
+      if (activeEmployees.length) {
+        const uid = resolveEmployeeUidByName(db, employee);
+        db.prepare("UPDATE reimbursements_simple SET employee_uid=?,department=COALESCE((SELECT department FROM employees WHERE catsco_uid=?),department) WHERE id=?").run(uid, uid, reimbursement.id);
+      }
       reimbursementCount++;
       const stage = advanceDemoReimbursement(reimbursement.id, index);
       if (stage === 'paid' && index % 2 === 0) archiveReimbursementVoucher(reimbursement.id, '模拟财务');
@@ -2095,7 +2372,10 @@ export function seedDemoOrdersAndReimbursements(requestedCount = 36, actorUid: n
       note: `后台模拟内务报销 · 批次 ${batch}`,
       invoice: index % 2 === 0 ? '模拟报销凭证.pdf' : '',
     });
-    if (activeEmployees.length) db.prepare('UPDATE reimbursements_simple SET employee_uid=? WHERE id=?').run(resolveEmployeeUidByName(db, employee), created.id);
+    if (activeEmployees.length) {
+      const uid = resolveEmployeeUidByName(db, employee);
+      db.prepare("UPDATE reimbursements_simple SET employee_uid=?,department=COALESCE((SELECT department FROM employees WHERE catsco_uid=?),department) WHERE id=?").run(uid, uid, created.id);
+    }
     reimbursementCount++;
     advanceDemoReimbursement(created.id, index + 1);
   }

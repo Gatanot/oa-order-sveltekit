@@ -63,10 +63,9 @@
         <div class="product-row">
           <span class="row-index" aria-hidden="true">{i + 1}</span>
           <div class="repeat-row editor-row">
-            <div class="product-name-cell"><div class:catalog-matched={Boolean(product.catalog_id)} class="autocomplete-field"><input value={product.name} oninput={(e) => desk.updateProduct(i, 'name', e.currentTarget.value)} onblur={() => setTimeout(() => desk.matchProductCatalog(i), 120)} placeholder="输入产品名称以匹配报价库" />{#if product.catalog_id}<span class="catalog-match-mark" title="已匹配报价库"><Check size={13} />已匹配</span>{/if}{#if product.name && productMatches(product.name, i).length}<div class="suggestion-menu">{#each productMatches(product.name, i) as item}<button type="button" onmousedown={(event) => event.preventDefault()} onclick={() => desk.applyProductCatalog(i, item.id)}><span>{item.name}</span><small>{item.unit} · ¥{(item.price_incl_tax / 100).toFixed(2)} · {item.category || "报价库"}{item.source_owner || item.customer_name ? ` · ${item.source_owner || item.customer_name}` : ''}</small>{#if item.specification}<small class="suggestion-spec">{item.specification}</small>{/if}</button>{/each}</div>{/if}</div></div>
+            <div class="product-name-cell"><div class:catalog-matched={Boolean(product.catalog_id)} class="autocomplete-field"><input value={product.name} title={product.name || '输入产品名称以匹配报价库'} oninput={(e) => desk.updateProduct(i, 'name', e.currentTarget.value)} onblur={() => setTimeout(() => desk.matchProductCatalog(i), 120)} placeholder="输入产品名称以匹配报价库" />{#if product.catalog_id}<span class="catalog-match-mark" title="已匹配报价库"><Check size={13} />已匹配</span>{/if}{#if product.name && productMatches(product.name, i).length}<div class="suggestion-menu">{#each productMatches(product.name, i) as item}<button type="button" onmousedown={(event) => event.preventDefault()} onclick={() => desk.applyProductCatalog(i, item.id)}><span>{item.name}</span><small>{item.unit} · ¥{(item.price_incl_tax / 100).toFixed(2)} · {item.category || "报价库"}{item.source_owner || item.customer_name ? ` · ${item.source_owner || item.customer_name}` : ''}</small>{#if item.specification}<small class="suggestion-spec">{item.specification}</small>{/if}</button>{/each}</div>{/if}</div></div>
             <div class="product-spec-cell">
               <textarea class="product-spec-field" aria-label={`第 ${i + 1} 项规格和技术要求`} value={product.specification || ''} oninput={(e) => desk.updateProduct(i, 'specification', e.currentTarget.value)} placeholder="规格和技术要求"></textarea>
-              <textarea class="product-remark-field" aria-label={`第 ${i + 1} 项行备注`} value={product.remark || ''} oninput={(e) => desk.updateProduct(i, 'remark', e.currentTarget.value)} placeholder="行备注（选填，仅内部留痕）"></textarea>
             </div>
             <input type="number" inputmode="decimal" min="0.01" step="any" value={product.quantity} aria-label={`第 ${i + 1} 项产品数量`} oninput={(e) => desk.updateProduct(i, 'quantity', e.currentTarget.value)} placeholder="数量" />
             <input value={product.unit} oninput={(e) => desk.updateProduct(i, 'unit', e.currentTarget.value)} placeholder="单位" />
@@ -77,11 +76,10 @@
             <div class="advance-cell">
               <button type="button" role="switch" aria-checked={Boolean(product.advance)} aria-label={`第 ${i + 1} 项个人垫付`} class="advance-switch" class:is-on={Boolean(product.advance)} onclick={() => desk.updateProduct(i, 'advance', !product.advance)}>
                 <span class="advance-track" aria-hidden="true"><span class="advance-thumb"></span></span>
-                <span class="advance-label">个人垫付</span>
               </button>
-              {#if product.advance}<small class="advance-hint">由{desk.creatorName || '录入人'}垫付</small>{/if}
             </div>
             <button type="button" class="delete-action" onclick={() => desk.removeProduct(i)} aria-label="删除产品"><Trash2 size={15}/></button>
+            <input class="product-remark-field" aria-label={`第 ${i + 1} 项行备注`} title="行备注（选填）" value={product.remark || ''} oninput={(e) => desk.updateProduct(i, 'remark', e.currentTarget.value)} placeholder="行备注（选填）" />
           </div>
         </div>
       {:else}<p class="empty-table">请添加至少一项产品</p>{/each}

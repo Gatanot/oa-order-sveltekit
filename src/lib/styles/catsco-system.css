@@ -394,17 +394,25 @@ html body :is(button, [tabindex])[data-cc-pointer-focus="true"]:focus-visible { 
 .reimbursement-page .reimbursement-callout { margin-bottom: 16px; }
 .reimbursement-page .reimbursement-callout span { display: block; margin-top: 4px; }
 .reimbursement-row-status { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
-.status-dot.reimbursement-status.reimbursement-pending { color: var(--color-status-pending); background: var(--color-status-pending-soft); }
-.status-dot.reimbursement-status.reimbursement-paid { color: var(--color-status-success); background: var(--color-status-success-soft); }
-.status-dot.reimbursement-status.reimbursement-rejected { color: var(--color-danger); background: var(--color-danger-soft); }
+/* 报销状态只保留文字和语义色，不加底色、边框或高亮块。 */
+.status-dot.reimbursement-status { display: inline; padding: 0; border: 0; border-radius: 0; background: transparent; font-size: 12px; font-weight: 500; line-height: inherit; }
+.status-dot.reimbursement-status::before { content: none; }
+.status-dot.reimbursement-status.reimbursement-pending { color: var(--color-status-pending); background: transparent; }
+.status-dot.reimbursement-status.reimbursement-review { color: var(--color-status-review); background: transparent; }
+.status-dot.reimbursement-status.reimbursement-recheck { color: var(--color-status-recheck); background: transparent; }
+.status-dot.reimbursement-status.reimbursement-confirm { color: var(--color-status-confirm); background: transparent; }
+.status-dot.reimbursement-status.reimbursement-payment { color: var(--color-status-payment); background: transparent; }
+.status-dot.reimbursement-status.reimbursement-paid { color: var(--color-status-success); background: transparent; }
+.status-dot.reimbursement-status.reimbursement-rejected { color: var(--color-danger); background: transparent; }
 .reimbursement-row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .reimbursement-row-actions .icon-control { width: 34px; min-width: 34px; height: 34px; min-height: 34px; flex-basis: 34px; padding: 0; }
 .reimbursement-page .reimbursement-review-table .link-action { max-width: 100%; white-space: normal; overflow-wrap: anywhere; font-size: 12px; }
 .reimbursement-row-actions .reimbursement-danger-icon { width: 34px; min-width: 34px; height: 34px; min-height: 34px; padding: 0; }
 .reimbursement-repair-icon { color: var(--blue); }
 .reimbursement-page .reimbursement-row-actions .primary-action { min-height: 32px; margin: 0; padding: 0 8px; font-size: 12px; }
-.reimbursement-page .reimbursement-row-actions .reimbursement-action { height: 34px; min-height: 34px; border: 1px solid transparent; background: var(--color-status-success); color: #fff; }
-.reimbursement-page .reimbursement-row-actions .reimbursement-action:hover { background: color-mix(in srgb, var(--color-status-success) 86%, #000); }
+/* 审核操作使用纯文字，不加填充、边框或高亮块。 */
+.reimbursement-page .reimbursement-row-actions .reimbursement-action { height: auto; min-height: 32px; padding: 0 4px; border: 0; border-radius: 0; background: transparent; color: var(--blue); font-weight: 600; }
+.reimbursement-page .reimbursement-row-actions .reimbursement-action:hover { border: 0; background: transparent; color: var(--blue-strong); text-decoration: underline; }
 .reimbursement-page .reimbursement-row-actions .reimbursement-reject-action { width: 34px; min-width: 34px; height: 34px; min-height: 34px; padding: 0; border: 1px solid color-mix(in srgb, var(--color-danger) 42%, var(--line)); border-radius: 8px; background: transparent; color: var(--color-danger); }
 .reimbursement-page .reimbursement-row-actions .reimbursement-reject-action:hover { background: var(--color-danger-soft); border-color: var(--color-danger); }
 .review-page .batch-mode-toggle { color: var(--blue); }

@@ -4,7 +4,7 @@ import { json, type Handle, type HandleServerError } from '@sveltejs/kit';
 import { brotliCompress, constants, gzip } from 'node:zlib';
 import { promisify } from 'node:util';
 import { getArtifactVisitor } from '$lib/server/artifact-visitor';
-import { ADMIN_UID, getAdminExtraIdentity, orderExportRoles, reimbursementActionRoles, resolveActingIdentity, resolveIdentity, hasAnyRole } from '$lib/server/identity';
+import { ADMIN_UID, canUseReimbursementReview, getAdminExtraIdentity, orderExportRoles, reimbursementActionRoles, resolveActingIdentity, resolveIdentity, hasAnyRole } from '$lib/server/identity';
 import type { CurrentIdentity } from '$lib/server/identity';
 
 const brotliCompressAsync = promisify(brotliCompress);
@@ -146,12 +146,17 @@ export const handle: Handle = async ({ event, resolve }) => {
     }
     const method = event.request.method;
     const isOrderExport = routeId === '/api/orders/export' && !hasAnyRole(current, orderExportRoles);
-    const isReimbursementAction = routeId.startsWith('/api/reimbursements') && (
-      (method === 'POST' && (routeId.includes('/batch') || routeId.includes('/archive') || routeId.includes('/voucher'))) ||
+    // 批量审核允许部门配置的审核人使用；单据生成/归档/导出仍限财务相关角色。
+    const isReimbursementBatch = method === 'POST' && routeId === '/api/reimbursements/batch';
+    const isReimbursementFinanceAction = routeId.startsWith('/api/reimbursements') && (
+      (method === 'POST' && (routeId.includes('/archive') || routeId.includes('/voucher'))) ||
       (method === 'GET' && routeId.endsWith('/export'))
     );
     if (isOrderExport) return json({ error: { code: 'FORBIDDEN', message: '没有订单导出权限' } }, { status: 403 });
-    if (isReimbursementAction && !hasAnyRole(current, reimbursementActionRoles)) {
+    if (isReimbursementBatch && !canUseReimbursementReview(current)) {
+      return json({ error: { code: 'FORBIDDEN', message: '没有报销审核权限' } }, { status: 403 });
+    }
+    if (isReimbursementFinanceAction && !hasAnyRole(current, reimbursementActionRoles)) {
       return json({ error: { code: 'FORBIDDEN', message: '没有财务操作权限' } }, { status: 403 });
     }
   }

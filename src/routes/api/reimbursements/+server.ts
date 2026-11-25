@@ -1,8 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { action, body } from '$lib/server/http';
-import { createReimbursement, listReimbursementOrders, setReimbursementEmployee } from '$lib/server/order-db';
-import { ADMIN_UID, hasAnyRole, reimbursementViewAllRoles } from '$lib/server/identity';
-import { reimbursementStatusesForRole } from '$lib/permissions';
+import { createReimbursement, listReimbursementOrders, setReimbursementEmployee, withReimbursementActions } from '$lib/server/order-db';
+import { canUseReimbursementReview, hasAnyRole, reimbursementViewAllRoles } from '$lib/server/identity';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
@@ -14,17 +13,17 @@ export const GET: RequestHandler = async (event) => {
   if (scope === 'mine') {
     return json({ data: rows.filter((item) => item.employee_uid === identity.uid) });
   }
-  if (!hasAnyRole(identity, reimbursementViewAllRoles)) {
-    return json({ error: { code: 'FORBIDDEN', message: scope === 'history' ? '没有查看历史报销权限' : '没有报销审核权限' } }, { status: 403 });
+  if (scope === 'review' && !canUseReimbursementReview(identity)) {
+    return json({ error: { code: 'FORBIDDEN', message: '没有报销审核权限' } }, { status: 403 });
+  }
+  if (scope === 'history' && !hasAnyRole(identity, reimbursementViewAllRoles)) {
+    return json({ error: { code: 'FORBIDDEN', message: '没有查看历史报销权限' } }, { status: 403 });
   }
   if (scope === 'history') {
-    return json({ data: listReimbursementOrders({}).filter((item) => item.reimbursement_status === '已执行') });
+    return json({ data: rows.filter((item) => item.reimbursement_status === '已执行') });
   }
-  const responsibleStatuses = reimbursementStatusesForRole(identity.role) || [];
-  const data = rows.filter((item) =>
-    responsibleStatuses.includes(item.reimbursement_status) &&
-    (identity.uid === ADMIN_UID || item.employee_uid !== identity.uid)
-  );
+  // 逐条按“部门配置的当前节点审核人”裁剪，未配置的部门继续按原角色兜底。
+  const data = withReimbursementActions(rows, identity).filter((item) => item.can_act);
   return json({ data });
 };
 export const POST: RequestHandler = async (event) => {

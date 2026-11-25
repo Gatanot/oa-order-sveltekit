@@ -11,7 +11,7 @@
 
 /* 与卡片首行输入框垂直居中对齐（卡片上内边距 12px + 行高一半） */
 .product-row .row-index {
-  margin-top: 22px;
+  margin-top: 17px;
 }
 
 .product-row .repeat-row.editor-row {
@@ -21,8 +21,8 @@
 .repeat-row.editor-row,
 .repeat-header-fields {
   display: grid;
-  grid-template-columns: minmax(180px, 1.5fr) minmax(200px, 1.7fr) 76px 68px 92px 92px minmax(112px, .9fr) 104px 104px 38px;
-  gap: 10px;
+  grid-template-columns: minmax(0, 1.8fr) minmax(0, 1.2fr) 76px 68px 92px 92px minmax(0, .9fr) 104px 78px 34px;
+  gap: 8px;
   align-items: start;
 }
 
@@ -101,7 +101,6 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 6px;
 }
 
 .product-spec-cell > textarea {
@@ -109,37 +108,57 @@
   width: 100%;
 }
 
+/* 规格和技术要求与其它字段同高，默认只占一行；内容多时在框内滚动。 */
 .product-spec-cell .product-spec-field {
-  min-height: 66px;
+  height: 36px;
+  min-height: 36px;
+  padding-block: 7px;
+  line-height: 1.4;
+  resize: none;
 }
 
-.product-spec-cell .product-remark-field {
-  min-height: 30px;
-  height: 30px;
-  padding-block: 5px;
+/* 行备注独占产品行下方的整行，使用单行输入。 */
+.product-remark-field {
+  grid-column: 1 / 9;
+  width: 100%;
+  max-width: 100%;
+  min-height: 32px;
+  height: 32px;
+  padding: 0 11px;
   font-size: 12px;
+}
+
+/* 删除按钮固定为 34px，避免超出最后一列或被卡片裁切。 */
+.product-row .delete-action {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  justify-self: center;
+  align-self: start;
 }
 
 /* 个人垫付开关：开启后保存订单会为当前录入人生成该行成本的报销记录。 */
 .advance-cell {
   display: flex;
   min-width: 0;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
+  grid-column: 9;
+  grid-row: 1 / span 2;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
 }
 
 .advance-switch {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 6px 4px 4px;
+  gap: 0;
+  padding: 4px;
   border: 0;
   border-radius: 999px;
   background: transparent;
   color: var(--muted);
-  font-size: 12px;
-  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -183,14 +202,6 @@
   left: 14px;
 }
 
-.advance-hint {
-  padding-left: 4px;
-  color: var(--teal);
-  font-size: 11px;
-  line-height: 1.35;
-  white-space: normal;
-}
-
 /* 订单详情沿用下单明细列顺序，规格列允许换行，行备注作为补充说明展示。 */
 .detail-spec {
   min-width: 220px;
@@ -228,14 +239,22 @@
   font-size: 12px;
   font-weight: 700;
 }
-@media (max-width: 1100px) {
+@media (max-width: 1280px) {
   .repeat-row.editor-row,
   .repeat-header-fields {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .product-spec-cell,
-  .advance-cell {
+  .product-spec-cell {
     align-self: start;
+  }
+  .advance-cell {
+    grid-column: auto;
+    grid-row: auto;
+    align-self: start;
+    justify-content: flex-start;
+  }
+  .product-remark-field {
+    grid-column: 1 / -1;
   }
 }
 @media (max-width: 700px) {

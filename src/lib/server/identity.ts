@@ -1,9 +1,9 @@
 import type { ArtifactVisitor } from '$lib/artifact-visitor';
-import { getOrderDb } from '$lib/server/order-db';
+import { getOrderDb, isDepartmentApprover } from '$lib/server/order-db';
+import { ADMIN_UID, departments, reimbursementActionRoles, hasAnyRole } from '$lib/permissions';
 
-export const ADMIN_UID = 826;
+export { ADMIN_UID, departments };
 export const ADMIN_USERNAME = 'catsco';
-export const departments = ['商务', '内务', '策划', '设计', '执行'] as const;
 export const employeeRoles = ['executor', 'designer', 'planner', 'manager', 'finance', 'owner'] as const;
 export type EmployeeRole = typeof employeeRoles[number];
 export type Employee = {
@@ -91,6 +91,12 @@ export function listActiveEmployees(): Pick<Employee, 'catsco_uid' | 'display_na
 export function getEmployeeDisplayName(uid: number): string | null {
   const row = getOrderDb().prepare('SELECT display_name FROM employees WHERE catsco_uid=?').get(uid) as { display_name: string } | undefined;
   return row?.display_name?.trim() || null;
+}
+
+/** 审核入口：固定角色或部门配置的审核人都可进入，具体节点仍由报销记录逐条判定。 */
+export function canUseReimbursementReview(identity: CurrentIdentity | null | undefined): boolean {
+  if (!identity) return false;
+  return hasAnyRole(identity, reimbursementActionRoles) || isDepartmentApprover(identity.uid);
 }
 
 export function listEmployees(): Employee[] {

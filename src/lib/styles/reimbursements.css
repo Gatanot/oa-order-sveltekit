@@ -73,3 +73,41 @@
   min-width: 0;
   margin-bottom: 0;
 }
+
+/* 当前节点审核人在状态提示与详情中展示，列表行只保留状态标签避免撑高表格。 */
+.approval-history ul {
+  display: grid;
+  gap: 5px;
+  margin: 7px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.approval-history li {
+  display: grid;
+  gap: 1px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  background: #f7faf9;
+}
+
+.approval-history li b {
+  display: block;
+  margin: 0;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.approval-history li span {
+  display: block;
+  margin: 0;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.approval-history li small {
+  display: block;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}

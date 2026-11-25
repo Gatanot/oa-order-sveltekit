@@ -25,6 +25,6 @@ export const PATCH: RequestHandler = async (event) => {
   if (identity.uid !== ADMIN_UID && row.employee_uid != null && row.employee_uid === identity.uid) {
     return new Response(JSON.stringify({ error: { code: 'FORBIDDEN', message: '不能审核本人提交的报销' } }), { status: 403 });
   }
-  if (!canAdvanceReimbursement(row.status, String(data.status || ''), identity.role)) return new Response(JSON.stringify({ error: { code: 'FORBIDDEN', message: '当前角色或状态不能执行此操作' } }), { status: 403 });
+  if (!canAdvanceReimbursement(row, String(data.status || ''), identity)) return new Response(JSON.stringify({ error: { code: 'FORBIDDEN', message: '当前审核人、状态不能执行此操作' } }), { status: 403 });
   return action(() => ({ data: updateReimbursement(event.params.id, String(data.status || ''), identity.displayName, String(data.reject_reason || ''), identity.uid) }));
 };
