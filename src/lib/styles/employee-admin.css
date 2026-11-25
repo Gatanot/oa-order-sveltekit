@@ -327,70 +327,100 @@
   vertical-align: middle;
 }
 
-/* 审批设置：搜索贴近表头，空单元格只保留一个占位符。 */
-.approver-heading {
-  align-items: center;
-  gap: 12px;
+/* 审批设置：主表只展示结果，点击“配置”后按级别选择审核人。 */
+.approver-summary {
+  display: block;
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.approver-search-group {
-  display: flex;
-  min-width: 220px;
-  flex: 0 1 340px;
-  align-items: center;
-  gap: 6px;
-}
-
-.approver-search {
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.approver-search-clear {
-  width: 30px;
-  height: 30px;
-  min-width: 30px;
-  min-height: 30px;
-  flex-basis: 30px;
-}
-
-.approver-hint {
-  margin: 0 0 12px;
-}
-
-.approver-saved {
-  display: inline-flex;
-  width: 34px;
-  height: 34px;
-  align-items: center;
-  justify-content: center;
+.approver-summary.is-default {
   color: var(--muted);
 }
 
-.approver-state {
+.approver-config-action {
+  min-height: 32px;
+}
+
+.approver-editor-modal {
+  width: min(820px, 100%);
+}
+
+.approver-editor-body {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+.approver-editor-body > .search-field {
+  display: flex;
+  align-items: center;
+}
+
+.approver-editor-modal .search-field input {
+  height: 34px;
+  min-height: 34px;
+  margin: 0;
+  padding: 0 0 0 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.approver-editor-modal .search-field input:focus {
+  border: 0;
+  box-shadow: none;
+}
+
+.approver-matrix table {
+  min-width: 480px;
+}
+
+.approver-level-column {
+  width: 16.6%;
+  text-align: center;
+}
+
+.approver-level-column small,
+.approver-employee-meta {
   display: block;
-  margin-top: 3px;
+  margin-top: 2px;
   color: var(--muted);
   font-size: 11px;
   font-weight: 400;
 }
 
-.approver-state.is-configured {
-  color: var(--teal);
+.approver-check-cell {
+  text-align: center;
 }
 
-.approver-state.is-dirty {
-  color: var(--amber);
-}
-
-.approver-cell-head {
-  display: flex;
+.approver-matrix .approver-check {
+  display: inline-flex;
+  min-width: 32px;
+  min-height: 32px;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 2px;
-  padding: 0 6px;
-  color: var(--muted);
-  font-size: 11px;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.approver-matrix .approver-check input[type="checkbox"] {
+  display: inline-block;
+  margin: 0;
+}
+
+.approver-matrix tbody tr.is-assigned {
+  background: #f8faff;
+}
+
+.approver-matrix tbody tr.is-assigned:hover {
+  background: #f1f5ff;
+}
+
+.approver-matrix .empty-table {
+  min-height: 120px;
 }
 
 @media (max-width: 760px) {
@@ -400,11 +430,6 @@
 
   .role-guide-result {
     margin-left: 0;
-  }
-
-  .approver-search-group {
-    min-width: 0;
-    flex-basis: 100%;
   }
 }
 /* 执行公司只有名称与操作两列，不沿用员工明细的固定列宽。 */
@@ -419,12 +444,12 @@
 }
 
 .employee-page .approver-admin .employee-table-wrap table {
-  min-width: 760px;
+  min-width: 680px;
   table-layout: fixed;
 }
 
 .employee-page .approver-admin .employee-table-wrap :is(th, td):nth-child(1) {
-  width: 13%;
+  width: 14%;
 }
 
 .employee-page .approver-admin .employee-table-wrap :is(th, td):nth-child(2),
@@ -434,80 +459,11 @@
 }
 
 .employee-page .approver-admin .employee-table-wrap :is(th, td):nth-child(5) {
-  width: 12%;
+  width: 11%;
 }
 
 .approver-table-wrap td {
-  vertical-align: top;
-}
-
-.approver-table-wrap th small {
-  margin-top: 4px;
-  font-weight: 400;
-}
-
-.approver-cell {
-  display: flex;
-  max-height: 176px;
-  min-width: 0;
-  overflow-y: auto;
-  flex-direction: column;
-  gap: 1px;
-  padding: 2px 0;
-  scrollbar-width: thin;
-}
-
-.approver-option {
-  display: flex;
-  min-height: 28px;
-  align-items: center;
-  gap: 8px;
-  padding: 3px 6px;
-  border-radius: var(--cc-radius-sm);
-  color: var(--ink);
-  font-size: 12px;
-  line-height: 1.4;
-  cursor: pointer;
-}
-
-.approver-option:hover {
-  background: var(--cc-hover);
-}
-
-.approver-option:has(input:checked) {
-  background: var(--blue-soft);
-}
-
-/* 审批人多选是普通复选框；员工表的开关样式仅用于启用状态。 */
-.employee-page .approver-admin .employee-table-wrap input[type="checkbox"] {
-  position: static;
-  width: 16px;
-  min-width: 16px;
-  height: 16px;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  appearance: auto;
-  background: none;
-  accent-color: var(--blue);
-}
-
-.employee-page .approver-admin .employee-table-wrap input[type="checkbox"]::before {
-  content: none;
-}
-
-.approver-option span {
-  overflow: hidden;
-  flex: 1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.approver-option small {
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 400;
-  white-space: nowrap;
+  vertical-align: middle;
 }
 
 .approver-admin .employee-error,

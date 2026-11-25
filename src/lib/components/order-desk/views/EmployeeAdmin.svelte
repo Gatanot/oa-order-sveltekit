@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getContext, onMount } from 'svelte';
-  import { ArrowRight, Check, CircleCheck, Info, Pencil, Plus, Save, Search, ShieldCheck, Trash2, X } from 'lucide-svelte';
+  import { ArrowRight, CircleCheck, Info, Pencil, Plus, Save, Search, ShieldCheck, Trash2, X } from 'lucide-svelte';
   import { api } from '$lib/api';
   import WorkbenchListFilters from '../WorkbenchListFilters.svelte';
 
@@ -78,6 +78,11 @@
     }
   };
   const guideRoles = ['owner', 'manager', 'finance', 'executor', 'designer', 'planner', 'pending'];
+  const approverLayers = [
+    { layer: 1 as const, label: '一级审核' },
+    { layer: 2 as const, label: '二级审核' },
+    { layer: 3 as const, label: '三级审核' }
+  ];
 
   function roleInfo(role: string): RoleMeta {
     return roleMeta[role] || { label: roleLabels[role] || role, summary: '自定义业务身份', permissions: [] };
@@ -126,6 +131,7 @@
   let approverSaving = $state('');
   let approverError = $state('');
   let approverSuccess = $state('');
+  let approverEditorDepartment = $state('');
   let savingEmployee = $state(false);
   let creatingEmployee = $state(false);
   let editingUid = $state<number | null>(null);
@@ -279,14 +285,49 @@
   function approverIds(department: string, layer: 1 | 2 | 3) {
     return approverDraft[department]?.[String(layer) as '1' | '2' | '3'] || [];
   }
-  function approverCandidatesFor(department: string, layer: 1 | 2 | 3) {
-    const selected = new Set(approverIds(department, layer));
+  function savedApprovers(department: string, layer: 1 | 2 | 3) {
+    return approverConfig?.approvers?.[department]?.[String(layer)] || [];
+  }
+  function approverNames(department: string, layer: 1 | 2 | 3) {
+    return savedApprovers(department, layer).map((approver) => approver.display_name || approver.username);
+  }
+  function defaultApproverHint(layer: 1 | 2 | 3) {
+    const roles = approverConfig?.layers.find((item) => item.layer === layer)?.defaultRoles || [];
+    if (!roles.length) return '使用默认角色';
+    return `默认：${roles.map((role) => role === 'admin' ? '系统管理员' : roleLabel(role)).join('、')}`;
+  }
+  function approverSummary(department: string, layer: 1 | 2 | 3) {
+    const names = approverNames(department, layer);
+    if (!names.length) return '默认';
+    return names.length > 2 ? `${names.slice(0, 2).join('、')} +${names.length - 2}` : names.join('、');
+  }
+  function approverTitle(department: string, layer: 1 | 2 | 3) {
+    const names = approverNames(department, layer);
+    return names.length ? names.join('、') : defaultApproverHint(layer);
+  }
+  function approverEmployeeRows(department: string) {
+    const selected = new Set<number>();
+    for (const { layer } of approverLayers) {
+      for (const uid of approverIds(department, layer)) selected.add(uid);
+    }
     const selectedEmployees = employees.filter((employee) => selected.has(employee.catsco_uid));
+    const found = new Set(selectedEmployees.map((employee) => employee.catsco_uid));
+    const missingSelected: EmployeeRow[] = [];
+    for (const uid of selected) {
+      if (found.has(uid)) continue;
+      let approver: ApproverUser | undefined;
+      for (const { layer } of approverLayers) {
+        approver = savedApprovers(department, layer).find((item) => Number(item.employee_uid) === uid);
+        if (approver) break;
+      }
+      if (approver) {
+        missingSelected.push({ catsco_uid: uid, username: approver.username, display_name: approver.display_name, department: '', role: approver.role, active: false });
+      }
+    }
     const otherCandidates = approverCandidates.filter((employee) => !selected.has(employee.catsco_uid)
       && (!approverSearchText || `${employee.display_name} ${employee.username} ${employee.department}`.toLowerCase().includes(approverSearchText)));
-    return [...selectedEmployees, ...otherCandidates]
-      .sort((a, b) => Number(selected.has(b.catsco_uid)) - Number(selected.has(a.catsco_uid))
-        || a.department.localeCompare(b.department, 'zh-CN')
+    return [...selectedEmployees, ...missingSelected, ...otherCandidates]
+      .sort((a, b) => a.department.localeCompare(b.department, 'zh-CN')
         || a.display_name.localeCompare(b.display_name, 'zh-CN'));
   }
   function approverDirty(department: string) {
@@ -298,7 +339,25 @@
     return false;
   }
   function approverConfigured(department: string) {
-    return (['1', '2', '3'] as const).some((layer) => approverIds(department, Number(layer) as 1 | 2 | 3).length > 0);
+    return approverLayers.some(({ layer }) => approverNames(department, layer).length > 0);
+  }
+  function openApproverEditor(department: string) {
+    approverError = '';
+    approverSuccess = '';
+    approverSearch = '';
+    approverDraft = {
+      ...approverDraft,
+      [department]: approverConfig ? departmentDraftFrom(approverConfig, department) : emptyLayerDraft()
+    };
+    approverEditorDepartment = department;
+  }
+  async function closeApproverEditor() {
+    if (approverSaving) return;
+    if (approverEditorDepartment && approverDirty(approverEditorDepartment)
+      && !await desk.requestConfirm('放弃未保存修改', '审批设置尚未保存，确定关闭吗？')) return;
+    approverEditorDepartment = '';
+    approverSearch = '';
+    approverError = '';
   }
   function toggleApprover(department: string, layer: 1 | 2 | 3, uid: number, checked: boolean) {
     const current = approverIds(department, layer);
@@ -323,9 +382,10 @@
         department,
         layers: approverDraft[department] || emptyLayerDraft()
       });
-      // 只同步刚保存的部门，保留其他部门尚未保存的修改。
       approverConfig = result.data;
       approverDraft = { ...approverDraft, [department]: departmentDraftFrom(result.data, department) };
+      approverEditorDepartment = '';
+      approverSearch = '';
       approverSuccess = `已保存${department}的三级审批设置`;
     } catch (reason) {
       approverError = reason instanceof Error ? reason.message : '审批设置保存失败';
@@ -588,6 +648,7 @@
 <svelte:window onkeydown={(event) => {
   if (event.key !== 'Escape') return;
   if (roleGuideOpen) { closeRoleGuide(); return; }
+  if (approverEditorDepartment) { closeApproverEditor(); return; }
   if (createOpen && !creatingEmployee) closeCreate();
 }} />
 
@@ -732,19 +793,10 @@
     </section>
 
     <section class="employee-admin approver-admin">
-      <div class="table-tools workbench-table-tools approver-heading">
+      <div class="table-tools workbench-table-tools">
         <div class="order-table-heading"><h3>报销三级审批设置</h3><span class="filter-result">按报销人所属部门匹配</span></div>
-        {#if approverCandidates.length}
-          <div class="approver-search-group">
-            <label class="search-field approver-search"><Search size={16} /><input bind:value={approverSearch} aria-label="搜索审核人" placeholder="搜索姓名 / 用户名 / 部门" title="已选审核人不会被搜索隐藏" /></label>
-            {#if approverSearch}<button class="icon-control approver-search-clear" type="button" title="清空审核人搜索" aria-label="清空审核人搜索" onclick={() => approverSearch = ''}><X size={15} /></button>{/if}
-          </div>
-        {/if}
       </div>
-      {#if approverCandidates.length}
-        <p class="field-hint approver-hint" title="默认流程：一级由系统管理员或管理人员审核，二级由财务复核，三级由老板确认；审核人不能审核本人提交的报销。">每级可配多人，任一人处理即可；未配置时按默认流程。</p>
-      {/if}
-      {#if approverError}<p class="employee-error" role="alert">{approverError}</p>{/if}
+      {#if approverError && !approverEditorDepartment}<p class="employee-error" role="alert">{approverError}</p>{/if}
       {#if approverSuccess}<p class="employee-success" role="status">{approverSuccess}</p>{/if}
       {#if approverCandidates.length || departments.some(approverConfigured)}
         <div class="employee-table-wrap approver-table-wrap">
@@ -752,51 +804,21 @@
             <thead>
               <tr>
                 <th>部门</th>
-                <th>一级审核者</th>
-                <th>二级审核者</th>
-                <th>三级审核者</th>
+                {#each approverLayers as item}<th>{item.label}</th>{/each}
                 <th>操作</th>
               </tr>
             </thead>
             <tbody>
               {#each departments as department}
-                {@const dirty = approverDirty(department)}
-                {@const configured = approverConfigured(department)}
                 <tr>
-                  <td>
-                    <b>{department}</b>
-                    {#if dirty}<small class="approver-state is-dirty">未保存</small>
-                    {:else if configured}<small class="approver-state is-configured">已配置</small>{/if}
-                  </td>
-                  {#each [1, 2, 3] as layer}
-                    {@const ids = approverIds(department, layer as 1 | 2 | 3)}
-                    <td>
-                      <div class="approver-cell">
-                        {#if ids.length}<div class="approver-cell-head"><span>已选 {ids.length} 人</span></div>{/if}
-                        {#each approverCandidatesFor(department, layer as 1 | 2 | 3) as employee (employee.catsco_uid)}
-                          <label class="approver-option">
-                            <input
-                              type="checkbox"
-                              checked={ids.includes(employee.catsco_uid)}
-                              disabled={approverSaving === department}
-                              onchange={(event) => toggleApprover(department, layer as 1 | 2 | 3, employee.catsco_uid, event.currentTarget.checked)}
-                            />
-                            <span>{employee.display_name || employee.username}</span>
-                            <small>{employee.department || '未设部门'}{#if !Boolean(employee.active) || employee.role === 'pending'} · 已停用{/if}</small>
-                          </label>
-                        {:else}
-                          <span class="muted" title={approverSearch ? '没有匹配的审核人' : '暂无可选审核人'}>—</span>
-                        {/each}
-                      </div>
-                    </td>
+                  <td><b>{department}</b></td>
+                  {#each approverLayers as item}
+                    {@const summary = approverSummary(department, item.layer)}
+                    <td><span class="approver-summary" class:is-default={summary === '默认'} title={approverTitle(department, item.layer)}>{summary}</span></td>
                   {/each}
                   <td>
                     <div class="employee-row-actions">
-                      {#if dirty}
-                        <button class="primary-action" type="button" disabled={approverSaving === department} onclick={() => saveDepartmentApprovers(department)}>{approverSaving === department ? '保存中...' : '保存'}</button>
-                      {:else}
-                        <span class="approver-saved" title="没有未保存的修改"><Check size={16} /><span class="visually-hidden">没有未保存的修改</span></span>
-                      {/if}
+                      <button class="outline-action approver-config-action" type="button" onclick={() => openApproverEditor(department)}><Pencil size={14} />配置</button>
                     </div>
                   </td>
                 </tr>
@@ -913,6 +935,71 @@
       <div class="project-modal-footer role-guide-footer">
         <span>系统管理员账号固定；员工刷新页面后生效。</span>
         <button class="outline-action" type="button" onclick={closeRoleGuide}>关闭</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if approverEditorDepartment}
+  <div class="project-modal-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) closeApproverEditor(); }}>
+    <div class="project-modal approver-editor-modal" role="dialog" aria-modal="true" aria-labelledby="approver-editor-title">
+      <div class="project-modal-head">
+        <div>
+          <p class="section-kicker">审批设置</p>
+          <h2 id="approver-editor-title">{approverEditorDepartment} · 三级审批</h2>
+          <span>每级可多选，任一人处理即可。</span>
+        </div>
+        <button class="icon-control" type="button" aria-label="关闭审批设置" disabled={approverSaving === approverEditorDepartment} onclick={closeApproverEditor}><X size={18} /></button>
+      </div>
+      <div class="project-modal-body approver-editor-body">
+        <label class="search-field"><Search size={16} /><input bind:value={approverSearch} aria-label="搜索审核人" placeholder="搜索姓名 / 用户名 / 部门" /></label>
+        {#if approverError}<p class="employee-error" role="alert">{approverError}</p>{/if}
+        <div class="table-panel approver-matrix">
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>员工</th>
+                  {#each approverLayers as item}
+                    {@const count = approverIds(approverEditorDepartment, item.layer).length}
+                    <th class="approver-level-column">{item.label}<small title={defaultApproverHint(item.layer)}>{count ? `已选 ${count} 人` : '默认'}</small></th>
+                  {/each}
+                </tr>
+              </thead>
+              <tbody>
+                {#each approverEmployeeRows(approverEditorDepartment) as employee (employee.catsco_uid)}
+                  {@const assigned = approverLayers.some(({ layer }) => approverIds(approverEditorDepartment, layer).includes(employee.catsco_uid))}
+                  <tr class:is-assigned={assigned}>
+                    <td>
+                      <b>{employee.display_name || employee.username}</b>
+                      <small class="approver-employee-meta">{employee.department || '未设部门'}{#if !Boolean(employee.active) || employee.role === 'pending'} · 已停用{/if}</small>
+                    </td>
+                    {#each approverLayers as item}
+                      <td class="approver-check-cell">
+                        <label class="approver-check">
+                          <input
+                            type="checkbox"
+                            checked={approverIds(approverEditorDepartment, item.layer).includes(employee.catsco_uid)}
+                            disabled={approverSaving === approverEditorDepartment}
+                            aria-label={`${employee.display_name || employee.username} · ${item.label}`}
+                            onchange={(event) => toggleApprover(approverEditorDepartment, item.layer, employee.catsco_uid, event.currentTarget.checked)}
+                          />
+                        </label>
+                      </td>
+                    {/each}
+                  </tr>
+                {:else}
+                  <tr><td colspan="4"><div class="empty-table">无匹配审核人</div></td></tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="project-modal-footer">
+        <span aria-live="polite">{approverDirty(approverEditorDepartment) ? '有未保存的修改' : '没有修改'}</span>
+        <button class="outline-action" type="button" disabled={approverSaving === approverEditorDepartment} onclick={closeApproverEditor}>取消</button>
+        <button class="primary-action" type="button" disabled={approverSaving === approverEditorDepartment || !approverDirty(approverEditorDepartment)} onclick={() => saveDepartmentApprovers(approverEditorDepartment)}>{approverSaving === approverEditorDepartment ? '保存中...' : '保存'}</button>
       </div>
     </div>
   </div>
