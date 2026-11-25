@@ -83,7 +83,7 @@ export function runCatalogTool(tool: string, input: unknown, identity: CurrentId
     const where = clauses.join(' AND ');
     const total = (db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${where}`).get(...values) as { count: number }).count;
     // 不暴露 raw_data 和来源文件等非本工具需要的内容。
-    const columns = !searching ? 'id,kind,owner_name,updated_at' : libraryKind === 'cost'
+    const columns = !searching ? 'id,kind,owner_name,library_name,updated_at' : libraryKind === 'cost'
       ? 'id,source_id,item_no,category,name,specification,unit,supplier_name,cost_unit,min_quantity,remark'
       : 'id,source_id,item_no,category,name,specification,unit,customer_name,project_name,estimated_quantity,price_incl_tax,max_price,remark';
     const rows = db.prepare(`SELECT ${columns} FROM ${table} WHERE ${where} ORDER BY ${searching ? 'name' : 'owner_name'},id LIMIT ? OFFSET ?`).all(...values, limit, offset) as Record<string, unknown>[];

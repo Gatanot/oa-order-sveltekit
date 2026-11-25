@@ -1,12 +1,21 @@
 import { json } from '@sveltejs/kit';
 import { addAuditLog } from '$lib/server/order-db';
-import { departments, employeeManageRoles, employeeRoles, hasAnyRole, listEmployees, updateEmployee, canManageEmployee } from '$lib/server/identity';
+import { departments, employeeManageRoles, employeeRoleRank, employeeRoles, hasAnyRole, listEmployees, updateEmployee, canManageEmployee } from '$lib/server/identity';
 import type { RequestHandler } from './$types';
 import type { CurrentIdentity } from '$lib/server/identity';
 
 function requireAdmin(identity: CurrentIdentity | null) {
   if (!hasAnyRole(identity, employeeManageRoles)) return json({ error: { code: 'FORBIDDEN', message: '没有员工管理权限' } }, { status: 403 });
   return null;
+}
+
+// 新员工身份同样遵守层级授权：不能授予不低于自己的身份，管理人员也不能授予财务身份。
+function canAssignNewRole(identity: CurrentIdentity | null, role: string) {
+  if (!identity) return false;
+  if (identity.role === 'admin') return true;
+  if (identity.role !== 'manager' && identity.role !== 'owner') return false;
+  if (employeeRoleRank(role) >= employeeRoleRank(identity.role)) return false;
+  return !(identity.role === 'manager' && role === 'finance');
 }
 
 export const GET: RequestHandler = async ({ locals }) => {
@@ -32,13 +41,26 @@ export const POST: RequestHandler = async ({ locals, request }) => {
   if (!Number.isSafeInteger(uid) || uid <= 0 || !username || uid === 826) {
     return json({ error: { code: 'INVALID_REQUEST', message: 'UID 或用户名格式不正确' } }, { status: 400 });
   }
+  const role = String(data?.role || 'pending');
+  const department = String(data?.department || '').trim();
+  const displayName = String(data?.display_name || '').trim() || username;
+  const active = role === 'pending' ? 0 : data?.active === false ? 0 : 1;
+  if (role !== 'pending' && !employeeRoles.includes(role as typeof employeeRoles[number])) {
+    return json({ error: { code: 'INVALID_ROLE', message: '业务身份格式不正确' } }, { status: 400 });
+  }
+  if (department && !departments.includes(department as typeof departments[number])) {
+    return json({ error: { code: 'INVALID_DEPARTMENT', message: '所属部门格式不正确' } }, { status: 400 });
+  }
+  if (!canAssignNewRole(identity, role)) {
+    return json({ error: { code: 'FORBIDDEN', message: '不能授予该业务身份' } }, { status: 403 });
+  }
   try {
     const { getOrderDb } = await import('$lib/server/order-db');
     const timestamp = new Date().toISOString();
-    getOrderDb().prepare('INSERT INTO employees(catsco_uid,username,display_name,department,role,active,created_at,updated_at) VALUES(?,?,?,\'\',\'pending\',0,?,?)')
-      .run(uid, username, username, timestamp, timestamp);
-    addAuditLog({ actorName: identity?.displayName, actorUid: identity?.uid, action: 'create_employee', entityType: 'employee', entityId: String(uid) });
-    return json({ data: { catsco_uid: uid, username, display_name: username, department: '', role: 'pending', active: 0 } }, { status: 201 });
+    getOrderDb().prepare('INSERT INTO employees(catsco_uid,username,display_name,department,role,active,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)')
+      .run(uid, username, displayName, department, role, active, timestamp, timestamp);
+    addAuditLog({ actorName: identity?.displayName, actorUid: identity?.uid, action: 'create_employee', entityType: 'employee', entityId: String(uid), detail: { role, department, active } });
+    return json({ data: { catsco_uid: uid, username, display_name: displayName, department, role, active } }, { status: 201 });
   } catch {
     return json({ error: { code: 'EMPLOYEE_EXISTS', message: '该 UID 已存在或无法创建' } }, { status: 409 });
   }

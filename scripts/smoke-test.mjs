@@ -128,7 +128,7 @@ async function withMigratedFixture(name, legacyVersion, prepare, assertions) {
   source.close();
   const legacy = new Database(path);
   prepare(legacy);
-  // fixture 复制自当前（v29）库；模拟 v29 之前的结构时，把已合并的订单来源拆回旧的两列。
+  // fixture 复制自当前（v30）库；模拟 v29 之前的结构时，把已合并的订单来源拆回旧的两列。
   if (Number(legacyVersion) < 29) {
     legacy.exec("ALTER TABLE orders_simple DROP COLUMN order_source; ALTER TABLE orders_simple ADD COLUMN contact TEXT NOT NULL DEFAULT ''; ALTER TABLE orders_simple ADD COLUMN customer_department TEXT NOT NULL DEFAULT '';");
     legacy.prepare("UPDATE orders_simple SET contact='旧联系人', customer_department='旧部门'").run();
@@ -485,7 +485,9 @@ try {
   assert.match(result.response.headers.get('content-type') || '', /spreadsheet/);
 
   const db = new Database(databasePath, { readonly: true });
-  assert.equal(db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '29');
+  assert.equal(db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '30');
+  assert.ok(db.prepare("SELECT COUNT(*) FROM pragma_table_info('catalog_sources') WHERE name='library_name'").pluck().get(), 'v30 应为资料库补充名称字段');
+  assert.equal(db.prepare("PRAGMA index_list('catalog_sources')").all().filter((index) => index.unique && index.origin !== 'pk').length, 0, 'v30 应移除客户/厂商唯一限制，允许同一客户多个报价库');
   assert.equal(db.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('catalog_quote_items','catalog_cost_items')").pluck().get(), 2, 'v27 应创建报价库/成本库分表');
   assert.equal(db.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='catalog_items'").pluck().get(), 0, 'v27 应移除旧的 catalog_items');
   assert.equal(db.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='catalog_id'").pluck().get(), 0, 'v27 应移除 orders_simple.catalog_id');
@@ -518,7 +520,7 @@ try {
     legacy.prepare("UPDATE orders_simple SET status='待确认'").run();
     legacy.pragma('ignore_check_constraints = OFF');
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '29');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '30');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('audit_logs') WHERE name='actor_uid'").pluck().get(), 'v23 数据库迁移后应补齐审计 actor_uid');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v23 数据库重启后应保留订单');
     assert.equal(migrated.prepare('SELECT order_source FROM orders_simple LIMIT 1').pluck().get(), '旧部门-旧联系人', 'v29 迁移应按部门-联系人合并订单来源');
@@ -540,7 +542,7 @@ try {
     `);
     legacy.pragma('foreign_keys = ON');
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '29');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '30');
     assert.equal(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('catalog_quote_items') WHERE name IN ('price_excl_tax','tax_rate')").pluck().get(), 0, 'v28 应移除报价税务列');
     assert.equal(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('catalog_cost_items') WHERE name IN ('cost_unit_excl_tax','tax_rate')").pluck().get(), 0, 'v28 应移除成本税务列');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM order_products').pluck().get(), 1, '迁移不应丢失订单项');
@@ -564,7 +566,7 @@ try {
       ALTER TABLE audit_logs ADD COLUMN actor_user_id TEXT;
     `);
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '29');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '30');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='idempotency_key'").pluck().get(), 'v18 数据库应补齐幂等字段');
     assert.equal(migrated.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('users','sessions')").pluck().get(), 0, '迁移后不应保留登录表');
     for (const [table, column] of [['orders_simple', 'created_by_user_id'], ['reimbursements_simple', 'employee_user_id'], ['reimbursements_simple', 'voucher_archived_by_user_id'], ['order_attachments', 'uploaded_by_user_id'], ['reimbursement_attachments', 'uploaded_by_user_id'], ['catalog_sources', 'maintained_by_user_id'], ['audit_logs', 'actor_user_id']]) {
@@ -578,7 +580,7 @@ try {
     restoreLegacyCatalog(legacy);
     legacy.exec('ALTER TABLE orders_simple DROP COLUMN planner; ALTER TABLE orders_simple DROP COLUMN execution_company;');
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '29');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '30');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='planner'").pluck().get(), 'v20 数据库应补齐策划人字段');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='execution_company'").pluck().get(), 'v20 数据库应补齐执行公司字段');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v20 迁移不应丢失订单');
@@ -589,7 +591,7 @@ try {
     restoreLegacyCatalog(legacy);
     legacy.exec('ALTER TABLE orders_simple DROP COLUMN execution_company;');
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '29');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '30');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='execution_company'").pluck().get(), 'v21 数据库应补齐执行公司字段');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v21 迁移不应丢失订单');
     assert.deepEqual(migrated.prepare('PRAGMA foreign_key_check').all(), []);
@@ -931,7 +933,7 @@ try {
     );
   });
 
-  console.log('Smoke test passed: public workbench, catalog import/copy, creator snapshots, order totals, independent attachments, order-linked reimbursements, reimbursement filters/state machine, voucher idempotency, aligned exports, employee management authorization, execution company management, local entry identity and catalog tools preview/money/conflict handling, failure-closed web AI routes, audit and v18/v20/v21/v23/v27 migrations.');
+  console.log('Smoke test passed: public workbench, catalog import/copy, creator snapshots, order totals, independent attachments, order-linked reimbursements, reimbursement filters/state machine, voucher idempotency, aligned exports, employee management authorization, execution company management, local entry identity and catalog tools preview/money/conflict handling, failure-closed web AI routes, audit and v18/v20/v21/v23/v27/v30 migrations.');
 } finally {
   server.kill('SIGTERM');
   if (localServer) localServer.kill('SIGTERM');

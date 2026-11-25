@@ -66,7 +66,7 @@ export function moneyToCents(value: unknown): number {
 function migrate(db: Database.Database) {
   db.exec('CREATE TABLE IF NOT EXISTS schema_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)');
   const version = db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").get() as { value: string } | undefined;
-  if (version?.value === '29' || version?.value === '28' || version?.value === '27' || version?.value === '26' || version?.value === '25' || version?.value === '24' || version?.value === '23' || version?.value === '22') return;
+  if (version && Number(version.value) >= 22) return;
   if (version?.value === '21') {
     db.exec(`ALTER TABLE orders_simple ADD COLUMN execution_company TEXT NOT NULL DEFAULT ''; UPDATE schema_meta SET value='22' WHERE key='order_app_version';`);
     return;
@@ -584,6 +584,39 @@ export function getOrderDb() {
       const v29Violations = instance.pragma('foreign_key_check') as Array<Record<string, unknown>>;
       if (v29Violations.length) throw new Error(`v29 迁移后存在 ${v29Violations.length} 条外键异常`);
     }
+    // v30：同一客户可维护多个报价库/成本库，移除 kind+owner 唯一限制并补充库名称。
+    if (appVersion < 30) {
+      instance.pragma('foreign_keys = OFF');
+      try {
+        instance.transaction(() => {
+          instance!.exec(`
+            CREATE TABLE catalog_sources_v30(
+              id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('quote','cost')),
+              owner_name TEXT NOT NULL, library_name TEXT NOT NULL DEFAULT '',
+              source_file TEXT NOT NULL DEFAULT '', source_method TEXT NOT NULL DEFAULT 'manual',
+              active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+              import_summary_json TEXT NOT NULL DEFAULT '{}'
+            );
+            INSERT INTO catalog_sources_v30(id,kind,owner_name,library_name,source_file,source_method,active,created_at,updated_at,import_summary_json)
+              SELECT id,kind,owner_name,
+                CASE WHEN TRIM(COALESCE(source_file,'')) = ''
+                  THEN owner_name
+                  ELSE TRIM(REPLACE(REPLACE(REPLACE(source_file,'.xlsx',''),'.xls',''),'.csv',''))
+                END,
+                source_file,source_method,active,created_at,updated_at,import_summary_json
+              FROM catalog_sources;
+            DROP TABLE catalog_sources;
+            ALTER TABLE catalog_sources_v30 RENAME TO catalog_sources;
+            CREATE INDEX IF NOT EXISTS idx_catalog_sources_owner ON catalog_sources(kind,owner_name,active);
+            UPDATE schema_meta SET value='30' WHERE key='order_app_version';
+          `);
+        })();
+      } finally {
+        instance.pragma('foreign_keys = ON');
+      }
+      const v30Violations = instance.pragma('foreign_key_check') as Array<Record<string, unknown>>;
+      if (v30Violations.length) throw new Error(`v30 迁移后存在 ${v30Violations.length} 条外键异常`);
+    }
     importBundledExcel(instance);
   }
   return instance;
@@ -630,8 +663,9 @@ function importBundledExcel(db: Database.Database) {
       let source = db.prepare('SELECT id FROM catalog_sources WHERE source_file=?').get(file) as { id: string } | undefined;
       if (!source) {
         const sourceId = uuid();
-        db.prepare('INSERT OR IGNORE INTO catalog_sources(id,kind,owner_name,source_file,source_method,active,created_at,updated_at) VALUES(?,?,?,?,?,1,?,?)').run(sourceId, kind, owner, file, 'bundled', now(), now());
-        source = db.prepare('SELECT id FROM catalog_sources WHERE kind=? AND owner_name=?').get(kind, owner) as { id: string };
+        const libraryName = file.replace(/\.[^.]+$/, '');
+        db.prepare('INSERT OR IGNORE INTO catalog_sources(id,kind,owner_name,library_name,source_file,source_method,active,created_at,updated_at) VALUES(?,?,?,?,?,?,1,?,?)').run(sourceId, kind, owner, libraryName, file, 'bundled', now(), now());
+        source = { id: sourceId };
       }
       const workbook = XLSX.read(readFileSync(path), { type: 'buffer' });
       for (const sheet of workbook.SheetNames) {
@@ -707,10 +741,10 @@ export function listCatalog() {
   const quote = db.prepare(`SELECT qi.id,qi.source_id,qi.active,qi.item_no,qi.category,qi.name,qi.specification,qi.unit,
       qi.estimated_quantity,qi.price_incl_tax,qi.max_price,qi.customer_name,qi.project_name,qi.remark,
       qi.source_file,qi.source_sheet,qi.source_type,qi.created_at,
-      cs.kind AS library_kind,cs.owner_name AS source_owner,cs.source_file AS library_file,cs.updated_at AS source_updated_at
+      cs.kind AS library_kind,cs.owner_name AS source_owner,cs.library_name AS source_library,cs.source_file AS library_file,cs.updated_at AS source_updated_at
     FROM catalog_quote_items qi LEFT JOIN catalog_sources cs ON cs.id=qi.source_id
     WHERE qi.active=1 ORDER BY cs.owner_name,qi.category,qi.name`).all();
-  const cost = db.prepare(`SELECT ki.*,cs.kind AS library_kind,cs.owner_name AS source_owner,cs.source_file AS library_file,cs.updated_at AS source_updated_at
+  const cost = db.prepare(`SELECT ki.*,cs.kind AS library_kind,cs.owner_name AS source_owner,cs.library_name AS source_library,cs.source_file AS library_file,cs.updated_at AS source_updated_at
     FROM catalog_cost_items ki LEFT JOIN catalog_sources cs ON cs.id=ki.source_id
     WHERE ki.active=1 ORDER BY cs.owner_name,ki.category,ki.name`).all();
   return { quote, cost };
@@ -720,7 +754,7 @@ export function listCatalogSources() {
   return getOrderDb().prepare(`SELECT cs.*,
       CASE cs.kind WHEN 'cost' THEN (SELECT COUNT(*) FROM catalog_cost_items ki WHERE ki.source_id=cs.id AND ki.active=1)
         ELSE (SELECT COUNT(*) FROM catalog_quote_items qi WHERE qi.source_id=cs.id AND qi.active=1) END AS item_count
-    FROM catalog_sources cs ORDER BY cs.kind,cs.owner_name`).all();
+    FROM catalog_sources cs ORDER BY cs.kind,cs.owner_name,cs.library_name,cs.updated_at DESC`).all();
 }
 
 export function createCatalogSource(data: Record<string, unknown>) {
@@ -741,8 +775,13 @@ export function createCatalogSource(data: Record<string, unknown>) {
       if (!copyItems.length) throw new Error('沿用的资料库暂无有效条目');
     }
     const createdAt = now();
-    db.prepare('INSERT INTO catalog_sources(id,kind,owner_name,source_file,source_method,active,created_at,updated_at,import_summary_json) VALUES(?,?,?,?,?,1,?,?,?)')
-      .run(id, kind, owner, text(data.source_file) || text(copySource?.source_file), copyFromId ? 'copy' : text(data.source_method) || 'manual', createdAt, createdAt, JSON.stringify(copyFromId ? { copied_from: copyFromId, copied_items: copyItems.length, copied_at: createdAt } : {}));
+    const sourceFile = text(data.source_file) || text(copySource?.source_file);
+    const libraryName = text(data.library_name)
+      || text(copySource?.library_name)
+      || sourceFile.replace(/\.[^.]+$/, '')
+      || owner;
+    db.prepare('INSERT INTO catalog_sources(id,kind,owner_name,library_name,source_file,source_method,active,created_at,updated_at,import_summary_json) VALUES(?,?,?,?,?,?,1,?,?,?)')
+      .run(id, kind, owner, libraryName, sourceFile, copyFromId ? 'copy' : text(data.source_method) || 'manual', createdAt, createdAt, JSON.stringify(copyFromId ? { copied_from: copyFromId, copied_items: copyItems.length, copied_at: createdAt } : {}));
     if (copyItems.length) {
       if (kind === 'cost') {
         const insertCost = db.prepare(`INSERT INTO catalog_cost_items(id,source_id,active,item_no,category,name,specification,unit,supplier_name,cost_unit,min_quantity,remark,source_file,source_sheet,source_type,raw_data,created_at)

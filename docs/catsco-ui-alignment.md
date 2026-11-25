@@ -50,6 +50,9 @@ styles. `AppInteractions.svelte` supplies tooltips and dialog focus management.
 - Reimbursements, review, history, catalog and employees share white filter and
   statistics bands, removable conditions, bordered secondary buttons and compact
   left-aligned tables. Statistics describe the current matching records.
+- Customer quotation libraries are grouped by customer. Selecting a customer
+  reveals all of its quotation libraries, and each library opens an item drawer.
+  One customer may own multiple named libraries.
 - Review presents its matching count and total once beside the table heading,
   without a separate statistics band or repeated stage counts. It uses the same
   person filter for its list and export. History export uses

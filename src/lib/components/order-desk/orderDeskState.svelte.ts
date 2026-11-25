@@ -184,9 +184,11 @@ export function createOrderDesk(data: Data) {
   let catalogImportPreview = $state<any>(null);
   let catalogImportFile = $state<File | null>(null);
   let catalogImportOwner = $state("");
+  let catalogImportLibraryName = $state("");
   let catalogImportTargetId = $state("");
   let catalogSourceOpen = $state(false);
   let catalogSourceName = $state("");
+  let catalogSourceLibraryName = $state("");
   let catalogSourceFile = $state<File | null>(null);
   let reimbursementRejectOpen = $state(false);
   let reimbursementRejectReason = $state("");
@@ -1346,6 +1348,7 @@ export function createOrderDesk(data: Data) {
       if (!response.ok) throw new Error(result.error?.message || result.message || "文件解析失败");
       catalogImportFile = file;
       catalogImportOwner = "";
+      catalogImportLibraryName = "";
       catalogImportTargetId = targetId;
       catalogImportPreview = result.data;
     } catch (e) {
@@ -1359,32 +1362,41 @@ export function createOrderDesk(data: Data) {
   function cancelCatalogImport() {
     catalogImportFile = null;
     catalogImportOwner = "";
+    catalogImportLibraryName = "";
     catalogImportTargetId = "";
     catalogImportPreview = null;
   }
-  function openCatalogSourceForm() {
+  function openCatalogSourceForm(customerName = "") {
     if (!requireCatalogManager()) return;
-    catalogSourceName = "";
+    catalogSourceName = typeof customerName === "string" ? customerName : "";
+    catalogSourceLibraryName = "";
     catalogSourceFile = null;
     catalogSourceOpen = true;
   }
   async function submitCatalogSourceForm() {
     if (!requireCatalogManager()) return;
     const owner = catalogSourceName.trim();
+    const libraryName = catalogSourceLibraryName.trim();
     if (!owner) {
       notify(`请填写${catalogKind === "quote" ? "客户公司" : "厂商"}名称`, true);
       return;
     }
+    if (!libraryName) {
+      notify(`请填写${catalogKind === "quote" ? "报价库" : "成本库"}名称`, true);
+      return;
+    }
     if (!catalogSourceFile) {
-      notify("请上传配置文件，新增公司会以文件内容作为资料数据", true);
+      notify("请上传配置文件，新增资料库会以文件内容作为条目数据", true);
       return;
     }
     const file = catalogSourceFile;
     await previewCatalogFile(file);
     if (!catalogImportPreview) return;
     catalogImportOwner = owner;
+    catalogImportLibraryName = libraryName;
     catalogSourceOpen = false;
     catalogSourceName = "";
+    catalogSourceLibraryName = "";
     catalogSourceFile = null;
   }
   function beginCatalogReupload(sourceId: string) {
@@ -1403,7 +1415,8 @@ export function createOrderDesk(data: Data) {
     if (!requireCatalogManager() || !catalogImportFile || !catalogImportPreview?.valid_rows) return;
     if (catalogImportTargetId) {
       const source = catalogSources.find((item) => item.id === catalogImportTargetId);
-      if (!await requestConfirm("替换资料库", `将用新文件替换“${source?.owner_name || "当前资料库"}”的全部有效条目，历史订单不受影响。确定继续吗？`)) return;
+      const sourceName = source?.library_name || source?.owner_name || "当前资料库";
+      if (!await requestConfirm("替换资料库", `将用新文件替换“${sourceName}”的全部有效条目，历史订单不受影响。确定继续吗？`)) return;
     }
     if (!catalogImportTargetId && !catalogImportOwner.trim()) {
       notify(`请填写${catalogKind === "quote" ? "客户公司" : "厂商"}名称`, true);
@@ -1413,7 +1426,14 @@ export function createOrderDesk(data: Data) {
     try {
       let sourceId = catalogImportTargetId;
       if (!sourceId) {
-        const source = await api.post<{ data: Record<string, any> }>("/api/catalog/sources", { kind: catalogKind, owner_name: catalogImportOwner.trim(), source_file: catalogImportFile.name, source_method: "upload", actor: creatorName || "财务人员" });
+        const source = await api.post<{ data: Record<string, any> }>("/api/catalog/sources", {
+          kind: catalogKind,
+          owner_name: catalogImportOwner.trim(),
+          library_name: catalogImportLibraryName.trim() || catalogImportFile.name.replace(/\.[^.]+$/, ""),
+          source_file: catalogImportFile.name,
+          source_method: "upload",
+          actor: creatorName || "财务人员"
+        });
         sourceId = String(source.data.id);
       }
       const form = new FormData();
@@ -1884,7 +1904,7 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "projects", { get: () => projects, set: (value) => { projects = value; } });
   Object.defineProperty(desk, "catalogQuote", { get: () => catalogQuote, set: (value) => { catalogQuote = value; } });
   Object.defineProperty(desk, "catalogCost", { get: () => catalogCost, set: (value) => { catalogCost = value; } });
-  Object.defineProperty(desk, "employees", { get: () => employees });
+  Object.defineProperty(desk, "employees", { get: () => employees, set: (value) => { employees = value; } });
   Object.defineProperty(desk, "catalogSources", { get: () => catalogSources, set: (value) => { catalogSources = value; } });
   Object.defineProperty(desk, "orders", { get: () => orders, set: (value) => { orders = value; } });
   Object.defineProperty(desk, "customerId", { get: () => customerId, set: (value) => { customerId = value; } });
@@ -1947,9 +1967,11 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "catalogCategory", { get: () => catalogCategory, set: (value) => { catalogCategory = value; } });
   Object.defineProperty(desk, "catalogImportPreview", { get: () => catalogImportPreview });
   Object.defineProperty(desk, "catalogImportOwner", { get: () => catalogImportOwner, set: (value) => { catalogImportOwner = value; } });
+  Object.defineProperty(desk, "catalogImportLibraryName", { get: () => catalogImportLibraryName, set: (value) => { catalogImportLibraryName = value; } });
   Object.defineProperty(desk, "catalogImportTargetId", { get: () => catalogImportTargetId });
   Object.defineProperty(desk, "catalogSourceOpen", { get: () => catalogSourceOpen, set: (value) => { catalogSourceOpen = value; } });
   Object.defineProperty(desk, "catalogSourceName", { get: () => catalogSourceName, set: (value) => { catalogSourceName = value; } });
+  Object.defineProperty(desk, "catalogSourceLibraryName", { get: () => catalogSourceLibraryName, set: (value) => { catalogSourceLibraryName = value; } });
   Object.defineProperty(desk, "catalogSourceFile", { get: () => catalogSourceFile });
   Object.defineProperty(desk, "reimbursementRejectOpen", { get: () => reimbursementRejectOpen, set: (value) => { reimbursementRejectOpen = value; } });
   Object.defineProperty(desk, "reimbursementRejectReason", { get: () => reimbursementRejectReason, set: (value) => { reimbursementRejectReason = value; } });

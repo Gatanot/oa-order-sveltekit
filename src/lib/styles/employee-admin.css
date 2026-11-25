@@ -1,0 +1,47 @@
+/* 员工与权限管理：沿用工作台既有筛选、统计与列表样式，仅补充状态与权限摘要。 */
+
+.employee-role-cell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.employee-role-summary {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.employee-state {
+  font-size: 12px;
+}
+
+.employee-state-enabled {
+  color: var(--teal);
+}
+
+.employee-state-pending {
+  color: var(--amber);
+}
+
+.employee-state-disabled {
+  color: var(--muted);
+}
+
+.employee-role-guide .table-panel {
+  margin: 0 0 12px;
+}
+
+.employee-role-guide td {
+  white-space: normal;
+}
+
+/* 执行公司只有名称与操作两列，不沿用员工明细的固定列宽。 */
+.employee-page .execution-company-admin .employee-table-wrap table {
+  min-width: 0;
+  table-layout: auto;
+}
