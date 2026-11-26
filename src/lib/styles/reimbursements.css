@@ -74,6 +74,10 @@
   margin-bottom: 0;
 }
 
+/* 详情进度条同时标记已完成节点与当前节点，避免只高亮已完成步骤时看起来仍停在“提交报销”。 */
+.reimbursement-progress li.current { color: var(--blue); font-weight: 700; }
+.reimbursement-progress li.current span { border-color: var(--blue); background: #eff6ff; color: var(--blue); box-shadow: 0 0 0 3px rgba(37, 99, 235, .12); }
+
 /* 当前节点审核人在状态提示与详情中展示，列表行只保留状态标签避免撑高表格。 */
 .approval-history ul {
   display: grid;
