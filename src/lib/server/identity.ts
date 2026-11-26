@@ -1,6 +1,6 @@
 import type { ArtifactVisitor } from '$lib/artifact-visitor';
 import { getOrderDb, isDepartmentApprover } from '$lib/server/order-db';
-import { ADMIN_UID, ADMIN_UIDS, isAdminUid, departments, employeeRoleForDepartment, employeeRoles, reimbursementActionRoles, hasAnyRole, type EmployeeRole } from '$lib/permissions';
+import { ADMIN_UID, ADMIN_UIDS, isAdminUid, departments, employeeRoleForDepartment, employeeRoles, reimbursementActionRoles, reimbursementViewAllRoles, hasAnyRole, type EmployeeRole } from '$lib/permissions';
 
 export { ADMIN_UID, ADMIN_UIDS, isAdminUid, departments, employeeRoles, employeeRoleForDepartment };
 export type { EmployeeRole };
@@ -104,6 +104,21 @@ export function getEmployeeDisplayName(uid: number): string | null {
 export function canUseReimbursementReview(identity: CurrentIdentity | null | undefined): boolean {
   if (!identity) return false;
   return hasAnyRole(identity, reimbursementActionRoles) || isDepartmentApprover(identity.uid);
+}
+
+/**
+ * 报销内容查看权限：本人、全量可见角色，或该报销所属部门配置的任意层级审核人。
+ * 审核人配置优先于身份，避免设计/执行等身份被选为审核人后却看不到附件。
+ */
+export function canViewReimbursementContent(
+  identity: CurrentIdentity | null | undefined,
+  row: { employee_uid?: number | null; department?: string }
+): boolean {
+  if (!identity) return false;
+  if (hasAnyRole(identity, reimbursementViewAllRoles)) return true;
+  if (row.employee_uid != null && Number(row.employee_uid) === identity.uid) return true;
+  const department = String(row.department || '').trim();
+  return Boolean(department) && isDepartmentApprover(identity.uid, department);
 }
 
 export function listEmployees(): Employee[] {

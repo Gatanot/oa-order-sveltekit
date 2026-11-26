@@ -1226,8 +1226,11 @@ function withApprovalInfo<T extends Record<string, any>>(rows: T[]): T[] {
   });
 }
 
-export function isDepartmentApprover(uid: number): boolean {
-  return Boolean(getOrderDb().prepare('SELECT 1 FROM department_approvers WHERE employee_uid=? LIMIT 1').get(uid));
+export function isDepartmentApprover(uid: number, department?: string): boolean {
+  const db = getOrderDb();
+  return Boolean(department
+    ? db.prepare('SELECT 1 FROM department_approvers WHERE employee_uid=? AND department=? LIMIT 1').get(uid, department)
+    : db.prepare('SELECT 1 FROM department_approvers WHERE employee_uid=? LIMIT 1').get(uid));
 }
 
 export function listDepartmentApproverConfig() {

@@ -833,6 +833,7 @@ try {
   insertEmployee.run(1004, 'test1004', '钱财务', '财务', 'finance', 1, seededAt, seededAt);
   insertEmployee.run(1005, 'test1005', '孙执行', '执行', 'executor', 1, seededAt, seededAt);
   insertEmployee.run(1006, 'test1006', '周执行', '执行', 'executor', 1, seededAt, seededAt);
+  insertEmployee.run(1007, 'test1007', '吴商务', '商务', 'business', 1, seededAt, seededAt);
   identityDb.close();
 
   result = await request('/api/reimbursements', { method: 'POST', json: { item: '商务审核测试', amount: '6.00', advance_date: '2026-09-19' } });
@@ -982,6 +983,7 @@ try {
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
   assert.deepEqual(result.data.data.approvers['设计']['1'].map((item) => item.employee_uid), [1006], '部门一级审核人应持久化');
   let departmentReimbursementId = '';
+  let departmentAttachmentId = '';
   await withIdentityServer(1003, async (base) => {
     const created = await requestOn(base, '/api/reimbursements', { method: 'POST', json: { item: '部门审批测试', amount: '8.00', advance_date: '2026-09-20' } });
     assert.equal(created.response.status, 201, JSON.stringify(created.data));
@@ -989,6 +991,23 @@ try {
     assert.equal(created.data.data.department, '设计', '报销应记录提交人部门快照');
     const queue = await requestOn(base, '/api/reimbursements?scope=review');
     assert.equal(queue.response.status, 403, '未配置为审核人的提交人不能访问审核队列');
+    const attachmentForm = new FormData();
+    attachmentForm.append('kind', 'proof');
+    attachmentForm.append('file', new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], { type: 'image/png' }), 'department-proof.png');
+    const uploaded = await requestOn(base, `/api/reimbursements/${departmentReimbursementId}/attachments`, { method: 'POST', body: attachmentForm });
+    assert.equal(uploaded.response.status, 201, JSON.stringify(uploaded.data));
+    departmentAttachmentId = uploaded.data.data.id;
+  });
+  await withIdentityServer(1001, async (base) => {
+    const list = await requestOn(base, `/api/reimbursements/${departmentReimbursementId}/attachments`);
+    assert.equal(list.response.status, 200, '本部门任意层级审核人都应能查看附件列表');
+    assert.ok(list.data.data.some((item) => item.id === departmentAttachmentId), '审核人应看到本部门报销附件');
+    const file = await requestOn(base, `/api/reimbursement-attachments/${departmentAttachmentId}`);
+    assert.equal(file.response.status, 200, '本部门任意层级审核人都应能下载附件');
+  });
+  await withIdentityServer(1007, async (base) => {
+    const list = await requestOn(base, `/api/reimbursements/${departmentReimbursementId}/attachments`);
+    assert.equal(list.response.status, 403, '非本部门审核人不能查看附件');
   });
   await withIdentityServer(1004, async (base) => {
     const queue = await requestOn(base, '/api/reimbursements?scope=review');

@@ -1,14 +1,13 @@
 import { json } from '@sveltejs/kit';
 import { addStandaloneReimbursementAttachment, getReimbursementAccessInfo, listReimbursementAttachments, maxAttachmentSize } from '$lib/server/order-db';
-import { hasAnyRole, reimbursementActionRoles, reimbursementViewAllRoles } from '$lib/server/identity';
+import { canViewReimbursementContent, hasAnyRole, reimbursementActionRoles } from '$lib/server/identity';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
   const identity = await event.locals.getCurrentIdentity();
   const reimbursement = getReimbursementAccessInfo(event.params.id);
   if (!reimbursement) return json({ message: '报销记录不存在' }, { status: 404 });
-  const canView = Boolean(identity && (hasAnyRole(identity, reimbursementViewAllRoles) || reimbursement.employee_uid === identity.uid));
-  if (!canView) return json({ error: { code: 'FORBIDDEN' } }, { status: 403 });
+  if (!canViewReimbursementContent(identity, reimbursement)) return json({ error: { code: 'FORBIDDEN' } }, { status: 403 });
   return json({ data: listReimbursementAttachments(event.params.id) });
 };
 export const POST: RequestHandler = async (event) => {
