@@ -984,6 +984,12 @@ try {
   assert.deepEqual(result.data.data.approvers['设计']['1'].map((item) => item.employee_uid), [1006], '部门一级审核人应持久化');
   let departmentReimbursementId = '';
   let departmentAttachmentId = '';
+  const legacyDepartmentReimbursementId = 'legacy-reimbursement-empty-department';
+  const approverFixtureDb = new Database(databasePath);
+  // 历史报销可能只有员工姓名/UID 而没有部门快照，审核人仍应看到并处理。
+  approverFixtureDb.prepare("INSERT INTO reimbursements_simple(id,employee,item,amount,advance_date,order_id,invoice,note,status,created_at,employee_uid,department) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(legacyDepartmentReimbursementId, '赵设计', '历史部门缺失报销', 1200, '2026-09-20', null, '', '', 'pending_review', seededAt, 1003, '');
+  approverFixtureDb.close();
   await withIdentityServer(1003, async (base) => {
     const created = await requestOn(base, '/api/reimbursements', { method: 'POST', json: { item: '部门审批测试', amount: '8.00', advance_date: '2026-09-20' } });
     assert.equal(created.response.status, 201, JSON.stringify(created.data));
@@ -1020,6 +1026,18 @@ try {
     assert.equal(row.reimbursement_status, '待一级审核');
     assert.equal(row.can_act, true);
     assert.ok(row.current_approvers.some((approver) => approver.uid === 1006), '待办应显示当前审核人');
+    assert.deepEqual(row.current_approvers.map((approver) => approver.name), ['周执行'], '当前审核人应显示部门实际配置的姓名');
+    assert.equal(row.using_default_approvers, false, '已配置部门审核人时不应标记为默认审核人');
+    const legacyRow = queue.data.data.find((item) => item.id === legacyDepartmentReimbursementId);
+    assert.ok(legacyRow, '部门快照缺失的历史报销也应按员工部门进入审核队列');
+    assert.equal(legacyRow.can_act, true);
+    assert.equal(legacyRow.advance_item, '历史部门缺失报销', '审核页面应能看到需要处理的报销内容');
+    assert.deepEqual(legacyRow.current_approvers.map((approver) => approver.name), ['周执行']);
+    const legacyAttachments = await requestOn(base, `/api/reimbursements/${legacyDepartmentReimbursementId}/attachments`);
+    assert.equal(legacyAttachments.response.status, 200, '部门审核人应能查看历史报销内容附件');
+    const reviewPage = await requestOn(base, '/reimbursements/review');
+    assert.equal(reviewPage.response.status, 200, '配置审核人应能打开报销审核页面');
+    assert.match(Buffer.from(reviewPage.data).toString('utf8'), /历史部门缺失报销/, '报销审核页面应展示需要本人处理的报销内容');
     const approved = await requestOn(base, '/api/reimbursements/batch', { method: 'POST', json: { ids: [departmentReimbursementId], status: '待二级审核' } });
     assert.equal(approved.response.status, 200, JSON.stringify(approved.data));
   });
@@ -1054,6 +1072,10 @@ try {
   await withIdentityServer(1003, async (base) => {
     let result = await requestOn(base, '/api/employees');
     assert.equal(result.response.status, 403, '普通员工不能访问员工管理接口');
+    const mine = await requestOn(base, '/api/reimbursements?scope=mine');
+    const fallbackRow = mine.data.data.find((item) => item.id === legacyDepartmentReimbursementId);
+    assert.equal(fallbackRow.using_default_approvers, true, '部门未配置审核人时才回退默认审核人');
+    assert.deepEqual(fallbackRow.current_approvers.map((approver) => approver.name), ['系统管理员', '老板'], '回退时应显示默认审核内容');
     result = await requestOn(base, '/api/reimbursements?scope=review');
     assert.equal(result.response.status, 403, '普通员工不能访问报销审核队列');
     const employeePage = await requestOn(base, '/orders');

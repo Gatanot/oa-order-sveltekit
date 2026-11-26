@@ -1150,11 +1150,36 @@ function departmentApproverBuckets() {
   return buckets;
 }
 
-function approversForRow(row: { status: string; department?: string }, buckets?: ReturnType<typeof departmentApproverBuckets>) {
+type ReimbursementApproverRow = { status?: string; department?: string; employee?: string; employee_uid?: number | null };
+
+/**
+ * 审批使用的部门：优先沿用提交时的部门快照；历史记录快照缺失或已失效时，
+ * 再按报销员工档案补全，避免明明配置了部门审核人却仍显示默认审核人。
+ */
+function approvalDepartmentForRow(row: ReimbursementApproverRow, buckets?: ReturnType<typeof departmentApproverBuckets>): string {
+  const snapshot = text(row.department);
+  const configured = buckets || departmentApproverBuckets();
+  const known = snapshot && (configured.has(snapshot) || (departments as readonly string[]).includes(snapshot));
+  if (known) return snapshot;
+  const db = getOrderDb();
+  const uid = Number.isSafeInteger(Number(row.employee_uid)) && Number(row.employee_uid) > 0
+    ? Number(row.employee_uid)
+    : resolveEmployeeUidByName(db, text(row.employee));
+  return employeeDepartment(db, uid) || snapshot;
+}
+
+/** 报销内容权限等场景同样使用补全后的部门，保持展示与权限判断一致。 */
+export function reimbursementApprovalDepartment(row: { department?: string; employee?: string; employee_uid?: number | null }): string {
+  return approvalDepartmentForRow(row);
+}
+
+function approversForRow(row: ReimbursementApproverRow, buckets?: ReturnType<typeof departmentApproverBuckets>) {
+  const context = buckets || departmentApproverBuckets();
+  const department = approvalDepartmentForRow(row, context);
   const step = reimbursementStepForStatus(row.status);
-  if (!step) return { step: null, approvers: [] as ReimbursementApprover[], usingDefault: false };
-  const configured = (buckets || departmentApproverBuckets()).get(text((row as any).department))?.get(step.layer) || [];
-  if (configured.length) return { step, approvers: configured, usingDefault: false };
+  if (!step) return { step: null, approvers: [] as ReimbursementApprover[], usingDefault: false, department };
+  const configured = context.get(department)?.get(step.layer) || [];
+  if (configured.length) return { step, approvers: configured, usingDefault: false, department };
   // 部门尚未配置时按原有角色兜底，避免升级后旧流程立刻中断。
   const fallback = step.defaultRoles.map((role) => ({
     employee_uid: null,
@@ -1162,7 +1187,7 @@ function approversForRow(row: { status: string; department?: string }, buckets?:
     username: '',
     role
   }));
-  return { step, approvers: fallback, usingDefault: true };
+  return { step, approvers: fallback, usingDefault: true, department };
 }
 
 /** 当前身份是否负责该报销的当前节点。部门配置了审核人时，仅配置人员可处理。 */
@@ -1176,7 +1201,8 @@ export function canActOnReimbursement(
   if (!step) return false;
   if (row.employee_uid != null && Number(row.employee_uid) === identity.uid && !isAdminUid(identity.uid)) return false;
   if (step.layer === 4) return (step.defaultRoles as readonly string[]).includes(identity.role);
-  const configured = (buckets || departmentApproverBuckets()).get(text(row.department))?.get(step.layer) || [];
+  const context = buckets || departmentApproverBuckets();
+  const configured = context.get(approvalDepartmentForRow(row as ReimbursementApproverRow, context))?.get(step.layer) || [];
   if (configured.length) return configured.some((approver) => approver.employee_uid === identity.uid);
   return (step.defaultRoles as readonly string[]).includes(identity.role);
 }
@@ -1214,10 +1240,10 @@ function withApprovalInfo<T extends Record<string, any>>(rows: T[]): T[] {
     historyByReimbursement.set(item.reimbursement_id, list);
   }
   return rows.map((row) => {
-    const { step, approvers, usingDefault } = approversForRow(row as any, buckets);
+    const { step, approvers, usingDefault, department } = approversForRow(row as any, buckets);
     return {
       ...row,
-      department: text(row.department),
+      department: department || text(row.department),
       approval_layer: step?.layer ?? null,
       current_approvers: approvers.map((approver) => ({ uid: approver.employee_uid, name: approver.display_name, role: approver.role })),
       using_default_approvers: usingDefault,

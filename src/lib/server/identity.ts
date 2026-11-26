@@ -1,5 +1,5 @@
 import type { ArtifactVisitor } from '$lib/artifact-visitor';
-import { getOrderDb, isDepartmentApprover } from '$lib/server/order-db';
+import { getOrderDb, isDepartmentApprover, reimbursementApprovalDepartment } from '$lib/server/order-db';
 import { ADMIN_UID, ADMIN_UIDS, isAdminUid, departments, employeeRoleForDepartment, employeeRoles, reimbursementActionRoles, reimbursementViewAllRoles, hasAnyRole, type EmployeeRole } from '$lib/permissions';
 
 export { ADMIN_UID, ADMIN_UIDS, isAdminUid, departments, employeeRoles, employeeRoleForDepartment };
@@ -112,12 +112,12 @@ export function canUseReimbursementReview(identity: CurrentIdentity | null | und
  */
 export function canViewReimbursementContent(
   identity: CurrentIdentity | null | undefined,
-  row: { employee_uid?: number | null; department?: string }
+  row: { employee?: string; employee_uid?: number | null; department?: string }
 ): boolean {
   if (!identity) return false;
   if (hasAnyRole(identity, reimbursementViewAllRoles)) return true;
   if (row.employee_uid != null && Number(row.employee_uid) === identity.uid) return true;
-  const department = String(row.department || '').trim();
+  const department = reimbursementApprovalDepartment(row);
   return Boolean(department) && isDepartmentApprover(identity.uid, department);
 }
 
