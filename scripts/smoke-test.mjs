@@ -982,8 +982,14 @@ try {
   } });
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
   assert.deepEqual(result.data.data.approvers['设计']['1'].map((item) => item.employee_uid), [1006], '部门一级审核人应持久化');
+  result = await request('/api/department-approvers', { method: 'PATCH', json: {
+    department: '商务',
+    layers: { 1: [1006], 2: [], 3: [] }
+  } });
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
   let departmentReimbursementId = '';
   let departmentAttachmentId = '';
+  let departmentOrderAdvanceId = '';
   const legacyDepartmentReimbursementId = 'legacy-reimbursement-empty-department';
   const approverFixtureDb = new Database(databasePath);
   // 历史报销可能只有员工姓名/UID 而没有部门快照，审核人仍应看到并处理。
@@ -1003,6 +1009,24 @@ try {
     const uploaded = await requestOn(base, `/api/reimbursements/${departmentReimbursementId}/attachments`, { method: 'POST', body: attachmentForm });
     assert.equal(uploaded.response.status, 201, JSON.stringify(uploaded.data));
     departmentAttachmentId = uploaded.data.data.id;
+  });
+  await withIdentityServer(1007, async (base) => {
+    // 订单个人垫付经过上传证明后，也应落入对应部门审核人的待办队列。
+    const orderCreated = await requestOn(base, '/api/orders', { method: 'POST', json: { project_id: projectId, order_date: '2026-09-21', idempotency_key: 'smoke-department-order-advance', products: [{ name: '部门订单垫付', unit: '项', quantity: 1, unit_price: '10.00', cost_unit: '4.00', advance: true }], costs: [] } });
+    assert.equal(orderCreated.response.status, 201, JSON.stringify(orderCreated.data));
+    departmentOrderAdvanceId = orderCreated.data.data.advances[0].id;
+    const orderProofForm = new FormData();
+    orderProofForm.append('kind', 'proof');
+    orderProofForm.append('file', new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], { type: 'image/png' }), 'department-order-proof.png');
+    const orderProof = await requestOn(base, `/api/reimbursements/${departmentOrderAdvanceId}/attachments`, { method: 'POST', body: orderProofForm });
+    assert.equal(orderProof.response.status, 201, JSON.stringify(orderProof.data));
+    const orderInvoiceForm = new FormData();
+    orderInvoiceForm.append('file', new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], { type: 'image/png' }), 'department-order-invoice.png');
+    const orderInvoice = await requestOn(base, `/api/reimbursements/${departmentOrderAdvanceId}/attachments`, { method: 'POST', body: orderInvoiceForm });
+    assert.equal(orderInvoice.response.status, 201, JSON.stringify(orderInvoice.data));
+    const orderSubmitted = await requestOn(base, `/api/reimbursements/${departmentOrderAdvanceId}/submit-proof`, { method: 'POST', json: {} });
+    assert.equal(orderSubmitted.response.status, 200, JSON.stringify(orderSubmitted.data));
+    assert.equal(orderSubmitted.data.data.reimbursement_status, '待一级审核');
   });
   await withIdentityServer(1001, async (base) => {
     const list = await requestOn(base, `/api/reimbursements/${departmentReimbursementId}/attachments`);
@@ -1028,6 +1052,12 @@ try {
     assert.ok(row.current_approvers.some((approver) => approver.uid === 1006), '待办应显示当前审核人');
     assert.deepEqual(row.current_approvers.map((approver) => approver.name), ['周执行'], '当前审核人应显示部门实际配置的姓名');
     assert.equal(row.using_default_approvers, false, '已配置部门审核人时不应标记为默认审核人');
+    const orderAdvanceRow = queue.data.data.find((item) => item.id === departmentOrderAdvanceId);
+    assert.ok(orderAdvanceRow, '订单个人垫付提交证明后应出现在对应部门审核人的待办中');
+    assert.equal(orderAdvanceRow.can_act, true);
+    assert.equal(orderAdvanceRow.department, '商务');
+    assert.equal(orderAdvanceRow.advance_item, '部门订单垫付', '订单垫付待办应展示报销内容');
+    assert.deepEqual(orderAdvanceRow.current_approvers.map((approver) => approver.name), ['周执行']);
     const legacyRow = queue.data.data.find((item) => item.id === legacyDepartmentReimbursementId);
     assert.ok(legacyRow, '部门快照缺失的历史报销也应按员工部门进入审核队列');
     assert.equal(legacyRow.can_act, true);
@@ -1053,6 +1083,8 @@ try {
   });
   result = await request('/api/department-approvers', { method: 'PATCH', json: { department: '设计', layers: { 1: [], 2: [], 3: [] } } });
   assert.equal(result.response.status, 200, '清空部门审核人后应回退默认角色');
+  result = await request('/api/department-approvers', { method: 'PATCH', json: { department: '商务', layers: { 1: [], 2: [], 3: [] } } });
+  assert.equal(result.response.status, 200, '清空商务审核人后应回退默认角色');
 
   // 固定管理员名单新增 406：可直接进入管理员页面和员工管理接口。
   await withIdentityServer(406, async (base) => {

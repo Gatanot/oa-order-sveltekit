@@ -650,6 +650,11 @@ export function createOrderDesk(data: Data) {
       event.preventDefault();
       event.returnValue = "";
     };
+    // 审核人可能长时间停留在审核页面，其他员工此时提交的报销需要在切回窗口时刷新出来。
+    const refreshActiveReimbursements = async () => {
+      if (!["reimbursements", "review", "history"].includes(view)) return;
+      try { await refreshReimbursements(); } catch { /* 保留当前列表，等待下次刷新 */ }
+    };
     const popstate = async () => {
       if (restoringHistory) {
         restoringHistory = false;
@@ -664,14 +669,20 @@ export function createOrderDesk(data: Data) {
         }
       }
       syncViewFromPath();
+      if (["reimbursements", "review", "history"].includes(view)) {
+        try { await refreshReimbursements(); }
+        catch (reason) { notify(reason instanceof Error ? reason.message : "报销数据刷新失败", true); }
+      }
     };
     window.addEventListener("keydown", escape);
     window.addEventListener("beforeunload", beforeUnload);
     window.addEventListener("popstate", popstate);
+    window.addEventListener("focus", refreshActiveReimbursements);
     return () => {
       window.removeEventListener("keydown", escape);
       window.removeEventListener("beforeunload", beforeUnload);
       window.removeEventListener("popstate", popstate);
+      window.removeEventListener("focus", refreshActiveReimbursements);
       releaseAttachmentPreviewUrl();
       clearTimeout(notificationTimer);
       cancelConfirm();
@@ -749,6 +760,12 @@ export function createOrderDesk(data: Data) {
     orderFormDirty = false;
     if (currentAppPath() !== path) pushState(appPath(path), {});
     syncViewFromPath();
+    // 报销由其他员工提交、由审核人处理，进入报销相关页面时必须重新拉取，
+    // 否则单页应用会一直显示初次加载时的旧审核队列。
+    if (["/reimbursements", "/reimbursements/review", "/reimbursements/history"].includes(path)) {
+      try { await refreshReimbursements(); }
+      catch (reason) { notify(reason instanceof Error ? reason.message : "报销数据刷新失败", true); }
+    }
   }
   function syncViewFromPath() {
     const path = currentAppPath();
@@ -811,6 +828,22 @@ export function createOrderDesk(data: Data) {
   async function refreshOrders() {
     const result = await api.get<{ data: Order[] }>("/api/orders");
     orders = result.data;
+  }
+  /** 进入报销页面时只重取报销队列，确保能及时看到其他员工新提交或状态变化的记录。 */
+  async function refreshReimbursements() {
+    const [r, review, history] = await Promise.all([
+      api.get<{ data: Reimbursement[] }>("/api/reimbursements?scope=mine"),
+      canReviewReimbursements
+        ? api.get<{ data: Reimbursement[] }>("/api/reimbursements?scope=review")
+        : Promise.resolve({ data: [] as Reimbursement[] }),
+      canViewAllReimbursements
+        ? api.get<{ data: Reimbursement[] }>("/api/reimbursements?scope=history")
+        : Promise.resolve({ data: [] as Reimbursement[] }),
+    ]);
+    reimbursements = r.data;
+    reviewReimbursements = review.data;
+    historyReimbursements = history.data;
+    reimbursementRefreshVersion += 1;
   }
   function openStandaloneReimbursement() {
     standaloneEmployee = creatorName;
