@@ -1,5 +1,5 @@
 import { action, body } from '$lib/server/http';
-import { ADMIN_UID, canUseReimbursementReview } from '$lib/server/identity';
+import { isAdminUid, canUseReimbursementReview } from '$lib/server/identity';
 import { canAdvanceReimbursement, getReimbursementAccessInfo, updateReimbursementsBatch } from '$lib/server/order-db';
 import type { RequestHandler } from './$types';
 
@@ -13,7 +13,7 @@ export const POST: RequestHandler = async (event) => {
     const row = getReimbursementAccessInfo(id);
     if (!row) return false;
     // 固定管理员可用额外身份走完整流程；其他审核者不能处理自己的报销。
-    if (identity.uid !== ADMIN_UID && row.employee_uid != null && row.employee_uid === identity.uid) return true;
+    if (!isAdminUid(identity.uid) && row.employee_uid != null && row.employee_uid === identity.uid) return true;
     return !canAdvanceReimbursement(row, String(data.status || ''), identity);
   });
   if (blocked) {

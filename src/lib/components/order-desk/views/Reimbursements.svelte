@@ -2,8 +2,10 @@
   import { getContext } from "svelte";
   import { appPath } from "$lib/api";
   import { reimbursementWorkflow } from '$lib/permissions';
-  import { Download, Eye, FileText, Paperclip, Plus, Trash2, Wrench, X } from "lucide-svelte";
+  import { Download, Eye, FileText, Paperclip, Plus, Trash2, Upload, Wrench, X } from "lucide-svelte";
   import WorkbenchListFilters from '../WorkbenchListFilters.svelte';
+  import ProofUploadModal from '../ProofUploadModal.svelte';
+  import AmountChangeModal from '../AmountChangeModal.svelte';
   import { formatInBizTZ } from '$lib/time';
   import ReimbursementStatus from '../ReimbursementStatus.svelte';
   const desk = getContext<any>("order-desk");
@@ -11,6 +13,8 @@
 
   let attachmentsByOrder = $state<Record<string, Array<any>>>({});
   let detailItem = $state<any>(null);
+  let proofItem = $state<any>(null);
+  let amountItem = $state<any>(null);
   let selectionMode = $state(false);
   const selectedEmployee = $derived(desk.reimbursementPerson);
   const isReviewer = $derived(mode === "review");
@@ -52,14 +56,14 @@
   const pendingCount = $derived(visibleRows.length);
   const pendingAmount = $derived(visibleRows.reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0));
   const statusLabels: Record<string, string> = {
-    '待一级审核': '一级审核', '待二级审核': '二级审核',
+    '待上传证明': '待上传证明', '待一级审核': '一级审核', '待二级审核': '二级审核',
     '待三级审核': '三级审核', '待执行': '待执行',
   };
   const filterFields = $derived([
     { key: 'reimbursementProject', label: '项目', value: desk.reimbursementProject, options: [{ value: '', label: '全部项目' }, ...desk.projects.map((item: any) => ({ value: item.id, label: item.name }))] },
     ...(isReviewer ? [{ key: 'employee', label: '报销人', value: selectedEmployee, options: [{ value: '', label: '全部报销人' }, ...employeeQueues.map((item) => ({ value: item.employee, label: `${item.employee}（${item.count}）` }))] }] : []),
     { key: 'reimbursementType', label: '类型', value: desk.reimbursementType, options: [{ value: '', label: '全部类型' }, { value: 'order', label: '订单报销' }, { value: 'internal', label: '内务报销' }] },
-    { key: 'reimbursementStatus', label: '状态', value: desk.reimbursementStatus, options: [{ value: '', label: '全部状态' }, ...(isReviewer ? responsibleStatuses : ['未报销', '待一级审核', '待二级审核', '待三级审核', '待执行', '已执行', '已打回']).map((value) => ({ value, label: statusLabels[value] || value }))] },
+    { key: 'reimbursementStatus', label: '状态', value: desk.reimbursementStatus, options: [{ value: '', label: '全部状态' }, ...(isReviewer ? responsibleStatuses : ['待上传证明', '待一级审核', '待二级审核', '待三级审核', '待执行', '已执行', '已打回']).map((value) => ({ value, label: statusLabels[value] || value }))] },
     { key: 'reimbursementFrom', label: '垫付日期', type: 'date-range' as const, value: desk.reimbursementFrom, endKey: 'reimbursementTo', endValue: desk.reimbursementTo },
   ]);
   function changeFilter(key: string, value: string) {
@@ -68,14 +72,18 @@
   }
   function clearFilters() { desk.resetReimbursementFilters(); }
   const steps = ["提交报销", "一级审核", "二级审核", "三级审核", "财务执行"];
-  const progress: Record<string, number> = { "待一级审核": 1, "待二级审核": 2, "待三级审核": 3, "待执行": 4, "已执行": 5, "已打回": 1 };
+  const progress: Record<string, number> = { "待上传证明": 0, "待一级审核": 1, "待二级审核": 2, "待三级审核": 3, "待执行": 4, "已执行": 5, "已打回": 1 };
   function approvalActionLabel(action: string) {
-    return ({ approved: '审核通过', rejected: '打回', executed: '确认执行', resubmitted: '重新提交', submitted: '提交报销' } as Record<string, string>)[action] || action;
+    return ({ approved: '审核通过', rejected: '打回', executed: '确认执行', resubmitted: '重新提交', submitted: '提交报销', content_modified: '修改退回' } as Record<string, string>)[action] || action;
   }
-  function approvalLayerLabel(layer: number) {
+  function approvalLayerLabel(layer: number, action = '') {
+    if (action === 'content_modified' && layer === 0) return '内容修改';
     if (layer === 0) return '提交';
     if (layer >= 4) return '执行';
     return `${layer}级审核`;
+  }
+  function canRequestAmountChange(item: any) {
+    return !isReviewer && item.employee_uid === desk.identity?.uid && item.reimbursement_status !== "已执行";
   }
   function leaveSelectionMode() {
     selectionMode = false;
@@ -99,7 +107,7 @@
     }
   }
 </script>
-<svelte:window onkeydown={(event) => { if (event.key === 'Escape') detailItem = null; }} />
+<svelte:window onkeydown={(event) => { if (event.key === 'Escape' && !proofItem && !amountItem) detailItem = null; }} />
 
 <section class="page-section workbench-list-page reimbursement-page" class:review-page={isReviewer} class:selection-mode={selectionMode}>
   <div class="section-heading">
@@ -113,8 +121,9 @@
   {#if !isReviewer}
   <div class="workbench-statistics">
   <div class="workbench-statistics-head"><span>当前筛选结果 · {pendingCount} 笔报销</span></div>
-  <div class="summary-row reimbursement-summary">
+  <div class="summary-row reimbursement-summary summary-row-five">
       <div><span>全部</span><b>{desk.reimbursementStats.total}<small> 单</small></b></div>
+      <div><span>待上传证明</span><b class="proof-stat">{desk.reimbursementStats.pendingProof}<small> 单</small></b></div>
       <div><span>未完成</span><b>{desk.reimbursementStats.total - desk.reimbursementStats.paid}<small> 单</small></b></div>
       <div><span>已执行金额</span><b>{desk.money(visibleRows.filter((item: any) => item.reimbursement_status === "已执行").reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0))}</b></div>
       <div><span>已打回</span><b class="negative">{desk.reimbursementStats.rejected}<small> 单</small></b></div>
@@ -143,6 +152,9 @@
       </div>
     </div>
   {/if}
+  {#if !isReviewer && desk.reimbursementStats.pendingProof}
+    <div class="reimbursement-callout proof-callout"><b>有 {desk.reimbursementStats.pendingProof} 条垫付待上传证明，合计 {desk.money(desk.reimbursementStats.pendingProofAmount)}</b><span>请上传实际付款截图和对应发票，两项齐全后点击【提交】进入审批流程。</span></div>
+  {/if}
   {#if !isReviewer && desk.reimbursementStats.rejected}
     <div class="reimbursement-callout"><b>有 {desk.reimbursementStats.rejected} 条报销需要补充资料</b><span>请查看打回原因并重新上传发票，上传后会重新进入审核队列。</span></div>
   {/if}
@@ -160,15 +172,22 @@
               >{#if isReviewer && selectionMode}<td><input type="checkbox" aria-label={`选择报销 ${item.advance_item || item.item}`} disabled={!action || desk.busy} checked={desk.selectedReimbursementIds.includes(item.id)} onchange={() => desk.toggleReimbursement(item.id)} /></td>{/if}<td>{#if item.order_id}<button class="link-action" type="button" onclick={() => desk.openDetail(desk.orders.find((order: any) => order.id === item.order_id))}><b>{item.code}</b></button>{:else}<b class="muted">内务报销</b>{/if}</td><td
                 ><b>{item.project_name}</b></td
               ><td>{item.advance_date}</td><td>{item.advance_item || "—"}</td><td
-                class="money">{desk.money(item.advance_amount)}</td
+                class="money"><div class="reimbursement-amount-cell"><span>{desk.money(item.advance_amount)}</span>{#if item.content_modified}<span class="reimbursement-modified-badge" title={item.amount_change_note || "报销内容修改过"}>已修改</span>{/if}{#if canRequestAmountChange(item)}<button class="link-action amount-change-action" type="button" disabled={desk.busy} onclick={() => amountItem = item}>申请修改金额</button>{/if}</div></td
               ><td
-                >{#if item.attachment_count}<button
+                ><div class="reimbursement-attachment-cell">{#if item.attachment_count}<button
                     class="attachment-toggle"
                     title="展开附件列表"
                     onclick={() => showAttachments(item)}
                     ><Paperclip size={14} />{item.attachment_count} 个</button
-                  >{:else}<span class="muted attachment-none"><Paperclip size={14} /> 未上传</span
-                  >{/if}</td
+                  >{/if}{#if !isReviewer && item.employee_uid === desk.identity?.uid && item.reimbursement_status === "待上传证明"}<button
+                    class="attachment-toggle proof-upload-entry"
+                    type="button"
+                    title="上传付款截图和发票"
+                    disabled={desk.busy}
+                    onclick={() => proofItem = item}
+                    ><Upload size={14} />{item.attachment_count ? "继续上传" : "上传"}</button
+                  >{:else if !item.attachment_count}<span class="muted attachment-none"><Paperclip size={14} /> 未上传</span
+                  >{/if}</div></td
               ><td
                 ><div class="reimbursement-row-status" title={isReviewer && item.current_approvers?.length ? `当前节点审核人：${item.current_approvers.map((approver: any) => approver.name).join("、")}` : undefined}><ReimbursementStatus status={item.reimbursement_status} compact /></div></td
               ><td
@@ -178,7 +197,7 @@
                   {#if action}<button class="primary-action reimbursement-action" type="button" disabled={desk.busy} onclick={() => desk.markReimbursement(item, action.target)}>{action.label}</button>{/if}
                   {#if !item.voucher_no && ["finance", "admin"].includes(desk.identity?.role) && (item.reimbursement_status === "待执行" || item.reimbursement_status === "已执行")}<button class="icon-control" type="button" title="生成单据" aria-label={`生成报销单据：${item.advance_item || item.item}`} disabled={desk.busy} onclick={() => desk.generateReimbursementVoucher(item)}><FileText size={16} /></button>{/if}
                   {#if isReviewer && item.can_reject}<button class="delete-action reimbursement-reject-action" type="button" title="打回报销" aria-label={`打回报销：${item.advance_item || item.item}`} disabled={desk.busy} onclick={() => desk.rejectReimbursement(item)}><X size={16} /></button>{/if}
-                  {#if !isReviewer && item.employee_uid === desk.identity?.uid && item.reimbursement_status === "待一级审核"}<button class="delete-action reimbursement-danger-icon" type="button" title="删除报销" aria-label={`删除报销：${item.advance_item || item.item}`} disabled={desk.busy} onclick={() => desk.deleteReimbursement(item)}><Trash2 size={16} /></button>{/if}
+                  {#if !isReviewer && item.employee_uid === desk.identity?.uid && ["待上传证明", "待一级审核"].includes(item.reimbursement_status)}<button class="delete-action reimbursement-danger-icon" type="button" title="删除报销" aria-label={`删除报销：${item.advance_item || item.item}`} disabled={desk.busy} onclick={() => desk.deleteReimbursement(item)}><Trash2 size={16} /></button>{/if}
                 </div></td
               ></tr
             >{#if attachmentsByOrder[item.id]?.length}<tr class="attachment-row"
@@ -204,11 +223,17 @@
       </table>
     </div>
   </div>
+  {#if proofItem}
+    <ProofUploadModal item={proofItem} onclose={() => proofItem = null} onsubmitted={() => proofItem = null} />
+  {/if}
+  {#if amountItem}
+    <AmountChangeModal item={amountItem} onclose={() => amountItem = null} onchanged={() => amountItem = null} />
+  {/if}
   {#if detailItem}
     <div class="drawer-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) detailItem = null; }}>
       <div class="export-drawer reimbursement-detail" role="dialog" aria-modal="true" aria-labelledby="reimbursement-detail-title">
         <div class="drawer-head"><div><p class="section-kicker">报销单据</p><h2 id="reimbursement-detail-title">报销单据</h2><span>{detailItem.source_type || "订单报销"} · {detailItem.reimbursement_status}</span></div><button class="icon-control" aria-label="关闭报销单据" onclick={() => detailItem = null}><X size={18} /></button></div>
-        <div class="drawer-body"><ol class="reimbursement-progress" aria-label="报销进度">{#each steps as step, index}<li class:completed={index < (progress[detailItem.reimbursement_status] || 0)}><span>{index + 1}</span>{step}</li>{/each}</ol><div class="voucher-grid"><div><small>报销人</small><b>{detailItem.employee}</b></div><div><small>报销物品</small><b>{detailItem.advance_item || detailItem.item}</b></div><div><small>报销金额</small><b>{desk.money(detailItem.advance_amount)}</b></div><div><small>垫付日期</small><b>{detailItem.advance_date}</b></div><div><small>关联订单</small><b>{detailItem.code || "内务报销"}</b></div><div><small>客户 / 项目</small><b>{detailItem.customer_name ? `${detailItem.customer_name} · ` : ""}{detailItem.project_name || "内务报销"}</b></div><div><small>所属部门</small><b>{detailItem.department || "未设置"}</b></div>{#if detailItem.current_approvers?.length}<div class="voucher-full"><small>当前审核人</small><b>{detailItem.using_default_approvers ? "默认：" : ""}{detailItem.current_approvers.map((approver: any) => approver.name).join("、")}</b></div>{/if}<div class="voucher-full"><small>发票附件</small>{#if detailItem.attachment_count}<button class="link-action voucher-attachment-button" type="button" onclick={() => showAttachments(detailItem)}>{detailItem.invoice || "查看附件"} · {detailItem.attachment_count} 个</button>{:else}<b>{detailItem.invoice || "未上传"}</b>{/if}{#if attachmentsByOrder[detailItem.id]?.length}<ul class="voucher-attachments">{#each attachmentsByOrder[detailItem.id] as file}<li><button class="attachment-link" type="button" onclick={() => desk.openAttachmentPreview(desk.reimbursementAttachmentUrl(file.id), file.file_name, file.mime_type)}><Paperclip size={13}/><span>{file.file_name}</span><small>{desk.formatFileSize(file.file_size)}</small></button></li>{/each}</ul>{/if}</div>{#if detailItem.reimbursement_status === "已打回"}<div class="voucher-full rejection-detail"><small>打回原因</small><b>{detailItem.reject_reason || "请补充发票资料"}</b></div>{/if}<div class="voucher-full"><small>备注</small><b>{detailItem.note || "—"}</b></div>{#if detailItem.approval_history?.length}<div class="voucher-full approval-history"><small>审批记录</small><ul>{#each detailItem.approval_history as record}<li><b>{approvalLayerLabel(record.layer)}</b><span>{record.approver_name || "系统"} · {approvalActionLabel(record.action)}</span><small>{formatInBizTZ(record.created_at)}{record.comment ? ` · ${record.comment}` : ""}</small></li>{/each}</ul></div>{/if}</div></div>
+        <div class="drawer-body"><ol class="reimbursement-progress" aria-label="报销进度">{#each steps as step, index}<li class:completed={index < (progress[detailItem.reimbursement_status] || 0)}><span>{index + 1}</span>{step}</li>{/each}</ol><div class="voucher-grid"><div><small>报销人</small><b>{detailItem.employee}</b></div><div><small>报销物品</small><b>{detailItem.advance_item || detailItem.item}</b></div><div><small>报销金额</small><b>{desk.money(detailItem.advance_amount)}</b></div><div><small>垫付日期</small><b>{detailItem.advance_date}</b></div><div><small>关联订单</small><b>{detailItem.code || "内务报销"}</b></div><div><small>客户 / 项目</small><b>{detailItem.customer_name ? `${detailItem.customer_name} · ` : ""}{detailItem.project_name || "内务报销"}</b></div><div><small>所属部门</small><b>{detailItem.department || "未设置"}</b></div>{#if detailItem.current_approvers?.length}<div class="voucher-full"><small>当前审核人</small><b>{detailItem.using_default_approvers ? "默认：" : ""}{detailItem.current_approvers.map((approver: any) => approver.name).join("、")}</b></div>{/if}<div class="voucher-full"><small>发票附件</small>{#if detailItem.attachment_count}<button class="link-action voucher-attachment-button" type="button" onclick={() => showAttachments(detailItem)}>{detailItem.invoice || "查看附件"} · {detailItem.attachment_count} 个</button>{:else}<b>{detailItem.invoice || "未上传"}</b>{/if}{#if attachmentsByOrder[detailItem.id]?.length}<ul class="voucher-attachments">{#each attachmentsByOrder[detailItem.id] as file}<li><button class="attachment-link" type="button" onclick={() => desk.openAttachmentPreview(desk.reimbursementAttachmentUrl(file.id), file.file_name, file.mime_type)}><Paperclip size={13}/><span>{file.file_name}</span><small>{desk.formatFileSize(file.file_size)}</small></button></li>{/each}</ul>{/if}</div>{#if detailItem.reimbursement_status === "已打回"}<div class="voucher-full rejection-detail"><small>打回原因</small><b>{detailItem.reject_reason || "请补充发票资料"}</b></div>{/if}<div class="voucher-full"><small>备注</small><b>{detailItem.note || "—"}</b></div>{#if detailItem.content_modified}<div class="voucher-full reimbursement-modified-detail"><small>内容修改</small><b>{detailItem.amount_change_note || "报销内容已修改"}{detailItem.content_modified_at ? ` · ${formatInBizTZ(detailItem.content_modified_at)}` : ""}</b></div>{/if}{#if detailItem.approval_history?.length}<div class="voucher-full approval-history"><small>审批记录</small><ul>{#each detailItem.approval_history as record}<li><b>{approvalLayerLabel(record.layer, record.action)}</b><span>{record.approver_name || "系统"} · {approvalActionLabel(record.action)}</span><small>{formatInBizTZ(record.created_at)}{record.comment ? ` · ${record.comment}` : ""}</small></li>{/each}</ul></div>{/if}</div></div>
       </div>
     </div>
   {/if}

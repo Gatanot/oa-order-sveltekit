@@ -111,3 +111,347 @@
   color: var(--muted);
   font-size: 11px;
 }
+
+/* 待上传证明：员工补传付款截图与发票 */
+.workbench-statistics .summary-row.reimbursement-summary.summary-row-five {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.status-dot.reimbursement-status.reimbursement-proof {
+  color: var(--blue-strong);
+}
+
+.summary-row .proof-stat {
+  color: var(--blue-strong);
+}
+
+.reimbursement-page .reimbursement-callout.proof-callout {
+  border-color: color-mix(in srgb, var(--blue) 34%, var(--line));
+  background: var(--color-brand-50);
+}
+
+.reimbursement-callout.proof-callout b {
+  color: var(--blue-strong);
+}
+
+.reimbursement-callout.proof-callout span {
+  color: var(--muted);
+}
+
+.reimbursement-attachment-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.attachment-toggle.proof-upload-entry {
+  border-color: var(--blue);
+  color: var(--blue-strong);
+}
+
+.attachment-toggle.proof-upload-entry:hover {
+  background: var(--color-brand-50);
+}
+
+.proof-upload-modal {
+  width: min(720px, 100%);
+}
+
+.proof-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.proof-summary > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.proof-summary small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.proof-summary b {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.proof-upload-hint {
+  margin: 0 0 14px;
+  line-height: 1.6;
+}
+
+.proof-upload-modal .form-error {
+  margin: 0 0 12px;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 30%, var(--line));
+  border-radius: 8px;
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  font-size: 12px;
+}
+
+.proof-upload-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.proof-slot {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.proof-slot.complete {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--color-status-success) 32%, var(--line));
+  background: #f8fcfa;
+}
+
+.proof-slot header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.proof-slot header div {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+}
+
+.proof-slot header b {
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.proof-slot header b em {
+  margin-left: 3px;
+  color: var(--color-danger);
+  font-style: normal;
+}
+
+.proof-slot header small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.proof-slot-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--color-brand-50);
+  color: var(--blue-strong);
+}
+
+.proof-slot.complete .proof-slot-icon {
+  background: var(--color-status-success-soft);
+  color: var(--color-status-success);
+}
+
+.proof-check {
+  flex: 0 0 auto;
+  color: var(--color-status-success);
+}
+
+.proof-upload-action {
+  width: 100%;
+  justify-content: center;
+}
+
+.proof-file-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.proof-file-list li {
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  background: #fbfcfe;
+}
+
+.proof-file-list .attachment-link {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.proof-file-list .attachment-link span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proof-file-list .attachment-link small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.proof-empty {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+@media (max-width: 960px) {
+  .workbench-statistics .summary-row.reimbursement-summary.summary-row-five {
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .workbench-statistics .summary-row.reimbursement-summary.summary-row-five {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: 12px;
+  }
+
+  .proof-upload-grid,
+  .proof-summary {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 报销金额修改与“已修改”标记 */
+.reimbursement-amount-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+
+.reimbursement-modified-badge {
+  display: inline-flex;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.amount-change-action {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.amount-change-action:hover {
+  color: var(--blue-strong);
+  text-decoration: underline;
+}
+
+.reimbursement-modified-detail b {
+  color: var(--amber);
+}
+
+.amount-change-modal {
+  width: min(560px, 100%);
+}
+
+.amount-change-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.amount-change-summary > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.amount-change-summary small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.amount-change-summary b {
+  font-size: 13px;
+}
+
+.amount-change-warning,
+.amount-change-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 10px 11px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.amount-change-warning {
+  border: 1px solid color-mix(in srgb, var(--amber) 28%, var(--line));
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
+.amount-change-note {
+  border: 1px solid color-mix(in srgb, var(--blue) 24%, var(--line));
+  background: var(--color-brand-50);
+  color: var(--blue-strong);
+}
+
+.amount-change-warning svg,
+.amount-change-note svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.amount-change-modal .form-error {
+  margin: 12px 0 0;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 30%, var(--line));
+  border-radius: 8px;
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  font-size: 12px;
+}
+
+@media (max-width: 640px) {
+  .amount-change-summary {
+    grid-template-columns: 1fr;
+  }
+}

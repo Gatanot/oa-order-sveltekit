@@ -7,7 +7,7 @@ import * as XLSX from 'xlsx';
 import XLSXStyle from 'xlsx-js-style';
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import {
-  ADMIN_UID,
+  isAdminUid,
   departments,
   reimbursementNextCodeForLayer,
   reimbursementStatusCode,
@@ -308,7 +308,7 @@ export function getOrderDb() {
     instance.exec(`
       CREATE TABLE IF NOT EXISTS system_admin_identity (
         uid INTEGER PRIMARY KEY,
-        role TEXT NOT NULL CHECK(role IN ('executor','designer','planner','manager','finance','owner')),
+        role TEXT NOT NULL CHECK(role IN ('executor','designer','business','planner','finance','owner')),
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
@@ -317,7 +317,7 @@ export function getOrderDb() {
         username TEXT NOT NULL,
         display_name TEXT NOT NULL,
         department TEXT NOT NULL DEFAULT '',
-        role TEXT NOT NULL DEFAULT 'pending' CHECK(role IN ('pending','executor','designer','planner','manager','finance','owner')),
+        role TEXT NOT NULL DEFAULT 'pending' CHECK(role IN ('pending','executor','designer','business','planner','finance','owner')),
         active INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -770,6 +770,130 @@ export function getOrderDb() {
       const v33Violations = instance.pragma('foreign_key_check') as Array<Record<string, unknown>>;
       if (v33Violations.length) throw new Error(`v33 迁移后存在 ${v33Violations.length} 条外键异常`);
     }
+    // v34：个人垫付先生成“待上传证明”，员工补传付款截图和发票后再进入三级审核。
+    // SQLite 不能直接修改 CHECK 约束，按旧版迁移方式重建报销表；关闭 legacy_alter_table
+    // 会让附件/审批表的 REFERENCES 跟着旧表名改写，因此这里临时开启 legacy 模式。
+    if (appVersion < 34) {
+      const legacyAlterTable = instance.pragma('legacy_alter_table', { simple: true });
+      instance.pragma('legacy_alter_table = ON');
+      instance.pragma('foreign_keys = OFF');
+      try {
+        instance.transaction(() => {
+          instance!.exec(`
+            ALTER TABLE reimbursements_simple RENAME TO reimbursements_simple_v34;
+            CREATE TABLE reimbursements_simple(
+              id TEXT PRIMARY KEY, employee TEXT NOT NULL, item TEXT NOT NULL, amount INTEGER NOT NULL DEFAULT 0,
+              advance_date TEXT NOT NULL, order_id TEXT, invoice TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '',
+              status TEXT NOT NULL DEFAULT 'pending_review' CHECK(status IN ('pending_proof','pending_review','pending_recheck','pending_confirmation','pending_payment','paid','rejected')),
+              reject_reason TEXT NOT NULL DEFAULT '', reviewed_by TEXT NOT NULL DEFAULT '', reviewed_at TEXT,
+              reimbursed_by TEXT NOT NULL DEFAULT '', reimbursed_at TEXT, voucher_no TEXT NOT NULL DEFAULT '',
+              voucher_created_at TEXT, voucher_archived_at TEXT, created_at TEXT NOT NULL, employee_uid INTEGER,
+              department TEXT NOT NULL DEFAULT '', source_line_id TEXT NOT NULL DEFAULT '',
+              amount_adjusted INTEGER NOT NULL DEFAULT 0, amount_change_note TEXT NOT NULL DEFAULT '',
+              content_modified INTEGER NOT NULL DEFAULT 0, content_modified_at TEXT,
+              FOREIGN KEY(order_id) REFERENCES orders_simple(id) ON DELETE CASCADE
+            );
+            INSERT INTO reimbursements_simple(id,employee,item,amount,advance_date,order_id,invoice,note,status,reject_reason,reviewed_by,reviewed_at,reimbursed_by,reimbursed_at,voucher_no,voucher_created_at,voucher_archived_at,created_at,employee_uid,department,source_line_id,amount_adjusted,amount_change_note,content_modified,content_modified_at)
+              SELECT id,employee,item,amount,advance_date,order_id,invoice,note,status,reject_reason,reviewed_by,reviewed_at,reimbursed_by,reimbursed_at,voucher_no,voucher_created_at,voucher_archived_at,created_at,employee_uid,department,source_line_id,0,'',0,NULL FROM reimbursements_simple_v34;
+            DROP TABLE reimbursements_simple_v34;
+            -- 历史自动垫付如果尚未上传任何附件，也回到“待上传证明”，避免直接进入一级审核。
+            UPDATE reimbursements_simple
+              SET status='pending_proof'
+              WHERE status='pending_review' AND source_line_id<>''
+                AND NOT EXISTS (SELECT 1 FROM reimbursement_attachments ra WHERE ra.reimbursement_id=reimbursements_simple.id);
+            CREATE INDEX idx_simple_reimbursements_date ON reimbursements_simple(advance_date DESC);
+            CREATE INDEX idx_simple_reimbursements_order ON reimbursements_simple(order_id);
+            CREATE UNIQUE INDEX idx_reimbursements_voucher_no ON reimbursements_simple(voucher_no) WHERE voucher_no <> '';
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_reimbursements_source_line ON reimbursements_simple(order_id,source_line_id) WHERE source_line_id <> '';
+            UPDATE schema_meta SET value='34' WHERE key='order_app_version';
+          `);
+        })();
+      } finally {
+        instance.pragma('foreign_keys = ON');
+        instance.pragma(`legacy_alter_table = ${legacyAlterTable ? 'ON' : 'OFF'}`);
+      }
+      const v34Violations = instance.pragma('foreign_key_check') as Array<Record<string, unknown>>;
+      if (v34Violations.length) throw new Error(`v34 迁移后存在 ${v34Violations.length} 条外键异常`);
+    }
+    // v35：部门改为「设计/执行/商务/策划/财务/老板」，身份完全由部门决定；
+    // 历史「管理员」身份并入老板，历史「内务」部门并入财务。
+    if (appVersion < 35) {
+      const legacyAlterTable = instance.pragma('legacy_alter_table', { simple: true });
+      instance.pragma('legacy_alter_table = ON');
+      instance.pragma('foreign_keys = OFF');
+      try {
+        instance.transaction(() => {
+          instance!.exec(`
+            ALTER TABLE employees RENAME TO employees_v35;
+            CREATE TABLE employees (
+              catsco_uid INTEGER PRIMARY KEY,
+              username TEXT NOT NULL,
+              display_name TEXT NOT NULL,
+              department TEXT NOT NULL DEFAULT '',
+              role TEXT NOT NULL DEFAULT 'pending' CHECK(role IN ('pending','executor','designer','business','planner','finance','owner')),
+              active INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            INSERT INTO employees(catsco_uid,username,display_name,department,role,active,created_at,updated_at)
+              SELECT catsco_uid,username,display_name,department,
+                CASE department
+                  WHEN '设计' THEN 'designer'
+                  WHEN '执行' THEN 'executor'
+                  WHEN '商务' THEN 'business'
+                  WHEN '策划' THEN 'planner'
+                  WHEN '财务' THEN 'finance'
+                  WHEN '老板' THEN 'owner'
+                  ELSE 'pending'
+                END,
+                CASE WHEN department='' THEN 0 ELSE 1 END,
+                created_at,updated_at
+              FROM (
+                SELECT catsco_uid,username,display_name,
+                  CASE
+                    WHEN role='pending' THEN ''
+                    WHEN role IN ('owner','manager') THEN '老板'
+                    WHEN department='内务' THEN '财务'
+                    WHEN department IN ('设计','执行','商务','策划','财务','老板') THEN department
+                    WHEN role='executor' THEN '执行'
+                    WHEN role='designer' THEN '设计'
+                    WHEN role='planner' THEN '策划'
+                    WHEN role='finance' THEN '财务'
+                    ELSE ''
+                  END AS department,
+                  created_at,updated_at
+                FROM employees_v35
+              );
+            DROP TABLE employees_v35;
+
+            ALTER TABLE system_admin_identity RENAME TO system_admin_identity_v35;
+            CREATE TABLE system_admin_identity (
+              uid INTEGER PRIMARY KEY,
+              role TEXT NOT NULL CHECK(role IN ('executor','designer','business','planner','finance','owner')),
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            INSERT INTO system_admin_identity(uid,role,created_at,updated_at)
+              SELECT uid,CASE role WHEN 'manager' THEN 'owner' ELSE role END,created_at,updated_at
+              FROM system_admin_identity_v35;
+            DROP TABLE system_admin_identity_v35;
+
+            -- 部门配置与报销部门快照跟随新部门：历史内务归入财务，空快照按员工当前部门补齐。
+            UPDATE department_approvers SET department='财务' WHERE department='内务';
+            UPDATE reimbursements_simple SET department='财务' WHERE department='内务';
+            UPDATE reimbursements_simple
+              SET department=COALESCE((SELECT department FROM employees WHERE employees.catsco_uid=reimbursements_simple.employee_uid),department)
+              WHERE department='';
+            UPDATE schema_meta SET value='35' WHERE key='order_app_version';
+          `);
+        })();
+      } finally {
+        instance.pragma('foreign_keys = ON');
+        instance.pragma(`legacy_alter_table = ${legacyAlterTable ? 'ON' : 'OFF'}`);
+      }
+      const v35Violations = instance.pragma('foreign_key_check') as Array<Record<string, unknown>>;
+      if (v35Violations.length) throw new Error(`v35 迁移后存在 ${v35Violations.length} 条外键异常`);
+    }
     importBundledExcel(instance);
   }
   return instance;
@@ -963,6 +1087,7 @@ function parseList(value: unknown): Array<Record<string, unknown>> {
 
 function reimbursementStatusFor(advances: Array<Record<string, unknown>>): string {
   if (!advances.length) return '无需报销';
+  if (advances.some((item) => reimbursementStatusCode(item.status) === 'pending_proof')) return reimbursementStatusLabel('pending_proof');
   if (advances.some((item) => reimbursementStatusCode(item.status) === 'pending_review')) return reimbursementStatusLabel('pending_review');
   if (advances.some((item) => reimbursementStatusCode(item.status) === 'rejected')) return reimbursementStatusLabel('rejected');
   if (advances.some((item) => reimbursementStatusCode(item.status) === 'pending_recheck')) return reimbursementStatusLabel('pending_recheck');
@@ -994,7 +1119,7 @@ export type ReimbursementApprovalHistory = {
 
 const defaultApproverRoleLabels: Record<string, string> = {
   admin: '系统管理员',
-  manager: '管理人员',
+  business: '商务',
   finance: '财务',
   owner: '老板'
 };
@@ -1049,7 +1174,7 @@ export function canActOnReimbursement(
   if (!identity) return false;
   const step = reimbursementStepForStatus(row.status);
   if (!step) return false;
-  if (row.employee_uid != null && Number(row.employee_uid) === identity.uid && identity.uid !== ADMIN_UID) return false;
+  if (row.employee_uid != null && Number(row.employee_uid) === identity.uid && !isAdminUid(identity.uid)) return false;
   if (step.layer === 4) return (step.defaultRoles as readonly string[]).includes(identity.role);
   const configured = (buckets || departmentApproverBuckets()).get(text(row.department))?.get(step.layer) || [];
   if (configured.length) return configured.some((approver) => approver.employee_uid === identity.uid);
@@ -1167,6 +1292,7 @@ export function setDepartmentApprovers(
 
 function employeeDepartment(db: Database.Database, uid: number | null | undefined): string {
   if (!uid) return '';
+  // 身份由部门决定，报销部门快照直接取员工当前所属部门。
   const row = db.prepare('SELECT department FROM employees WHERE catsco_uid=?').get(uid) as { department: string } | undefined;
   return text(row?.department);
 }
@@ -1230,8 +1356,9 @@ function advanceItemName(item: Record<string, unknown>): string {
 
 /**
  * 个人垫付：保存订单时按行同步报销记录。
- * 待审核记录会跟随订单成本变化；取消垫付或删除行时只清理尚未进入审核流程的记录，
- * 已审核/已付款的记录保留，避免影响财务流程。
+ * 新记录先进入“待上传证明”，员工补传付款截图和发票后才会进入三级审核。
+ * 上传证明前/待审核/已打回记录会跟随订单成本变化；取消垫付或删除行时，
+ * 只清理尚未进入审核流程的记录，已审核/已付款的记录保留，避免影响财务流程。
  */
 function syncOrderAdvanceReimbursements(
   db: Database.Database,
@@ -1240,7 +1367,7 @@ function syncOrderAdvanceReimbursements(
   lineIds: string[],
   actor: AdvanceActor
 ) {
-  const existing = db.prepare("SELECT id,source_line_id,status FROM reimbursements_simple WHERE order_id=? AND source_line_id<>''").all(order.id) as Array<{ id: string; source_line_id: string; status: string }>;
+  const existing = db.prepare("SELECT id,source_line_id,status,amount_adjusted FROM reimbursements_simple WHERE order_id=? AND source_line_id<>''").all(order.id) as Array<{ id: string; source_line_id: string; status: string; amount_adjusted: number }>;
   const byLine = new Map(existing.map((row) => [row.source_line_id, row]));
   const kept = new Set<string>();
   const department = employeeDepartment(db, actor.uid);
@@ -1255,19 +1382,25 @@ function syncOrderAdvanceReimbursements(
     if (!row) {
       if (!actor.name) throw new Error('个人垫付需要当前录入人身份');
       const id = uuid();
-      db.prepare('INSERT INTO reimbursements_simple(id,employee,item,amount,advance_date,order_id,invoice,note,created_at,employee_uid,source_line_id,department) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
-        .run(id, actor.name, item, amount, order.order_date, order.id, '', note, now(), actor.uid, lineId, department);
-      recordAudit(db, { actorName: actor.name, actorUid: actor.uid, action: 'create_advance', entityType: 'reimbursement', entityId: id, detail: { order_id: order.id, order_code: order.code, amount } });
-    } else if (['pending_review', 'rejected'].includes(row.status)) {
-      // 尚未进入多级审核前，金额跟随订单成本变化。
-      db.prepare("UPDATE reimbursements_simple SET amount=?,item=?,advance_date=?,note=?,department=CASE WHEN department='' THEN ? ELSE department END WHERE id=?")
-        .run(amount, item, order.order_date, note, department, row.id);
+      db.prepare('INSERT INTO reimbursements_simple(id,employee,item,amount,advance_date,order_id,invoice,note,created_at,employee_uid,source_line_id,department,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        .run(id, actor.name, item, amount, order.order_date, order.id, '', note, now(), actor.uid, lineId, department, 'pending_proof');
+      recordAudit(db, { actorName: actor.name, actorUid: actor.uid, action: 'create_advance', entityType: 'reimbursement', entityId: id, detail: { order_id: order.id, order_code: order.code, amount, status: 'pending_proof' } });
+    } else if (['pending_proof', 'pending_review', 'rejected'].includes(row.status)) {
+      // 待上传证明且未申请过改金额时，金额跟随订单成本；已提交审核或已手动改金额后，
+      // 订单成本变化不得覆盖报销金额，金额调整必须走“申请修改金额”并留下审批记录。
+      if (row.status === 'pending_proof' && !row.amount_adjusted) {
+        db.prepare("UPDATE reimbursements_simple SET amount=?,item=?,advance_date=?,note=?,department=CASE WHEN department='' THEN ? ELSE department END WHERE id=?")
+          .run(amount, item, order.order_date, note, department, row.id);
+      } else {
+        db.prepare("UPDATE reimbursements_simple SET item=?,advance_date=?,note=?,department=CASE WHEN department='' THEN ? ELSE department END WHERE id=?")
+          .run(item, order.order_date, note, department, row.id);
+      }
     }
     kept.add(lineId);
   });
   for (const row of existing) {
     if (kept.has(row.source_line_id)) continue;
-    if (!['pending_review', 'rejected'].includes(row.status)) continue;
+    if (!['pending_proof', 'pending_review', 'rejected'].includes(row.status)) continue;
     const files = db.prepare('SELECT storage_path FROM reimbursement_attachments WHERE reimbursement_id=?').all(row.id) as Array<{ storage_path: string }>;
     db.prepare('DELETE FROM reimbursements_simple WHERE id=?').run(row.id);
     for (const file of files) removeAttachmentFile(file.storage_path);
@@ -2016,6 +2149,7 @@ export function createReimbursement(data: Record<string, unknown>, actorUid: num
 }
 
 const reimbursementTransitions: Record<ReimbursementStatusCode, ReimbursementStatusCode[]> = {
+  pending_proof: ['pending_review'],
   pending_review: ['pending_recheck', 'rejected'], pending_recheck: ['pending_confirmation', 'rejected'],
   pending_confirmation: ['pending_payment', 'rejected'], pending_payment: ['paid'], rejected: [], paid: []
 };
@@ -2105,7 +2239,7 @@ export function archiveReimbursementVoucher(id: string, actor = '财务人员', 
 export function deleteReimbursement(id: string) {
   const db = getOrderDb();
   const files = db.prepare('SELECT storage_path FROM reimbursement_attachments WHERE reimbursement_id=?').all(id) as Array<{ storage_path: string }>;
-  const result = db.prepare("DELETE FROM reimbursements_simple WHERE id=? AND status='pending_review'").run(id);
+  const result = db.prepare("DELETE FROM reimbursements_simple WHERE id=? AND status IN ('pending_proof','pending_review')").run(id);
   if (!result.changes) throw new Error('REIMBURSEMENT_NOT_FOUND');
   for (const file of files) removeAttachmentFile(file.storage_path);
 }
@@ -2126,11 +2260,12 @@ export function listOrderAttachments(orderId: string) {
   return getOrderDb().prepare('SELECT id,order_id,file_name,mime_type,file_size,attachment_kind,created_at FROM order_attachments WHERE order_id=? ORDER BY created_at DESC').all(orderId);
 }
 
-export function addStandaloneReimbursementAttachment(reimbursementId: string, file: { name: string; data: Buffer }, actor: { name?: string; uid?: number | null } = {}) {
+export function addStandaloneReimbursementAttachment(reimbursementId: string, file: { name: string; data: Buffer; kind?: string }, actor: { name?: string; uid?: number | null } = {}) {
   const db = getOrderDb();
   const reimbursement = db.prepare('SELECT id,employee,status FROM reimbursements_simple WHERE id=?').get(reimbursementId) as { id: string; employee: string; status: string } | undefined;
   if (!reimbursement) throw new Error('REIMBURSEMENT_NOT_FOUND');
-  if (!['pending_review', 'rejected'].includes(reimbursement.status)) throw new Error('当前状态不允许上传发票');
+  if (!['pending_proof', 'pending_review', 'rejected'].includes(reimbursement.status)) throw new Error('当前状态不允许上传附件');
+  const attachmentKind = file.kind === 'proof' ? 'proof' : 'invoice';
   if (!file.data?.length) throw new Error('附件内容为空');
   if (file.data.length > maxAttachmentSize) throw new Error('单个附件不能超过 10MB');
   const mime = detectAttachmentMime(file.data);
@@ -2141,16 +2276,109 @@ export function addStandaloneReimbursementAttachment(reimbursementId: string, fi
   const storagePath = join(`reimbursements/${reimbursementId}`, `${id}${extension}`);
   mkdirSync(join(attachmentDir, `reimbursements/${reimbursementId}`), { recursive: true });
   writeFileSync(join(attachmentDir, storagePath), file.data);
-  db.prepare('INSERT INTO reimbursement_attachments(id,reimbursement_id,file_name,mime_type,file_size,storage_path,attachment_kind,created_at) VALUES(?,?,?,?,?,?,?,?)').run(id, reimbursementId, safeName, mime, file.data.length, storagePath, 'invoice', now());
+  db.prepare('INSERT INTO reimbursement_attachments(id,reimbursement_id,file_name,mime_type,file_size,storage_path,attachment_kind,created_at) VALUES(?,?,?,?,?,?,?,?)').run(id, reimbursementId, safeName, mime, file.data.length, storagePath, attachmentKind, now());
   const status = (reimbursement.status === 'rejected' ? 'pending_review' : reimbursement.status);
   db.transaction(() => {
-    db.prepare("UPDATE reimbursements_simple SET invoice=?, status=?, reject_reason=CASE WHEN ?='pending_review' THEN '' ELSE reject_reason END WHERE id=?").run(safeName, status, status, reimbursementId);
+    if (attachmentKind === 'invoice') {
+      db.prepare("UPDATE reimbursements_simple SET invoice=?, status=?, reject_reason=CASE WHEN ?='pending_review' THEN '' ELSE reject_reason END WHERE id=?").run(safeName, status, status, reimbursementId);
+    }
     if (reimbursement.status === 'rejected') {
       recordReimbursementApproval(db, reimbursementId, 0, 'resubmitted', actor.name || reimbursement.employee, actor.uid ?? null, safeName);
     }
-    recordAudit(db, { actorName: actor.name || reimbursement.employee, actorUid: actor.uid ?? null, action: reimbursement.status === 'rejected' ? 'reupload_attachment' : 'upload_attachment', entityType: 'reimbursement', entityId: reimbursementId, detail: { file_name: safeName, file_size: file.data.length } });
+    recordAudit(db, { actorName: actor.name || reimbursement.employee, actorUid: actor.uid ?? null, action: reimbursement.status === 'rejected' ? 'reupload_attachment' : 'upload_attachment', entityType: 'reimbursement', entityId: reimbursementId, detail: { file_name: safeName, file_size: file.data.length, attachment_kind: attachmentKind } });
   })();
-  return { id, reimbursement_id: reimbursementId, file_name: safeName, mime_type: mime, file_size: file.data.length, created_at: now() };
+  return { id, reimbursement_id: reimbursementId, file_name: safeName, mime_type: mime, file_size: file.data.length, attachment_kind: attachmentKind, created_at: now() };
+}
+
+/**
+ * 申请修改报销金额：只改报销金额，不改订单成本。
+ * 待上传证明/已打回/待一级审核（尚未有人审核）可由报销人发起；
+ * 修改原因和前后金额写入审批记录，后续审核人据此确认。
+ */
+export function requestReimbursementAmountChange(
+  id: string,
+  amountValue: unknown,
+  changeReason: unknown,
+  actor: { name?: string; uid?: number | null } = {}
+) {
+  const db = getOrderDb();
+  const reimbursement = db.prepare('SELECT * FROM reimbursements_simple WHERE id=?').get(id) as Record<string, any> | undefined;
+  if (!reimbursement) throw new Error('REIMBURSEMENT_NOT_FOUND');
+  if (reimbursement.status === 'paid') throw new Error('已执行的报销不能修改金额');
+  if (reimbursement.voucher_archived_at) throw new Error('报销单据已归档，不能修改金额');
+  if (!['pending_proof', 'pending_review', 'pending_recheck', 'pending_confirmation', 'pending_payment', 'rejected'].includes(reimbursement.status)) {
+    throw new Error('当前状态不能申请修改金额');
+  }
+  const reason = text(changeReason);
+  if (!reason) throw new Error('请填写修改金额的原因');
+  const amount = moneyToCents(amountValue);
+  if (amount <= 0) throw new Error('报销金额必须大于 0');
+  if (amount === reimbursement.amount) throw new Error('新金额与当前金额相同');
+  // 已进入审核的报销修改后必须退回到上一个审核节点重新审核。
+  const rollbackStatus: Record<string, ReimbursementStatusCode> = {
+    pending_recheck: 'pending_review',
+    pending_confirmation: 'pending_recheck',
+    pending_payment: 'pending_confirmation'
+  };
+  const targetStatus = rollbackStatus[reimbursement.status] || reimbursementStatusCode(reimbursement.status);
+  const targetStep = reimbursementStepForStatus(targetStatus);
+  const rolledBack = targetStatus !== reimbursementStatusCode(reimbursement.status);
+  const changedAt = now();
+  const oldAmount = (Number(reimbursement.amount || 0) / 100).toFixed(2);
+  const newAmount = (amount / 100).toFixed(2);
+  const revisionNote = rolledBack
+    ? `金额由 ${oldAmount} 元调整为 ${newAmount} 元，报销已退回${reimbursementStatusLabel(targetStatus)}重新审核；原因：${reason}`
+    : `金额由 ${oldAmount} 元调整为 ${newAmount} 元；原因：${reason}`;
+  db.transaction(() => {
+    // 待执行阶段若已自动生成单据，修改后退回审核时清空未归档单号，重新通过后按新金额生成。
+    const clearVoucher = reimbursement.status === 'pending_payment' && !reimbursement.voucher_archived_at;
+    db.prepare(`UPDATE reimbursements_simple SET amount=?, amount_adjusted=1, amount_change_note=?,
+      content_modified=1, content_modified_at=?, status=?,
+      voucher_no=CASE WHEN ? THEN '' ELSE voucher_no END,
+      voucher_created_at=CASE WHEN ? THEN NULL ELSE voucher_created_at END WHERE id=?`)
+      .run(amount, reason, changedAt, targetStatus, clearVoucher ? 1 : 0, clearVoucher ? 1 : 0, id);
+    recordReimbursementApproval(
+      db,
+      id,
+      targetStep?.layer ?? 0,
+      'content_modified',
+      actor.name || reimbursement.employee,
+      actor.uid ?? null,
+      revisionNote
+    );
+    recordAudit(db, {
+      actorName: actor.name || reimbursement.employee,
+      actorUid: actor.uid ?? null,
+      action: 'request_amount_change',
+      entityType: 'reimbursement',
+      entityId: id,
+      fromValue: String(reimbursement.status),
+      toValue: targetStatus,
+      detail: { reason, old_amount: reimbursement.amount, new_amount: amount, rolled_back: rolledBack, changed_at: changedAt }
+    });
+  })();
+  const updated = db.prepare('SELECT * FROM reimbursements_simple WHERE id=?').get(id) as Record<string, any>;
+  return { ...updated, order_id: updated.order_id || '', reimbursement_status: reimbursementStatusLabel(updated.status) };
+}
+
+/** 员工上传付款截图与发票后提交，报销从“待上传证明”进入一级审核。 */
+export function submitReimbursementProof(id: string, actor: { name?: string; uid?: number | null } = {}) {
+  const db = getOrderDb();
+  const reimbursement = db.prepare('SELECT * FROM reimbursements_simple WHERE id=?').get(id) as Record<string, any> | undefined;
+  if (!reimbursement) throw new Error('REIMBURSEMENT_NOT_FOUND');
+  if (reimbursement.status !== 'pending_proof') throw new Error('当前报销无需上传证明');
+  const attachments = db.prepare('SELECT attachment_kind FROM reimbursement_attachments WHERE reimbursement_id=?').all(id) as Array<{ attachment_kind: string }>;
+  const hasProof = attachments.some((file) => file.attachment_kind === 'proof');
+  const hasInvoice = attachments.some((file) => file.attachment_kind === 'invoice');
+  if (!hasProof || !hasInvoice) throw new Error('请先上传付款截图和发票');
+  const changedAt = now();
+  db.transaction(() => {
+    db.prepare("UPDATE reimbursements_simple SET status='pending_review', reject_reason='' WHERE id=?").run(id);
+    recordReimbursementApproval(db, id, 0, 'submitted', actor.name || reimbursement.employee, actor.uid ?? null, '付款截图与发票已上传');
+    recordAudit(db, { actorName: actor.name || reimbursement.employee, actorUid: actor.uid ?? null, action: 'status_change', entityType: 'reimbursement', entityId: id, fromValue: reimbursement.status, toValue: 'pending_review', detail: { proof_submitted_at: changedAt } });
+  })();
+  const updated = db.prepare('SELECT * FROM reimbursements_simple WHERE id=?').get(id) as Record<string, any>;
+  return { ...updated, order_id: updated.order_id || '', reimbursement_status: reimbursementStatusLabel(updated.status) };
 }
 
 export function getReimbursementAccessInfo(reimbursementId: string) {
@@ -2164,7 +2392,7 @@ export function setReimbursementEmployee(id: string, uid: number) {
 }
 
 export function listReimbursementAttachments(reimbursementId: string) {
-  return getOrderDb().prepare('SELECT id,reimbursement_id,file_name,mime_type,file_size,created_at FROM reimbursement_attachments WHERE reimbursement_id=? ORDER BY created_at DESC').all(reimbursementId);
+  return getOrderDb().prepare('SELECT id,reimbursement_id,file_name,mime_type,file_size,attachment_kind,created_at FROM reimbursement_attachments WHERE reimbursement_id=? ORDER BY created_at DESC').all(reimbursementId);
 }
 
 export function getReimbursementAttachment(attachmentId: string) {

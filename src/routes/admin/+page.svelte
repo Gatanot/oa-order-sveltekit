@@ -3,7 +3,7 @@
 
   let { data, form }: { data: any; form: any } = $props();
   const stats = $derived(form?.stats || data.stats);
-  const roleLabels: Record<string, string> = { executor: '执行', designer: '设计师', planner: '策划', manager: '管理人员', finance: '财务', owner: '老板' };
+  const roleLabels: Record<string, string> = { executor: '执行', designer: '设计', business: '商务', planner: '策划', finance: '财务', owner: '老板' };
 </script>
 
 <svelte:head><title>系统管理员 · 广告订单 OA</title></svelte:head>
@@ -14,14 +14,14 @@
       <div>
         <p class="section-kicker">员工权限</p>
         <h1>系统管理员</h1>
-        <span>系统级开发管理工具，仅 Catsco 系统管理员可访问。</span>
+        <span>系统级开发管理工具，仅固定系统管理员（UID 826 / 406）可访问。</span>
       </div>
       <a class="outline-action" href="./orders"><ArrowLeft size={16} />返回订单</a>
     </header>
 
     <div class="admin-notice">
       <ShieldAlert size={19} />
-      <div><b>开发管理员工具</b><span>仅 Catsco 系统管理员编号 826（账号 catsco）可访问；生成操作会向当前数据库追加模拟记录，不会覆盖已有数据。</span></div>
+      <div><b>开发管理员工具</b><span>仅固定系统管理员 UID 826（账号 catsco）或 UID 406 可访问；生成操作会向当前数据库追加模拟记录，不会覆盖已有数据。</span></div>
     </div>
 
     <section class="admin-action-card identity-switcher">

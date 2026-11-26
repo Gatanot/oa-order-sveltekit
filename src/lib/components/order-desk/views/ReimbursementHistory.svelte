@@ -10,9 +10,10 @@
   let attachmentsByOrder = $state<Record<string, Array<any>>>({});
   let peopleExpanded = $state(false);
   function approvalActionLabel(action: string) {
-    return ({ approved: '审核通过', rejected: '打回', executed: '确认执行', resubmitted: '重新提交', submitted: '提交报销' } as Record<string, string>)[action] || action;
+    return ({ approved: '审核通过', rejected: '打回', executed: '确认执行', resubmitted: '重新提交', submitted: '提交报销', content_modified: '修改退回' } as Record<string, string>)[action] || action;
   }
-  function approvalLayerLabel(layer: number) {
+  function approvalLayerLabel(layer: number, action = '') {
+    if (action === 'content_modified' && layer === 0) return '内容修改';
     if (layer === 0) return '提交';
     if (layer >= 4) return '执行';
     return `${layer}级审核`;
@@ -141,8 +142,8 @@
             <div><small>关联订单</small><b>{detailItem.code || "内务报销"}</b></div>
             <div><small>客户 / 项目</small><b>{detailItem.customer_name ? `${detailItem.customer_name} · ` : ""}{detailItem.project_name || "内务报销"}</b></div>
             <div class="voucher-full"><small>发票附件</small>{#if detailItem.attachment_count}<button class="link-action voucher-attachment-button" type="button" onclick={() => showAttachments(detailItem)}>{detailItem.invoice || "查看附件"} · {detailItem.attachment_count} 个</button>{:else}<b>{detailItem.invoice || "未上传"}</b>{/if}{#if attachmentsByOrder[detailItem.id]?.length}<ul class="voucher-attachments">{#each attachmentsByOrder[detailItem.id] as file}<li><button class="attachment-link" type="button" onclick={() => desk.openAttachmentPreview(desk.reimbursementAttachmentUrl(file.id), file.file_name, file.mime_type)}><Paperclip size={13}/><span>{file.file_name}</span><small>{desk.formatFileSize(file.file_size)}</small></button></li>{/each}</ul>{/if}</div>
-            <div class="voucher-full"><small>备注</small><b>{detailItem.note || "—"}</b></div>
-            {#if detailItem.approval_history?.length}<div class="voucher-full approval-history"><small>审批记录</small><ul>{#each detailItem.approval_history as record}<li><b>{approvalLayerLabel(record.layer)}</b><span>{record.approver_name || "系统"} · {approvalActionLabel(record.action)}</span><small>{formatInBizTZ(record.created_at)}{record.comment ? ` · ${record.comment}` : ""}</small></li>{/each}</ul></div>{/if}
+            <div class="voucher-full"><small>备注</small><b>{detailItem.note || "—"}</b></div>{#if detailItem.content_modified}<div class="voucher-full reimbursement-modified-detail"><small>内容修改</small><b>{detailItem.amount_change_note || "报销内容已修改"}{detailItem.content_modified_at ? ` · ${formatInBizTZ(detailItem.content_modified_at)}` : ""}</b></div>{/if}
+            {#if detailItem.approval_history?.length}<div class="voucher-full approval-history"><small>审批记录</small><ul>{#each detailItem.approval_history as record}<li><b>{approvalLayerLabel(record.layer, record.action)}</b><span>{record.approver_name || "系统"} · {approvalActionLabel(record.action)}</span><small>{formatInBizTZ(record.created_at)}{record.comment ? ` · ${record.comment}` : ""}</small></li>{/each}</ul></div>{/if}
           </div>
         </div>
       </div>

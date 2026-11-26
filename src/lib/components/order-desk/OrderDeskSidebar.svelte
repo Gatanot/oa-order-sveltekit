@@ -3,7 +3,7 @@
   import { FileSpreadsheet, History, LayoutDashboard, LogIn, PanelLeftClose, PanelLeftOpen, UserCog, WalletCards, X } from "lucide-svelte";
   const desk = getContext<any>("order-desk");
   let { collapsed = false, mobileOpen = false, toggle, close, resize, resizeBy }: { collapsed?: boolean; mobileOpen?: boolean; toggle: () => void; close: () => void; resize: (event: PointerEvent) => void; resizeBy: (amount: number) => void } = $props();
-  const roleLabels: Record<string, string> = { admin: '系统管理员', executor: '执行', designer: '设计师', planner: '策划', manager: '管理人员', finance: '财务', owner: '老板', pending: '待开通' };
+  const roleLabels: Record<string, string> = { admin: '系统管理员', executor: '执行', designer: '设计', business: '商务', planner: '策划', finance: '财务', owner: '老板', pending: '待开通' };
   function navigate(path: string) {
     desk.navigate(path);
     close();

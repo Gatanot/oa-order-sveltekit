@@ -2,6 +2,7 @@
   import { getContext, onMount } from 'svelte';
   import { ArrowRight, ChevronRight, ChevronsDownUp, ChevronsUpDown, CircleAlert, CircleCheck, Crown, Info, Pencil, Plus, Save, Search, ShieldCheck, Trash2, X } from 'lucide-svelte';
   import { api } from '$lib/api';
+  import { departmentForRole, departments as allDepartments, employeeRoleForDepartment } from '$lib/permissions';
   import WorkbenchListFilters from '../WorkbenchListFilters.svelte';
 
   const desk = getContext<any>('order-desk');
@@ -16,7 +17,7 @@
     isSelf?: boolean;
     canManage?: boolean;
   };
-  type EmployeeDraft = { display_name: string; department: string; role: string };
+  type EmployeeDraft = { display_name: string; department: string };
   type EmployeeGroup = { key: string; employees: EmployeeRow[]; isBossGroup: boolean };
   type ApproverUser = { employee_uid: number; display_name: string; username: string; role: string };
   type DepartmentApproverConfig = {
@@ -37,9 +38,9 @@
   const roleLabels: Record<string, string> = {
     pending: '待开通',
     executor: '执行',
-    designer: '设计师',
+    designer: '设计',
+    business: '商务',
     planner: '策划',
-    manager: '管理人员',
     finance: '财务',
     owner: '老板'
   };
@@ -47,12 +48,12 @@
     owner: {
       label: '老板',
       summary: '全局经营数据与最终确认',
-      permissions: ['查看、管理并导出全部订单', '确认报销、查看历史报销', '管理员工权限与执行公司']
+      permissions: ['查看、管理并导出全部订单', '审核并确认报销、查看历史报销', '按部门调整员工身份与执行公司']
     },
-    manager: {
-      label: '管理人员',
-      summary: '订单管理与团队日常管理',
-      permissions: ['查看、管理并导出全部订单', '审核报销、维护报价成本库', '管理下级员工（不能授予管理、财务或老板身份）']
+    business: {
+      label: '商务',
+      summary: '客户与订单商务协作',
+      permissions: ['查看全部订单并导出', '新建订单', '查看和维护报价库与成本库']
     },
     finance: {
       label: '财务',
@@ -65,7 +66,7 @@
       permissions: ['新建、编辑本人创建的订单并导出', '查看和维护报价库与成本库', '管理执行公司']
     },
     designer: {
-      label: '设计师',
+      label: '设计',
       summary: '处理本人参与的订单',
       permissions: ['查看本人创建或参与的订单', '提交并查看本人报销']
     },
@@ -76,11 +77,11 @@
     },
     pending: {
       label: '待开通',
-      summary: '尚未分配业务身份，不能进入业务功能',
-      permissions: ['请先设置员工身份']
+      summary: '尚未分配部门，不能进入业务功能',
+      permissions: ['请先设置员工所属部门']
     }
   };
-  const guideRoles = ['owner', 'manager', 'finance', 'executor', 'designer', 'planner', 'pending'];
+  const guideRoles = ['owner', 'business', 'finance', 'executor', 'designer', 'planner', 'pending'];
   // 老板不隶属于业务部门，在员工明细中单独成组置顶显示。
   const BOSS_GROUP = '老板';
   const UNSET_GROUP = '未设置';
@@ -112,7 +113,8 @@
     roleGuideFocusRole = '';
   }
   function filterByRole(role: string) {
-    filters = { ...filters, role };
+    // 身份与部门同源：筛身份即筛对应部门，待开通对应未设置部门。
+    filters = { ...filters, department: role === 'pending' ? UNSET_GROUP : departmentForRole(role) };
     roleGuideOpen = false;
   }
   function employeeGroupKey(employee: EmployeeRow) {
@@ -143,7 +145,6 @@
   let employees = $state<EmployeeRow[]>([]);
   let savedEmployees = $state<EmployeeRow[]>([]);
   let departments = $state<string[]>([]);
-  let roles = $state<string[]>([]);
   let employeeError = $state('');
   let employeeLoadFailed = $state(false);
   let toast = $state<ToastMessage | null>(null);
@@ -157,7 +158,7 @@
   let creatingEmployee = $state(false);
   let editingUid = $state<number | null>(null);
   let draft = $state<EmployeeDraft | null>(null);
-  let filters = $state({ search: '', department: '', role: '' });
+  let filters = $state({ search: '', department: '' });
   let expandedGroups = $state<Set<string>>(new Set());
   let roleGuideOpen = $state(false);
   let roleGuideQuery = $state('');
@@ -170,18 +171,15 @@
   let newUsername = $state('');
   let newName = $state('');
   let newDepartment = $state('');
-  let newRole = $state('executor');
 
   // 员工数量有限：按部门分组折叠展示，不再分页；搜索与部门筛选作用于分组口径。
   const baseEmployees = $derived(savedEmployees.filter((employee) =>
     (!filters.search || `${employee.display_name} ${employee.username} ${employee.catsco_uid}`.toLowerCase().includes(filters.search.trim().toLowerCase())) &&
     (!filters.department || employeeGroupKey(employee) === filters.department)
   ));
-  const matchingEmployeeIds = $derived(new Set(baseEmployees.filter((employee) =>
-    !filters.role || employee.role === filters.role
-  ).map((employee) => employee.catsco_uid)));
+  const matchingEmployeeIds = $derived(new Set(baseEmployees.map((employee) => employee.catsco_uid)));
   const visibleEmployees = $derived(employees.filter((employee) => matchingEmployeeIds.has(employee.catsco_uid)));
-  const groupOrder = $derived([BOSS_GROUP, ...departments, UNSET_GROUP]);
+  const groupOrder = $derived([...new Set([BOSS_GROUP, ...departments, UNSET_GROUP])]);
   const visibleGroups = $derived.by<EmployeeGroup[]>(() => {
     const grouped = new Map<string, EmployeeRow[]>();
     for (const employee of visibleEmployees) {
@@ -211,26 +209,24 @@
     const info = roleInfo(role);
     return `${info.label} ${info.summary} ${info.permissions.join(' ')}`.toLowerCase().includes(guideQueryText);
   }));
-  const hasActiveFilters = $derived(filters.search !== '' || filters.department !== '' || filters.role !== '');
+  const hasActiveFilters = $derived(filters.search !== '' || filters.department !== '');
   // 所有已分配身份的正式员工都可被配置为审核人，不再区分启用状态。
   const approverCandidates = $derived(employees
     .filter((employee) => employee.role !== 'pending')
     .sort((a, b) => a.department.localeCompare(b.department, 'zh-CN') || a.display_name.localeCompare(b.display_name, 'zh-CN')));
   const approverSearchText = $derived(approverSearch.trim().toLowerCase());
 
-  // 当前操作者可授予的身份；管理人员不能授予管理、财务或老板身份。
-  const assignableRoles = $derived.by(() => {
-    const available = roles.length ? roles : ['executor', 'designer', 'planner', 'manager', 'finance', 'owner'];
+  // 部门即身份：老板可调整除老板外的部门，系统管理员可调整全部部门。
+  const assignableDepartments = $derived.by(() => {
+    const available = departments.length ? departments : [...allDepartments];
     if (currentRole === 'admin') return available;
-    if (currentRole === 'owner') return available.filter((role) => role !== 'owner');
-    if (currentRole === 'manager') return available.filter((role) => !['owner', 'manager', 'finance'].includes(role));
+    if (currentRole === 'owner') return available.filter((department) => department !== '老板');
     return [];
   });
   const roleAssignHint = $derived.by(() => {
-    if (currentRole === 'admin') return '可授予全部业务身份。';
-    if (currentRole === 'owner') return '可授予除老板外的身份；固定账号不可修改。';
-    if (currentRole === 'manager') return '可授予执行、设计或策划；不可授予管理、财务、老板。';
-    return '当前身份不能调整员工身份。';
+    if (currentRole === 'admin') return '可调整全部部门，员工身份随部门自动确定。';
+    if (currentRole === 'owner') return '可调整员工所属部门；老板身份仅系统管理员可授予。';
+    return '当前身份不能调整员工部门。';
   });
 
   const departmentFilterOptions = $derived([
@@ -241,26 +237,16 @@
   ]);
   const filterFields = $derived([
     { key: 'search', label: '搜索', type: 'search' as const, value: filters.search, placeholder: '姓名 / 用户名 / 用户编号' },
-    { key: 'department', label: '部门', value: filters.department, options: departmentFilterOptions },
-    { key: 'role', label: '身份', value: filters.role, options: [{ value: '', label: '全部身份' }, { value: 'pending', label: '待开通' }, ...roles.map((value) => ({ value, label: roleLabels[value] || value }))] }
+    { key: 'department', label: '部门', value: filters.department, options: departmentFilterOptions }
   ]);
 
-  function roleOptionsFor(employee: EmployeeRow) {
-    return assignableRoles.includes(employee.role)
-      ? assignableRoles
-      : [employee.role, ...assignableRoles.filter((role) => role !== employee.role)];
-  }
   function canEditProfile(employee: EmployeeRow) {
     return Boolean(employee.canManage || employee.isSelf);
-  }
-  function canEditRole(employee: EmployeeRow) {
-    return Boolean(employee.canManage);
   }
   function draftDirty(employee: EmployeeRow) {
     return Boolean(draft) && (
       draft!.display_name !== employee.display_name ||
-      draft!.department !== employee.department ||
-      draft!.role !== employee.role
+      draft!.department !== employee.department
     );
   }
   function syncDeskEmployees() {
@@ -275,10 +261,10 @@
   }
   async function fetchEmployees() {
     const result = await api.get<{ data: EmployeeRow[]; departments: string[]; roles: string[] }>('/api/employees');
-    employees = result.data;
-    savedEmployees = result.data.map((employee) => ({ ...employee }));
+    const normalized = result.data.map((employee) => employee.role === 'owner' ? { ...employee, department: '老板' } : employee);
+    employees = normalized;
+    savedEmployees = normalized.map((employee) => ({ ...employee }));
     departments = result.departments;
-    roles = result.roles;
     syncDeskEmployees();
   }
   async function loadEmployees() {
@@ -429,14 +415,13 @@
     }
   }
   function clearFilters() {
-    filters = { search: '', department: '', role: '' };
+    filters = { search: '', department: '' };
   }
   function resetNewEmployee() {
     newUid = '';
     newUsername = '';
     newName = '';
-    newDepartment = '';
-    newRole = assignableRoles[0] || 'executor';
+    newDepartment = assignableDepartments[0] || '';
   }
   function startCreate() {
     employeeError = '';
@@ -447,10 +432,6 @@
     if (creatingEmployee) return;
     createOpen = false;
     employeeError = '';
-  }
-  function changeDraftRole(role: string) {
-    if (!draft) return;
-    draft.role = role;
   }
   async function startEdit(employee: EmployeeRow) {
     if (editingUid === employee.catsco_uid) return;
@@ -463,8 +444,7 @@
     expandGroup(employeeGroupKey(employee));
     draft = {
       display_name: employee.display_name,
-      department: employee.department,
-      role: employee.role
+      department: employee.department
     };
   }
   async function cancelEdit(employee: EmployeeRow) {
@@ -485,8 +465,7 @@
       await api.patch('/api/employees', {
         uid: Number(employee.catsco_uid),
         display_name: draft.display_name.trim(),
-        department: draft.department,
-        role: draft.role
+        department: draft.department
       });
       await fetchEmployees();
       editingUid = null;
@@ -516,13 +495,12 @@
         uid,
         username: newUsername.trim(),
         display_name: newName.trim() || newUsername.trim(),
-        department: newDepartment,
-        role: newRole
+        department: newDepartment
       });
       await fetchEmployees();
-      expandGroup(newRole === 'owner' ? BOSS_GROUP : (newDepartment || UNSET_GROUP));
+      expandGroup(newDepartment || UNSET_GROUP);
       createOpen = false;
-      showToast(`员工已新增，身份为${roleLabel(newRole)}`);
+      showToast(`员工已新增，身份为${roleLabel(employeeRoleForDepartment(newDepartment))}`);
       resetNewEmployee();
     } catch (reason) {
       employeeError = reason instanceof Error ? reason.message : '员工创建失败';
@@ -679,7 +657,7 @@
     </div>
     {#if canManageEmployees}
       <div class="top-actions">
-        <button class="outline-action" type="button" onclick={() => openRoleGuide()}><ShieldCheck size={16} />角色权限说明</button>
+        <button class="outline-action" type="button" onclick={() => openRoleGuide()}><ShieldCheck size={16} />部门身份说明</button>
         <button class="primary-action" type="button" onclick={startCreate}><Plus size={16} />新增员工</button>
       </div>
     {/if}
@@ -722,7 +700,6 @@
                 {#if isGroupExpanded(group.key)}
                   {#each group.employees as employee (employee.catsco_uid)}
                     {#if editingUid === employee.catsco_uid && draft}
-                      {@const roleOptions = roleOptionsFor(employee)}
                       <tr class:employee-row-readonly={!canEditProfile(employee)}>
                         <td>
                           <input aria-label="员工姓名" maxlength="40" bind:value={draft.display_name} disabled={savingEmployee} />
@@ -730,24 +707,18 @@
                           {#if draftDirty(employee)}<span class="employee-dirty-tag">未保存</span>{/if}
                           <div class="employee-inline-department">
                             <span>部门</span>
-                            <select aria-label="所属部门" bind:value={draft.department} disabled={savingEmployee}>
+                            <select aria-label="所属部门" bind:value={draft.department} disabled={!employee.canManage || savingEmployee}>
                               <option value="">未设置</option>
-                              {#if draft.department && !departments.includes(draft.department)}<option value={draft.department}>{draft.department}</option>{/if}
-                              {#each departments as department}<option value={department}>{department}</option>{/each}
+                              {#if draft.department && !assignableDepartments.includes(draft.department)}<option value={draft.department}>{draft.department}</option>{/if}
+                              {#each assignableDepartments as department}<option value={department}>{department}</option>{/each}
                             </select>
+                            {#if !employee.canManage}<small class="employee-role-summary">身份由部门自动确定，不能调整自己的部门</small>{/if}
                           </div>
                         </td>
                         <td>{employee.catsco_uid} · {employee.username}</td>
                         <td>
-                          <select
-                            aria-label="员工身份"
-                            value={draft.role}
-                            disabled={!canEditRole(employee) || savingEmployee}
-                            onchange={(event) => changeDraftRole(event.currentTarget.value)}
-                          >
-                            {#each roleOptions as role}<option value={role}>{roleLabel(role)}</option>{/each}
-                          </select>
-                          {#if !canEditRole(employee)}<small class="employee-role-summary">不能修改自己的身份</small>{/if}
+                          <b>{roleLabel(employeeRoleForDepartment(draft.department))}</b>
+                          <small class="employee-role-summary">身份随部门自动确定</small>
                         </td>
                         <td>
                           <div class="employee-row-actions">
@@ -757,7 +728,8 @@
                         </td>
                       </tr>
                     {:else}
-                      {@const info = roleInfo(employee.role)}
+                      {@const employeeRole = employeeRoleForDepartment(employee.department)}
+                      {@const info = roleInfo(employeeRole)}
                       <tr class:employee-row-readonly={!canEditProfile(employee)}>
                         <td><b>{employee.display_name || '未命名员工'}</b>{#if employee.isSelf}<span class="employee-self-tag">（我）</span>{/if}</td>
                         <td>{employee.catsco_uid} · {employee.username}</td>
@@ -765,7 +737,7 @@
                           <div class="employee-role-cell">
                             <div class="employee-role-title">
                               <b>{info.label}</b>
-                              <button type="button" class="employee-role-info" title={`查看${info.label}权限说明`} aria-label={`查看${info.label}权限说明`} onclick={() => openRoleGuide(employee.role)}><Info size={13} /></button>
+                              <button type="button" class="employee-role-info" title={`查看${info.label}权限说明`} aria-label={`查看${info.label}权限说明`} onclick={() => openRoleGuide(employeeRole)}><Info size={13} /></button>
                             </div>
                           </div>
                         </td>
@@ -902,14 +874,14 @@
       <div class="project-modal-head">
         <div>
           <p class="section-kicker">权限说明</p>
-          <h2 id="role-guide-title">角色权限说明</h2>
+          <h2 id="role-guide-title">部门身份说明</h2>
           <span>{guideRoles.length} 类业务身份 · 当前共 {employees.length} 位员工</span>
         </div>
-        <button class="icon-control" type="button" aria-label="关闭角色权限说明" onclick={closeRoleGuide}><X size={18} /></button>
+        <button class="icon-control" type="button" aria-label="关闭部门身份说明" onclick={closeRoleGuide}><X size={18} /></button>
       </div>
       <div class="project-modal-body role-guide-body">
         <div class="role-guide-toolbar">
-          <label class="search-field"><Search size={16} /><input bind:this={roleGuideSearchInput} bind:value={roleGuideQuery} aria-label="搜索角色权限" placeholder="搜索身份或权限关键词，如“导出”" /></label>
+          <label class="search-field"><Search size={16} /><input bind:this={roleGuideSearchInput} bind:value={roleGuideQuery} aria-label="搜索部门或权限" placeholder="搜索身份或权限关键词，如“导出”" /></label>
           {#if roleGuideQuery}<button class="link-action" type="button" onclick={showAllRoles}>清空搜索</button><span class="role-guide-result" aria-live="polite">显示 {guideRoleEntries.length} / {guideRoles.length} 类身份</span>{/if}
         </div>
         <p class="role-guide-note"><ShieldCheck size={14} /><span>{roleAssignHint}</span></p>
@@ -940,7 +912,7 @@
           {:else}
             <div class="role-guide-empty">
               <Search size={18} />
-              <span>没有匹配的角色或权限，换个关键词试试。</span>
+              <span>没有匹配的部门或权限，换个关键词试试。</span>
               <button class="outline-action" type="button" onclick={showAllRoles}>显示全部身份</button>
             </div>
           {/each}
@@ -1029,14 +1001,9 @@
           <label>所属部门
             <select aria-label="所属部门" bind:value={newDepartment} disabled={creatingEmployee}>
               <option value="">未设置</option>
-              {#each departments as department}<option value={department}>{department}</option>{/each}
+              {#each assignableDepartments as department}<option value={department}>{department}</option>{/each}
             </select>
-          </label>
-          <label>业务身份
-            <select aria-label="业务身份" bind:value={newRole} disabled={creatingEmployee}>
-              {#each assignableRoles as role}<option value={role}>{roleLabel(role)}</option>{/each}
-            </select>
-            <small class="field-hint">{roleInfo(newRole).summary}；新增后立即可用。</small>
+            <small class="field-hint">身份随部门自动确定为「{roleLabel(employeeRoleForDepartment(newDepartment))}」；新增后立即可用。</small>
           </label>
           {#if employeeError}<p class="employee-error" role="alert">{employeeError}</p>{/if}
         </div>

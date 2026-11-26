@@ -17,7 +17,7 @@ export const POST: RequestHandler = async (event) => {
   const isCreator = existing.created_by_uid !== null && existing.created_by_uid === identity.uid;
   const canManage = hasAnyRole(identity, orderManageRoles);
   if (!isDesigner && !isCreator && !canManage) {
-    return json({ error: { code: 'FORBIDDEN', message: '只有接单设计师、录入人或管理人员可以完成订单' } }, { status: 403 });
+    return json({ error: { code: 'FORBIDDEN', message: '只有接单设计师、录入人或老板可以完成订单' } }, { status: 403 });
   }
 
   const contentType = event.request.headers.get('content-type') || '';

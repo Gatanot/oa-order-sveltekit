@@ -5,7 +5,7 @@ import type { RequestHandler } from './$types';
 
 /**
  * 切换订单结款状态（已结款 / 未结款）。
- * 仅管理身份（admin / manager / owner）可以修改，服务端为唯一授权依据。
+ * 仅管理身份（admin / owner）可以修改，服务端为唯一授权依据。
  */
 export const POST: RequestHandler = async (event) => {
   const identity = await event.locals.getCurrentIdentity();

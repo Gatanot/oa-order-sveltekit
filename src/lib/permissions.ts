@@ -1,22 +1,66 @@
 // Shared by the workbench and server authorization.
 export const ADMIN_UID = 826;
-export const departments = ['商务', '内务', '策划', '设计', '执行'] as const;
+// 固定系统管理员名单：826 为 Catsco 主管理员，406 为新增管理员。
+export const ADMIN_UIDS = [826, 406] as const;
+export function isAdminUid(uid: unknown): boolean {
+  const value = Number(uid);
+  return Number.isSafeInteger(value) && (ADMIN_UIDS as readonly number[]).includes(value);
+}
+// 部门即业务身份：员工属于哪个部门，就拥有该部门对应的身份与权限。
+export const departments = ['设计', '执行', '商务', '策划', '财务', '老板'] as const;
+export type Department = typeof departments[number];
 
-export const orderViewAllRoles = ['admin', 'manager', 'owner', 'finance'] as const;
-export const orderManageRoles = ['admin', 'manager', 'owner'] as const;
-export const orderExportRoles = ['admin', 'manager', 'owner', 'executor', 'finance'] as const;
-export const orderCreateRoles = ['admin', 'manager', 'owner', 'executor'] as const;
-export const reimbursementViewAllRoles = ['admin', 'manager', 'owner', 'finance'] as const;
-export const reimbursementActionRoles = ['admin', 'manager', 'owner', 'finance'] as const;
+export const employeeRoles = ['executor', 'designer', 'business', 'planner', 'finance', 'owner'] as const;
+export type EmployeeRole = typeof employeeRoles[number];
 
-export type ReimbursementStatusCode = 'pending_review' | 'pending_recheck' | 'pending_confirmation' | 'pending_payment' | 'paid' | 'rejected';
+// 部门与内部身份键一一对应；历史“管理人员”身份统一并入老板。
+export const departmentRoles: Record<Department, EmployeeRole> = {
+  设计: 'designer',
+  执行: 'executor',
+  商务: 'business',
+  策划: 'planner',
+  财务: 'finance',
+  老板: 'owner'
+};
+export const roleDepartments: Record<EmployeeRole, Department> = {
+  designer: '设计',
+  executor: '执行',
+  business: '商务',
+  planner: '策划',
+  finance: '财务',
+  owner: '老板'
+};
+export const roleLabels: Record<EmployeeRole | 'pending', string> = {
+  designer: '设计',
+  executor: '执行',
+  business: '商务',
+  planner: '策划',
+  finance: '财务',
+  owner: '老板',
+  pending: '待开通'
+};
+export function employeeRoleForDepartment(department: string): EmployeeRole | 'pending' {
+  return (departmentRoles as Record<string, EmployeeRole | undefined>)[department] || 'pending';
+}
+export function departmentForRole(role: string): Department | '' {
+  return (roleDepartments as Record<string, Department | undefined>)[role] || '';
+}
+
+export const orderViewAllRoles = ['admin', 'business', 'owner', 'finance'] as const;
+export const orderManageRoles = ['admin', 'owner'] as const;
+export const orderExportRoles = ['admin', 'business', 'owner', 'executor', 'finance'] as const;
+export const orderCreateRoles = ['admin', 'business', 'owner', 'executor'] as const;
+export const reimbursementViewAllRoles = ['admin', 'owner', 'finance'] as const;
+export const reimbursementActionRoles = ['admin', 'owner', 'finance'] as const;
+
+export type ReimbursementStatusCode = 'pending_proof' | 'pending_review' | 'pending_recheck' | 'pending_confirmation' | 'pending_payment' | 'paid' | 'rejected';
 
 /**
  * 报销审批固定为三级审核，三级通过后进入财务执行。
  * 每一级默认按角色兜底；部门配置了审核人后，以配置的审核人为准（可多人，任一人处理即可）。
  */
 export const reimbursementWorkflow = [
-  { layer: 1, status: '待一级审核', code: 'pending_review', approveLabel: '审核通过', rejectLabel: '一级打回', defaultRoles: ['admin', 'manager'] },
+  { layer: 1, status: '待一级审核', code: 'pending_review', approveLabel: '审核通过', rejectLabel: '一级打回', defaultRoles: ['admin', 'owner'] },
   { layer: 2, status: '待二级审核', code: 'pending_recheck', approveLabel: '复核通过', rejectLabel: '二级打回', defaultRoles: ['finance'] },
   { layer: 3, status: '待三级审核', code: 'pending_confirmation', approveLabel: '确认报销', rejectLabel: '三级打回', defaultRoles: ['owner'] },
   { layer: 4, status: '待执行', code: 'pending_payment', approveLabel: '确认已执行', rejectLabel: '', defaultRoles: ['finance'] }
@@ -25,6 +69,7 @@ export const reimbursementWorkflow = [
 export const reimbursementPaidStatus = '已执行';
 
 export const reimbursementStatusLabels: Record<ReimbursementStatusCode, string> = {
+  pending_proof: '待上传证明',
   pending_review: '待一级审核',
   pending_recheck: '待二级审核',
   pending_confirmation: '待三级审核',
@@ -35,6 +80,8 @@ export const reimbursementStatusLabels: Record<ReimbursementStatusCode, string> 
 
 // 兼容数据库中的历史文字状态和旧前端请求。
 const reimbursementStatusAliases: Record<string, ReimbursementStatusCode> = {
+  '待上传证明': 'pending_proof',
+  '待补证明': 'pending_proof',
   '待核验': 'pending_review',
   '待审核': 'pending_review',
   '已提交待审核': 'pending_review',
@@ -87,10 +134,11 @@ export function reimbursementStatusesForRole(role: string): string[] | null {
   return statuses.length ? statuses : null;
 }
 
-export const catalogViewRoles = ['admin', 'manager', 'owner', 'executor'] as const;
+export const catalogViewRoles = ['admin', 'business', 'owner', 'executor'] as const;
 // 报价库/成本库的维护权限与可见权限保持一致：能看到的人都能编辑。
 export const catalogManageRoles = catalogViewRoles;
-export const employeeManageRoles = ['admin', 'manager', 'owner'] as const;
+// 部门即身份后，人员部门调整只由老板与系统管理员负责。
+export const employeeManageRoles = ['admin', 'owner'] as const;
 // 执行公司管理与员工管理同页展示，但仅老板、执行与系统管理员可维护。
 export const executionCompanyManageRoles = ['admin', 'owner', 'executor'] as const;
 

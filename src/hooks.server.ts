@@ -4,7 +4,7 @@ import { json, type Handle, type HandleServerError } from '@sveltejs/kit';
 import { brotliCompress, constants, gzip } from 'node:zlib';
 import { promisify } from 'node:util';
 import { getArtifactVisitor } from '$lib/server/artifact-visitor';
-import { ADMIN_UID, canUseReimbursementReview, getAdminExtraIdentity, orderExportRoles, reimbursementActionRoles, resolveActingIdentity, resolveIdentity, hasAnyRole } from '$lib/server/identity';
+import { ADMIN_UID, isAdminUid, canUseReimbursementReview, getAdminExtraIdentity, orderExportRoles, reimbursementActionRoles, resolveActingIdentity, resolveIdentity, hasAnyRole } from '$lib/server/identity';
 import type { CurrentIdentity } from '$lib/server/identity';
 
 const brotliCompressAsync = promisify(brotliCompress);
@@ -88,7 +88,10 @@ async function compressResponse(request: Request, response: Response): Promise<R
 // 仅供 smoke test 使用：在测试环境下可指定一个固定的 Catsco UID，以便验证非管理员员工的权限。
 function testBypassIdentity(): CurrentIdentity | null {
   const uid = Number(env.OA_TEST_UID || String(ADMIN_UID));
-  if (uid === ADMIN_UID) return { uid, username: 'catsco', displayName: 'catsco', role: 'admin', department: '', active: true };
+  if (isAdminUid(uid)) {
+    const username = uid === ADMIN_UID ? 'catsco' : `admin${uid}`;
+    return { uid, username, displayName: username, role: 'admin', department: '', active: true };
+  }
   return resolveIdentity({
     status: 'authenticated',
     authenticated: true,
@@ -123,7 +126,7 @@ export const handle: Handle = async ({ event, resolve }) => {
     if (identity === undefined) {
       if (useTestIdentity) {
         const base = testBypassIdentity();
-        const extra = base?.role === 'admin' ? getAdminExtraIdentity() : null;
+        const extra = base?.role === 'admin' ? getAdminExtraIdentity(base.uid) : null;
         identity = base && extra ? { ...base, role: extra.role, displayName: `${base.displayName}（${extra.role}）` } : base;
       } else {
         identity = resolveActingIdentity(await event.locals.getArtifactVisitor());

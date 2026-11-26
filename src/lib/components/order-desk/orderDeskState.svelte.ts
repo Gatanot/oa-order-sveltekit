@@ -483,6 +483,8 @@ export function createOrderDesk(data: Data) {
   const reimbursementSummaryRows = $derived(reviewReimbursementRows);
   const reimbursementStats = $derived({
     total: myReimbursementRows.length,
+    pendingProof: myReimbursementRows.filter((item: any) => item.reimbursement_status === "待上传证明").length,
+    pendingProofAmount: myReimbursementRows.filter((item: any) => item.reimbursement_status === "待上传证明").reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
     pendingReview: myReimbursementRows.filter((item: any) => item.reimbursement_status === "待一级审核").length,
     pendingReviewAmount: myReimbursementRows.filter((item: any) => item.reimbursement_status === "待一级审核").reduce((sum: number, item: any) => sum + Number(item.advance_amount || 0), 0),
     pendingPay: myReimbursementRows.filter((item: any) => item.reimbursement_status === "待执行").length,
@@ -856,7 +858,11 @@ export function createOrderDesk(data: Data) {
   }
   function reimbursementRows() {
     const rows = view === "review" ? reviewReimbursementRows : myReimbursementRows;
-    return rows.filter((item: any) => !reimbursementPerson || item.employee === reimbursementPerson);
+    const filtered = rows.filter((item: any) => !reimbursementPerson || item.employee === reimbursementPerson);
+    if (view === "review") return filtered;
+    // 待上传证明和已打回需要员工处理，优先展示在“我的报销”列表前面。
+    const priority = (status: string) => status === "待上传证明" ? 0 : status === "已打回" ? 1 : 2;
+    return [...filtered].sort((a: any, b: any) => priority(a.reimbursement_status) - priority(b.reimbursement_status));
   }
   function reimbursementExportRows() {
     return reimbursementRows();

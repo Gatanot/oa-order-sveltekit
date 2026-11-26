@@ -7,7 +7,7 @@ export const load: PageServerLoad = async ({ locals }) => {
   const identity = await locals.getAdminIdentity();
   if (!identity || identity.role !== 'admin') error(403, '仅系统管理员可访问');
   const current = await locals.getCurrentIdentity();
-  return { stats: getAdminDemoStats(), role: identity.role, currentIdentity: current, extraIdentity: getAdminExtraIdentity(), roles: employeeRoles };
+  return { stats: getAdminDemoStats(), role: identity.role, currentIdentity: current, extraIdentity: getAdminExtraIdentity(identity.uid), roles: employeeRoles };
 };
 
 export const actions: Actions = {
@@ -17,17 +17,17 @@ export const actions: Actions = {
     const form = await request.formData();
     const role = String(form.get('role') || '');
     if (!employeeRoles.includes(role as typeof employeeRoles[number])) return fail(400, { success: false, message: '请选择有效的业务身份' });
-    const previousRole = getAdminExtraIdentity()?.role || '';
-    setAdminExtraIdentity(role as typeof employeeRoles[number]);
-    addAuditLog({ actorName: identity.displayName, actorUid: identity.uid, action: 'set_admin_extra_identity', entityType: 'system_admin_identity', entityId: '826', fromValue: previousRole, toValue: role });
+    const previousRole = getAdminExtraIdentity(identity.uid)?.role || '';
+    setAdminExtraIdentity(role as typeof employeeRoles[number], identity.uid);
+    addAuditLog({ actorName: identity.displayName, actorUid: identity.uid, action: 'set_admin_extra_identity', entityType: 'system_admin_identity', entityId: String(identity.uid), fromValue: previousRole, toValue: role });
     throw redirect(303, './orders');
   },
   clearExtraIdentity: async ({ locals }) => {
     const identity = await locals.getAdminIdentity();
     if (!identity || identity.role !== 'admin') return fail(403, { success: false, message: '仅系统管理员可移除额外身份' });
-    const previousRole = getAdminExtraIdentity()?.role || '';
-    setAdminExtraIdentity(null);
-    addAuditLog({ actorName: identity.displayName, actorUid: identity.uid, action: 'clear_admin_extra_identity', entityType: 'system_admin_identity', entityId: '826', fromValue: previousRole, toValue: '' });
+    const previousRole = getAdminExtraIdentity(identity.uid)?.role || '';
+    setAdminExtraIdentity(null, identity.uid);
+    addAuditLog({ actorName: identity.displayName, actorUid: identity.uid, action: 'clear_admin_extra_identity', entityType: 'system_admin_identity', entityId: String(identity.uid), fromValue: previousRole, toValue: '' });
     throw redirect(303, './admin');
   },
   catalogs: async ({ request, locals }) => {

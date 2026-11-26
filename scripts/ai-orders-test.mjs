@@ -22,17 +22,17 @@ import Database from 'better-sqlite3';
 import { createCatscoOaTools, OaToolHostError } from '../src/lib/server/catsco-oa-tools.js';
 
 const ADMIN = { uid: 826, username: 'catsco' };
-const CREATOR = { uid: 1101, username: 'ai-creator', name: 'AI创建者', role: 'executor' };
-const DESIGNER = { uid: 1102, username: 'ai-designer', name: 'AI设计者', role: 'designer' };
-const PLANNER = { uid: 1103, username: 'ai-planner', name: 'AI策划', role: 'planner' };
-const FINANCE = { uid: 1104, username: 'ai-finance', name: 'AI财务', role: 'finance' };
-const MANAGER = { uid: 1105, username: 'ai-manager', name: 'AI管理', role: 'manager' };
-const OWNER = { uid: 1106, username: 'ai-owner', name: 'AI老板', role: 'owner' };
-const INACTIVE = { uid: 1107, username: 'ai-inactive', name: '历史停用', role: 'executor', active: 0 };
-const PENDING = { uid: 1108, username: 'ai-pending', name: 'AI待开通', role: 'pending', active: 0 };
-const UNRELATED = { uid: 1109, username: 'ai-unrelated', name: 'AI无关', role: 'executor' };
+const CREATOR = { uid: 1101, username: 'ai-creator', name: 'AI创建者', department: '执行', role: 'executor' };
+const DESIGNER = { uid: 1102, username: 'ai-designer', name: 'AI设计者', department: '设计', role: 'designer' };
+const PLANNER = { uid: 1103, username: 'ai-planner', name: 'AI策划', department: '策划', role: 'planner' };
+const FINANCE = { uid: 1104, username: 'ai-finance', name: 'AI财务', department: '财务', role: 'finance' };
+const BUSINESS = { uid: 1105, username: 'ai-business', name: 'AI商务', department: '商务', role: 'business' };
+const OWNER = { uid: 1106, username: 'ai-owner', name: 'AI老板', department: '老板', role: 'owner' };
+const INACTIVE = { uid: 1107, username: 'ai-inactive', name: '历史停用', department: '执行', role: 'executor', active: 0 };
+const PENDING = { uid: 1108, username: 'ai-pending', name: 'AI待开通', department: '', role: 'pending', active: 0 };
+const UNRELATED = { uid: 1109, username: 'ai-unrelated', name: 'AI无关', department: '执行', role: 'executor' };
 // 员工不再区分启用/停用：历史 active=0 的正式员工也应可用。
-const ACTIVE_STAFF = [CREATOR, DESIGNER, PLANNER, FINANCE, MANAGER, OWNER, INACTIVE, UNRELATED];
+const ACTIVE_STAFF = [CREATOR, DESIGNER, PLANNER, FINANCE, BUSINESS, OWNER, INACTIVE, UNRELATED];
 const COOKIE = { admin: 'user=A', creator: 'user=B', designer: 'user=C', unrelated: 'user=D' };
 const VIEWER = new Map([['A', ADMIN], ['B', CREATOR], ['C', DESIGNER], ['D', UNRELATED]]);
 
@@ -234,7 +234,7 @@ function seedDatabase() {
     const insertEmployee = db.prepare(`INSERT INTO employees(catsco_uid,username,display_name,department,role,active,created_at,updated_at)
       VALUES(?,?,?,?,?,?,?,?)`);
     for (const employee of [...ACTIVE_STAFF, PENDING]) {
-      insertEmployee.run(employee.uid, employee.username, employee.name, '', employee.role, employee.active ?? 1, timestamp, timestamp);
+      insertEmployee.run(employee.uid, employee.username, employee.name, employee.department, employee.role, employee.active ?? 1, timestamp, timestamp);
     }
     db.prepare('INSERT INTO catalog_quote_items(id,active,name,unit,price_incl_tax,created_at) VALUES(?,?,?,?,?,?)')
       .run(QUOTE_ITEM_ID, 1, 'AI 报价条目', '件', 9999, timestamp);

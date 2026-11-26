@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { addAuditLog } from '$lib/server/order-db';
-import { departments, employeeManageRoles, employeeRoleRank, employeeRoles, hasAnyRole, listEmployees, updateEmployee, canManageEmployee } from '$lib/server/identity';
+import { departments, employeeManageRoles, employeeRoleForDepartment, employeeRoleRank, employeeRoles, hasAnyRole, isAdminUid, listEmployees, updateEmployee, canManageEmployee } from '$lib/server/identity';
 import type { RequestHandler } from './$types';
 import type { CurrentIdentity } from '$lib/server/identity';
 
@@ -9,13 +9,16 @@ function requireAdmin(identity: CurrentIdentity | null) {
   return null;
 }
 
-// 新员工身份同样遵守层级授权：不能授予不低于自己的身份，管理人员也不能授予财务身份。
-function canAssignNewRole(identity: CurrentIdentity | null, role: string) {
+// 身份由部门决定：只有老板和系统管理员能调整部门，且不能授予与自己同级或更高级别的身份。
+function canAssignRole(identity: CurrentIdentity | null, role: string) {
   if (!identity) return false;
   if (identity.role === 'admin') return true;
-  if (identity.role !== 'manager' && identity.role !== 'owner') return false;
-  if (employeeRoleRank(role) >= employeeRoleRank(identity.role)) return false;
-  return !(identity.role === 'manager' && role === 'finance');
+  if (identity.role !== 'owner') return false;
+  return employeeRoleRank(role) < employeeRoleRank(identity.role);
+}
+
+function validDepartment(department: string) {
+  return !department || departments.includes(department as typeof departments[number]);
 }
 
 export const GET: RequestHandler = async ({ locals }) => {
@@ -38,21 +41,18 @@ export const POST: RequestHandler = async ({ locals, request }) => {
   const data = await request.json().catch(() => null);
   const uid = Number(data?.uid);
   const username = String(data?.username || '').trim();
-  if (!Number.isSafeInteger(uid) || uid <= 0 || !username || uid === 826) {
+  if (!Number.isSafeInteger(uid) || uid <= 0 || !username || isAdminUid(uid)) {
     return json({ error: { code: 'INVALID_REQUEST', message: 'UID 或用户名格式不正确' } }, { status: 400 });
   }
-  const role = String(data?.role || 'executor');
   const department = String(data?.department || '').trim();
+  const role = employeeRoleForDepartment(department);
   const displayName = String(data?.display_name || '').trim() || username;
   const active = role === 'pending' ? 0 : 1;
-  if (role !== 'pending' && !employeeRoles.includes(role as typeof employeeRoles[number])) {
-    return json({ error: { code: 'INVALID_ROLE', message: '业务身份格式不正确' } }, { status: 400 });
-  }
-  if (department && !departments.includes(department as typeof departments[number])) {
+  if (!validDepartment(department)) {
     return json({ error: { code: 'INVALID_DEPARTMENT', message: '所属部门格式不正确' } }, { status: 400 });
   }
-  if (!canAssignNewRole(identity, role)) {
-    return json({ error: { code: 'FORBIDDEN', message: '不能授予该业务身份' } }, { status: 403 });
+  if (!canAssignRole(identity, role)) {
+    return json({ error: { code: 'FORBIDDEN', message: '不能授予该部门身份' } }, { status: 403 });
   }
   try {
     const { getOrderDb } = await import('$lib/server/order-db');
@@ -72,7 +72,7 @@ export const DELETE: RequestHandler = async ({ locals, request }) => {
   if (denied) return denied;
   const data = await request.json().catch(() => null);
   const uid = Number(data?.uid);
-  if (!Number.isSafeInteger(uid) || uid <= 0 || uid === 826) return json({ error: { code: 'INVALID_REQUEST', message: 'UID 不合法' } }, { status: 400 });
+  if (!Number.isSafeInteger(uid) || uid <= 0 || isAdminUid(uid)) return json({ error: { code: 'INVALID_REQUEST', message: 'UID 不合法' } }, { status: 400 });
   const { getOrderDb } = await import('$lib/server/order-db');
   const target = getOrderDb().prepare('SELECT catsco_uid,role FROM employees WHERE catsco_uid=?').get(uid) as { catsco_uid: number; role: string } | undefined;
   if (!target) return json({ error: { code: 'EMPLOYEE_NOT_FOUND', message: '员工不存在' } }, { status: 404 });
@@ -93,33 +93,35 @@ export const PATCH: RequestHandler = async ({ locals, request }) => {
   if (!data || !Number.isSafeInteger(Number(data.uid))) {
     return json({ error: { code: 'INVALID_REQUEST', message: '员工资料格式不正确' } }, { status: 400 });
   }
-  if (Number(data.uid) === 826) {
+  if (isAdminUid(Number(data.uid))) {
     return json({ error: { code: 'INVALID_EMPLOYEE', message: '固定管理员身份不能被员工档案修改或授予' } }, { status: 400 });
   }
   try {
-    const role = String(data.role || '');
     const { getOrderDb } = await import('$lib/server/order-db');
-    const current = getOrderDb().prepare('SELECT catsco_uid,role FROM employees WHERE catsco_uid=?').get(Number(data.uid)) as { catsco_uid: number; role: string } | undefined;
+    const current = getOrderDb().prepare('SELECT catsco_uid,department,role FROM employees WHERE catsco_uid=?').get(Number(data.uid)) as { catsco_uid: number; department: string; role: string } | undefined;
     if (!current) return json({ error: { code: 'EMPLOYEE_NOT_FOUND', message: '员工不存在' } }, { status: 404 });
+    const department = String(data.department ?? current.department).trim();
+    const role = employeeRoleForDepartment(department);
+    if (!validDepartment(department)) {
+      return json({ error: { code: 'INVALID_DEPARTMENT', message: '所属部门格式不正确' } }, { status: 400 });
+    }
     const isSelf = identity?.uid === current.catsco_uid;
     if (isSelf && identity?.role !== 'admin') {
-      // 非管理员只能维护自己的姓名与部门，不能修改自己的身份，避免自我提权。
-      if (role !== current.role) {
-        return json({ error: { code: 'FORBIDDEN', message: '不能修改自己的身份' } }, { status: 403 });
+      // 身份由部门决定，非管理员不能修改自己的部门，避免自我提权；仅允许维护姓名。
+      if (department !== current.department) {
+        return json({ error: { code: 'FORBIDDEN', message: '不能修改自己的部门或身份' } }, { status: 403 });
       }
     } else if (!canManageEmployee(identity, current)) {
       return json({ error: { code: 'FORBIDDEN', message: '不能管理同级或更高级别的员工' } }, { status: 403 });
     }
-    if (identity?.role === 'manager' && role !== current.role && ['manager', 'owner', 'finance'].includes(role)) {
-      return json({ error: { code: 'FORBIDDEN', message: '管理人员不能授予管理、老板或财务身份' } }, { status: 403 });
+    if (department !== current.department && !canAssignRole(identity, role)) {
+      return json({ error: { code: 'FORBIDDEN', message: '不能授予该部门身份' } }, { status: 403 });
     }
     const updated = updateEmployee(Number(data.uid), {
       display_name: String(data.display_name || ''),
-      department: String(data.department || ''),
-      role,
-      active: role !== 'pending'
+      department
     });
-    addAuditLog({ actorName: identity?.displayName, actorUid: identity?.uid, action: 'update_employee', entityType: 'employee', entityId: String(data.uid), detail: { role, department: updated.department, active: updated.active } });
+    addAuditLog({ actorName: identity?.displayName, actorUid: identity?.uid, action: 'update_employee', entityType: 'employee', entityId: String(data.uid), detail: { role: updated.role, department: updated.department, active: updated.active } });
     return json({ data: updated });
   } catch (reason) {
     const message = reason instanceof Error ? reason.message : '更新员工失败';

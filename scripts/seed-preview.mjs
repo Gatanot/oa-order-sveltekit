@@ -26,13 +26,13 @@ try {
   if (!existing) {
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM orders_simple').get().count, 0, 'Use an empty preview database');
     const employees = [
-      [9001, 'chenchen', '陈晨', '商务', 'manager'],
+      [9001, 'chenchen', '陈晨', '商务', 'business'],
       [9002, 'liulin', '刘琳', '设计', 'designer'],
       [9003, 'zhaoran', '赵然', '设计', 'designer'],
       [9004, 'zhoumin', '周敏', '策划', 'planner'],
       [9005, 'wangjie', '王杰', '执行', 'executor'],
-      [9006, 'linxiao', '林晓', '内务', 'finance'],
-      [9007, 'zhangning', '张宁', '商务', 'owner']
+      [9006, 'linxiao', '林晓', '财务', 'finance'],
+      [9007, 'zhangning', '张宁', '老板', 'owner']
     ];
     const timestamp = new Date().toISOString();
     db.transaction(() => {

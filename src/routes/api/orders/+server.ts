@@ -1,5 +1,5 @@
 import { json } from '@sveltejs/kit';
-import { hasAnyRole, orderManageRoles, orderViewAllRoles, getEmployeeDisplayName } from '$lib/server/identity';
+import { hasAnyRole, orderCreateRoles, orderManageRoles, orderViewAllRoles, getEmployeeDisplayName } from '$lib/server/identity';
 import { body, action } from '$lib/server/http';
 import { addAuditLog, createOrder, listOrders, resolveOrderEmployeeUid, setOrderEmployees } from '$lib/server/order-db';
 import type { RequestHandler } from './$types';
@@ -15,7 +15,7 @@ export const GET: RequestHandler = async ({ locals }) => {
 export const POST: RequestHandler = async (event) => {
   const data = await body(event);
   const identity = await event.locals.getCurrentIdentity();
-  if (!identity || identity.role === 'pending' || !['admin', 'manager', 'owner', 'executor'].includes(identity.role)) return json({ error: { code: 'FORBIDDEN', message: '没有创建订单权限' } }, { status: 403 });
+  if (!identity || identity.role === 'pending' || !hasAnyRole(identity, orderCreateRoles)) return json({ error: { code: 'FORBIDDEN', message: '没有创建订单权限' } }, { status: 403 });
   data.created_by = identity.displayName;
   // 个人垫付的报销归属当前录入人，由服务端写入可信身份，不接受客户端指定。
   data.advance_employee = identity.displayName;
