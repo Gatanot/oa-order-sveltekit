@@ -100,7 +100,29 @@ function testBypassIdentity(): CurrentIdentity | null {
   });
 }
 
+/**
+ * 表单上传（multipart/form-data 等）的 CSRF 校验。
+ *
+ * Artifact 入口会用 sandbox iframe 内嵌工作台，此时浏览器可能发送 Origin: null；
+ * 同源请求或前端 fetch 显式携带 X-OA-Request 的请求才放行。
+ * 跨站 HTML 表单无法自定义请求头，因此不能绕过。
+ */
+function formRequestNeedsTrustedHeader(request: Request): boolean {
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method.toUpperCase())) return false;
+  const contentType = request.headers.get('content-type') || '';
+  return /^(?:application\/x-www-form-urlencoded|multipart\/form-data|text\/plain)\b/i.test(contentType);
+}
+
 export const handle: Handle = async ({ event, resolve }) => {
+  if (formRequestNeedsTrustedHeader(event.request)) {
+    const origin = event.request.headers.get('origin');
+    const sameOrigin = origin === event.url.origin;
+    const trustedFetch = event.request.headers.get('x-oa-request') === '1';
+    if (!sameOrigin && !trustedFetch) {
+      return json({ error: { code: 'CSRF_REJECTED', message: '请求来源校验失败，请刷新页面后重试' } }, { status: 403 });
+    }
+  }
+
   const useTestIdentity = env.OA_TEST_AUTH_BYPASS === '1' && (dev || process.env.NODE_ENV === 'test');
   let visitor: ReturnType<typeof getArtifactVisitor> | undefined;
   event.locals.getArtifactVisitor = () => {

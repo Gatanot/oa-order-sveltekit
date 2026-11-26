@@ -59,9 +59,15 @@
       const form = new FormData();
       form.append('file', file, file.name);
       form.append('kind', kind);
-      const response = await fetch(appPath(`/api/reimbursements/${encodeURIComponent(item.id)}/attachments`), { method: 'POST', body: form });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error?.message || payload.message || '上传失败');
+      const response = await fetch(appPath(`/api/reimbursements/${encodeURIComponent(item.id)}/attachments`), {
+        method: 'POST',
+        headers: { 'X-OA-Request': '1' },
+        body: form
+      });
+      const text = await response.text();
+      let payload: any = {};
+      try { payload = text ? JSON.parse(text) : {}; } catch { /* 非 JSON 错误响应 */ }
+      if (!response.ok) throw new Error(payload.error?.message || payload.message || text || `上传失败（HTTP ${response.status}）`);
       await loadAttachments();
       desk.notify(kind === 'proof' ? '付款截图已上传' : '发票已上传');
     } catch (reason) {

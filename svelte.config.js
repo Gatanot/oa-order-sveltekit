@@ -5,7 +5,10 @@ import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 const config = {
   preprocess: vitePreprocess(),
   kit: {
-    adapter: adapter()
+    adapter: adapter(),
+    // 工作台会被 Artifact 入口以 sandbox iframe 内嵌，表单上传的 Origin 可能是 null。
+    // 关闭框架自带的 Origin 校验，改在 hooks.server.ts 中校验同源或自定义请求头。
+    csrf: { checkOrigin: false }
   }
 };
 

@@ -5,8 +5,12 @@ import type { PublicArtifactVisitor } from "$lib/artifact-visitor";
 import { api, appPath, currentAppPath } from "$lib/api";
 import { hasAnyRole, orderCreateRoles, orderExportRoles, orderManageRoles, orderViewAllRoles, reimbursementActionRoles, reimbursementViewAllRoles, catalogViewRoles, catalogManageRoles, employeeManageRoles, executionCompanyManageRoles } from "$lib/permissions";
 
-const apiFetch = (input: RequestInfo | URL, init?: RequestInit) =>
-  fetch(typeof input === "string" ? appPath(input) : input, init);
+const apiFetch = (input: RequestInfo | URL, init?: RequestInit) => {
+  const headers = new Headers(init?.headers);
+  // sandbox iframe 可能使 multipart 上传的 Origin 为 null，用自定义头标记可信 fetch。
+  if (typeof FormData !== "undefined" && init?.body instanceof FormData) headers.set("X-OA-Request", "1");
+  return fetch(typeof input === "string" ? appPath(input) : input, { ...init, headers });
+};
 
   type Customer = { id: string; name: string; contact: string };
   type Project = {

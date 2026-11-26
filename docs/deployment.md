@@ -8,7 +8,7 @@
 npm ci
 npm run check
 npm run build
-node build
+npm start
 ```
 
 生产环境应通过反向代理提供 HTTPS，并限制工作台只在可信内部网络访问。账户身份通过 Catsco 网关确认，固定系统管理员 UID 826（用户名 catsco）和 UID 406 拥有 admin 权限；其他员工需由管理员开通。页面模式只影响界面展示，实际权限由服务端 API 校验。

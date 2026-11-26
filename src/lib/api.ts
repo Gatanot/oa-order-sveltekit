@@ -31,11 +31,13 @@ export function currentAppPath(): string {
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
   const response = await fetch(appPath(path), {
     ...options,
     headers: {
       Accept: 'application/json',
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(options.body && !isFormData ? { 'Content-Type': 'application/json' } : {}),
+      ...(isFormData ? { 'X-OA-Request': '1' } : {}),
       ...(options.headers ?? {})
     }
   });

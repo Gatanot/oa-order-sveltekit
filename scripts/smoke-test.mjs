@@ -381,6 +381,28 @@ try {
   result = await request(`/api/reimbursements/${advanceId}/submit-proof`, { method: 'POST', json: {} });
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
   assert.equal(result.data.data.reimbursement_status, '待一级审核', '补传付款截图和发票后应进入一级审核');
+
+  // sandbox iframe 的 Origin 可能为 null；带可信请求头的 multipart 上传必须可用，且大于 512KB 也不能被默认上限拦截。
+  const edgeReimbursement = await request('/api/reimbursements', { method: 'POST', json: { item: '上传边界测试', amount: '3.00', advance_date: '2026-09-19' } });
+  const edgeReimbursementId = edgeReimbursement.data.data.id;
+  const largePng = new Uint8Array(600 * 1024);
+  largePng.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const largeProofForm = new FormData();
+  largeProofForm.append('kind', 'proof');
+  largeProofForm.append('file', new Blob([largePng], { type: 'image/png' }), 'large-proof.png');
+  let rawUpload = await fetch(`${origin}/api/reimbursements/${edgeReimbursementId}/attachments`, {
+    method: 'POST', headers: { origin: 'null', 'x-oa-request': '1' }, body: largeProofForm
+  });
+  assert.equal(rawUpload.status, 201, '带 X-OA-Request 的 sandbox iframe 大文件上传应成功');
+  const untrustedProofForm = new FormData();
+  untrustedProofForm.append('kind', 'proof');
+  untrustedProofForm.append('file', new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], { type: 'image/png' }), 'untrusted.png');
+  rawUpload = await fetch(`${origin}/api/reimbursements/${edgeReimbursementId}/attachments`, {
+    method: 'POST', headers: { origin: 'null' }, body: untrustedProofForm
+  });
+  assert.equal(rawUpload.status, 403, '缺少可信请求头的 null Origin 表单上传应被拒绝');
+  result = await request(`/api/reimbursements/${edgeReimbursementId}`, { method: 'DELETE' });
+  assert.equal(result.response.status, 200, '上传边界测试记录应可清理');
   result = await request('/api/reimbursements?scope=review');
   assert.ok(result.data.data.some((item) => item.id === advanceId), '提交证明后应进入审核队列');
   result = await request('/api/orders', { method: 'POST', json: createPayload });

@@ -43,7 +43,7 @@ cp .env.example .env
 npm run dev
 ```
 
-生产环境使用 `node build` 时，应将 `ORIGIN` 设置为浏览器实际访问地址（例如 `https://oa.example.com`），否则服务端会拒绝 Excel 和附件表单上传。通过 Artifact 发布时还必须把 `ARTIFACT_APP_ID` 设置为发布登记使用的应用 id；服务端会把请求的 Cookie 与 Authorization 原样转发到网关的 `/_gateway/me`，并通过 `api/whoami` 返回最小化后的访问者信息。
+生产环境推荐使用 `npm start`（会自动加载 `.env` 并把附件请求体上限设为 12MB）；直接使用 `node build` 时，应将 `ORIGIN` 设置为浏览器实际访问地址（例如 `https://oa.example.com`），否则服务端会拒绝 Excel 和附件表单上传。构建已把 adapter-node 默认 512KB 请求体上限调整为 12MB，仍可用 `BODY_SIZE_LIMIT` 显式覆盖。通过 Artifact 发布时还必须把 `ARTIFACT_APP_ID` 设置为发布登记使用的应用 id；服务端会把请求的 Cookie 与 Authorization 原样转发到网关的 `/_gateway/me`，并通过 `api/whoami` 返回最小化后的访问者信息。
 
 打开 `http://localhost:5173`。登录后即可切换工作模式并录入订单，录入人会取自员工管理里设置的员工姓名（未设置时回退到 Catsco 登录用户名）。
 
@@ -54,7 +54,7 @@ npm run check       # Svelte/TypeScript 静态检查
 npm run build       # adapter-node 生产构建
 npm run test:smoke  # 需先 build；使用临时数据库做业务闭环验证
 npm test            # check + build + smoke
-npm start           # 启动 build 目录
+npm start           # 启动 build 目录（加载 .env，默认 12MB 上传上限）
 ```
 
 Smoke 测试覆盖无登录访问、资料库导入/沿用、项目和订单写入、录入人快照、金额计算、报销筛选与状态机、单据幂等/归档、对齐 demo4 的 Excel 导出、审计和外键检查，不会修改 `data/oa.db`。
