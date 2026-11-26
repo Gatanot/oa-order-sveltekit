@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { getOrderDb, getOrderById, createOrder, updateOrder, setOrderEmployees, resolveOrderEmployeeUid, moneyToCents, addAuditLog } from '$lib/server/order-db';
 import { employeeRoles, hasAnyRole, orderCreateRoles, orderManageRoles, orderViewAllRoles, getEmployeeDisplayName, type CurrentIdentity } from '$lib/server/identity';
+import { todayInBizTZ } from '$lib/server/time';
 
 /** 本机无认证代录身份：由本机入口以 role=admin、uid=-1 构造，不代表任何员工或固定管理员。 */
 export type AiServiceIdentity = CurrentIdentity & { kind: 'local_entry' };
@@ -168,7 +169,7 @@ function normalizeOrder(input: Record<string, unknown>, path: string, identity: 
     if (!existing || Object.hasOwn(input, key)) order[key] = str(input[key], `${path}.${key}`, key === 'project_id');
   }
   if (!getOrderDb().prepare('SELECT 1 FROM projects_simple WHERE id=?').get(order.project_id)) invalid(`${path}.project_id`, '项目不存在，请先查询项目参考数据');
-  if (!existing || Object.hasOwn(input, 'order_date')) order.order_date = input.order_date === undefined ? new Date().toISOString().slice(0, 10) : date(input.order_date, `${path}.order_date`);
+  if (!existing || Object.hasOwn(input, 'order_date')) order.order_date = input.order_date === undefined ? todayInBizTZ() : date(input.order_date, `${path}.order_date`);
   if (!existing || Object.hasOwn(input, 'delivery_date')) order.delivery_date = input.delivery_date === undefined ? '' : date(input.delivery_date, `${path}.delivery_date`, true);
   // 创建人归属：创建必填（legacy 可默认本人）；更新省略则保留原 UID 与原始姓名快照。
   if (!existing) {

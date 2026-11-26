@@ -16,6 +16,7 @@ import {
   reimbursementWorkflow,
   type ReimbursementStatusCode
 } from '$lib/permissions';
+import { addDaysInBizTZ, todayInBizTZ } from '$lib/server/time';
 
 export const databasePath = resolve(process.env.DATABASE_PATH || './data/oa.db');
 export const attachmentDir = resolve(dirname(databasePath), 'attachments');
@@ -1865,7 +1866,7 @@ export function createOrder(data: Record<string, unknown>) {
   if (!Number.isFinite(quantity) || quantity <= 0) throw new Error('数量必须大于 0');
   const id = uuid();
   const created = now();
-  const date = String(data.order_date || created.slice(0, 10));
+  const date = String(data.order_date || todayInBizTZ());
   const code = `ORD-${date.replaceAll('-', '')}-${id.slice(0, 6).toUpperCase()}`;
   const quoteCents = products.length ? products.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0) : optionalMoneyToCents(data.quote_amount);
   const costCents = costs.length ? costs.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0) : optionalMoneyToCents(data.cost_amount);
@@ -1999,7 +2000,7 @@ export function createReimbursement(data: Record<string, unknown>, actorUid: num
   if (!employee || !item) throw new Error('请填写报销人和报销物品');
   const amount = moneyToCents(data.amount);
   if (amount <= 0) throw new Error('报销金额必须大于 0');
-  const advanceDate = text(data.advance_date) || now().slice(0, 10);
+  const advanceDate = text(data.advance_date) || todayInBizTZ();
   const orderId = text(data.order_id);
   if (orderId && !getOrderDb().prepare('SELECT id FROM orders_simple WHERE id=?').get(orderId)) throw new Error('关联订单不存在');
   const id = uuid();
@@ -2284,10 +2285,8 @@ function demoBatchId() {
   return `${stamp}-${uuid().slice(0, 4).toUpperCase()}`;
 }
 
-function dateOffset(base: Date, days: number) {
-  const value = new Date(base);
-  value.setUTCDate(value.getUTCDate() + days);
-  return value.toISOString().slice(0, 10);
+function dateOffset(base: Date | string, days: number) {
+  return addDaysInBizTZ(typeof base === 'string' ? base : todayInBizTZ(base), days);
 }
 
 export function seedDemoCostCatalogs(requestedCount = 2, actorUid: number | null = null) {
@@ -2415,7 +2414,7 @@ export function seedDemoOrdersAndReimbursements(requestedCount = 36, actorUid: n
   for (let index = 0; index < orderCount; index++) {
     const project = projects[index % projects.length];
     const orderDate = dateOffset(today, -(index * 3 % 120));
-    const deliveryDate = dateOffset(new Date(`${orderDate}T00:00:00Z`), 4 + index % 12);
+    const deliveryDate = dateOffset(orderDate, 4 + index % 12);
     const primary = productTemplates[index % productTemplates.length];
     const secondary = productTemplates[(index + 3) % productTemplates.length];
     const quantity = 2 + index % 9;

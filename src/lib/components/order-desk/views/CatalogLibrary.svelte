@@ -4,6 +4,7 @@
   import { Building2, ChevronLeft, ChevronRight, Factory, FileSpreadsheet, Plus, Search, Upload, Users, X } from 'lucide-svelte';
   import WorkbenchListFilters from '../WorkbenchListFilters.svelte';
   import CustomerManager from '../CustomerManager.svelte';
+  import { formatDateInBizTZ } from '$lib/time';
   const desk = getContext<any>('order-desk');
 
   type CatalogSource = {
@@ -121,7 +122,7 @@
     return fileName ? fileName.replace(/\.[^.]+$/, '') : source.kind === 'cost' ? '未命名成本库' : '未命名报价库';
   }
   function formatDate(value: unknown) {
-    return value ? String(value).slice(0, 10) : '—';
+    return formatDateInBizTZ(value) || '—';
   }
   function openQuoteCustomer(name: string) {
     selectedQuoteCustomer = name;

@@ -98,6 +98,7 @@ function isArtifactGatewayHost(): boolean {
 }
 
 export type Data = {
+    today: string;
     customers: Customer[];
     projects: Project[];
     catalog: { quote: QuoteCatalog[]; cost: CostCatalog[] };
@@ -133,7 +134,7 @@ export function createOrderDesk(data: Data) {
   let reimbursementRefreshVersion = $state(0);
   let customerId = $state("");
   let projectId = $state("");
-  let orderDate = $state(new Date().toISOString().slice(0, 10));
+  let orderDate = $state(data.today);
   let createdBy = $state("");
   let note = $state("");
   let noteFiles = $state<File[]>([]);
@@ -242,7 +243,7 @@ export function createOrderDesk(data: Data) {
   let standaloneEmployee = $state("");
   let standaloneItem = $state("");
   let standaloneAmount = $state("");
-  let standaloneDate = $state(new Date().toISOString().slice(0, 10));
+  let standaloneDate = $state(data.today);
   let standaloneOrderId = $state("");
   let standaloneInvoice = $state("");
   let standaloneInvoiceFile = $state<File | null>(null);
@@ -809,7 +810,7 @@ export function createOrderDesk(data: Data) {
     standaloneEmployee = creatorName;
     standaloneItem = "";
     standaloneAmount = "";
-    standaloneDate = new Date().toISOString().slice(0, 10);
+    standaloneDate = data.today;
     standaloneOrderId = "";
     standaloneInvoice = "";
     standaloneInvoiceFile = null;
@@ -1621,7 +1622,7 @@ export function createOrderDesk(data: Data) {
     detailOrder = null;
     customerId = "";
     projectId = "";
-    orderDate = new Date().toISOString().slice(0, 10);
+    orderDate = data.today;
     deliveryDate = "";
     orderSource = "";
     designer = "";

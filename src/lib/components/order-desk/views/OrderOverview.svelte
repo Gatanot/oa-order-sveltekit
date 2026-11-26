@@ -4,6 +4,7 @@
   import OrderRowActions from '../OrderRowActions.svelte';
   import OrderListFilters from '../OrderListFilters.svelte';
   import ReimbursementStatus from '../ReimbursementStatus.svelte';
+  import { formatDateInBizTZ } from '$lib/time';
   const desk = getContext<any>("order-desk");
   let columnSettingsEl = $state<HTMLDetailsElement | null>(null);
   let refreshing = $state(false);
@@ -86,7 +87,7 @@
               <span class="attachment-name">{file.file_name}</span>
               <small>{file.mime_type === "application/pdf" ? "PDF" : "图片"} · {desk.formatFileSize(file.file_size)}</small>
             </button>
-            <span class="attachment-date">{file.created_at?.slice(0, 10)}</span>
+            <span class="attachment-date">{formatDateInBizTZ(file.created_at)}</span>
           </li>{/each}</ul>
       {:else}<p class="empty-table">暂无设计图。设计师完成订单时需上传设计图。</p>{/if}
       <h3>备注附件</h3>
@@ -98,7 +99,7 @@
               <span class="attachment-name">{file.file_name}</span>
               <small>{file.mime_type === "application/pdf" ? "PDF" : "图片"} · {desk.formatFileSize(file.file_size)}</small>
             </button>
-            <span class="attachment-date">{file.created_at?.slice(0, 10)}</span>
+            <span class="attachment-date">{formatDateInBizTZ(file.created_at)}</span>
           </li>{/each}</ul>
       {:else}<p class="empty-table">本订单暂无附件。</p>{/if}
     </div>

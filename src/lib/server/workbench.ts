@@ -1,5 +1,6 @@
 import { isDepartmentApprover, listCatalog, listCatalogSources, listCustomers, listExecutionCompanies, listOrders, listProjects, listReimbursementOrders, withReimbursementActions } from './order-db';
 import { listActiveEmployees, orderViewAllRoles, reimbursementActionRoles, reimbursementViewAllRoles, catalogViewRoles, hasAnyRole, type CurrentIdentity } from './identity';
+import { todayInBizTZ } from '$lib/server/time';
 
 export function loadWorkbench(identity?: CurrentIdentity) {
   const allOrders = listOrders();
@@ -24,6 +25,7 @@ export function loadWorkbench(identity?: CurrentIdentity) {
     ? allReimbursements.filter((item) => item.reimbursement_status === '已执行')
     : [];
   return {
+    today: todayInBizTZ(),
     customers: listCustomers(),
     projects: listProjects(),
     catalog: canViewCatalog ? listCatalog() : { quote: [], cost: [] },

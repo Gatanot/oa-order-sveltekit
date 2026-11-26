@@ -18,7 +18,8 @@
     "preview": "vite preview",
     "start": "node build",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-    "test": "npm run check && npm run build && npm run build:local && npm run test:smoke && npm run test:ai",
+    "test": "npm run check && npm run test:time && npm run build && npm run build:local && npm run test:smoke && npm run test:ai",
+    "test:time": "node --test scripts/time-test.mjs",
     "test:smoke": "node scripts/smoke-test.mjs",
     "test:ai": "node --test scripts/ai-tool-host-test.mjs && node scripts/ai-current-user-test.mjs && node scripts/ai-orders-test.mjs",
     "seed:preview": "node scripts/seed-preview.mjs"

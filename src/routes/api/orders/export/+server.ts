@@ -1,5 +1,6 @@
 import { hasAnyRole, orderExportRoles, orderViewAllRoles } from '$lib/server/identity';
 import { addAuditLog, exportOrders, listOrders } from '$lib/server/order-db';
+import { todayInBizTZ } from '$lib/server/time';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
@@ -21,7 +22,7 @@ export const GET: RequestHandler = async (event) => {
     }
     const result = exportOrders(filters);
     addAuditLog({ actorName: identity.displayName, actorUid: identity.uid, action: 'export', entityType: 'order', detail: { count: result.count, filters: Object.fromEntries(url.searchParams) } });
-    const date = new Date().toISOString().slice(0, 10);
+    const date = todayInBizTZ();
     return new Response(result.data, { headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(`订单结算明细-${date}.xlsx`)}`, 'Content-Length': String(result.data.length), 'Cache-Control': 'no-store' } });
   } catch (reason) {
     return new Response(JSON.stringify({ message: reason instanceof Error ? reason.message : '订单导出失败' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
