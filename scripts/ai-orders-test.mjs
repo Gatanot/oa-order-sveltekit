@@ -226,8 +226,9 @@ async function stopApp(instance) {
 function seedDatabase() {
   withDb((db) => {
     const timestamp = new Date().toISOString();
-    db.prepare('INSERT INTO customers_simple(id,name,contact,created_at) VALUES(?,?,?,?)')
-      .run(CUSTOMER_ID, 'AI 订单客户', '客户联系人', timestamp);
+    db.prepare(`INSERT INTO customer_profiles(id,name,tax_no,contact,phone,address,bank_name,bank_account,note,created_at,updated_at)
+      VALUES(?,?,'',?,'','','','','',?,?)`)
+      .run(CUSTOMER_ID, 'AI 订单客户', '客户联系人', timestamp, timestamp);
     db.prepare('INSERT INTO projects_simple(id,customer_id,name,owner,status,created_at) VALUES(?,?,?,?,?,?)')
       .run(PROJECT_ID, CUSTOMER_ID, 'AI 订单项目', '项目负责人', '进行中', timestamp);
     const insertEmployee = db.prepare(`INSERT INTO employees(catsco_uid,username,display_name,department,role,active,created_at,updated_at)

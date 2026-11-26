@@ -128,10 +128,16 @@ async function withMigratedFixture(name, legacyVersion, prepare, assertions) {
   source.close();
   const legacy = new Database(path);
   prepare(legacy);
-  // fixture 复制自当前（v32）库；模拟 v29 之前的结构时，把已合并的订单来源拆回旧的两列。
+  // fixture 复制自当前（v33）库；模拟 v29 之前的结构时，把已合并的订单来源拆回旧的两列。
   if (Number(legacyVersion) < 29) {
     legacy.exec("ALTER TABLE orders_simple DROP COLUMN order_source; ALTER TABLE orders_simple ADD COLUMN contact TEXT NOT NULL DEFAULT ''; ALTER TABLE orders_simple ADD COLUMN customer_department TEXT NOT NULL DEFAULT '';");
     legacy.prepare("UPDATE orders_simple SET contact='旧联系人', customer_department='旧部门'").run();
+  }
+  // v27/v29 重建订单时外键仍指向 customers_simple；从当前（v33）库回放旧版本时补回该表，
+  // 保证旧版迁移的 foreign_key_check 能代表真实旧库，最终再由 v33 迁移到客户档案。
+  if (Number(legacyVersion) < 33 && !legacy.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='customers_simple'").get()) {
+    legacy.exec("CREATE TABLE customers_simple(id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, contact TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)");
+    legacy.exec("INSERT INTO customers_simple(id,name,contact,created_at) SELECT id,name,contact,created_at FROM customer_profiles");
   }
   legacy.prepare("UPDATE schema_meta SET value = ? WHERE key = 'order_app_version'").run(legacyVersion);
   legacy.close();
@@ -305,7 +311,10 @@ try {
   assert.equal(result.data.type, 'redirect');
   assert.equal(result.data.location, './admin');
 
-  result = await request('/api/projects', { method: 'POST', json: { customer: '测试客户', name: '测试项目', owner: '项目负责人' } });
+  result = await request('/api/customer-profiles', { method: 'POST', json: { name: '测试客户', contact: '测试联系人' } });
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  const customerId = result.data.data.id;
+  result = await request('/api/projects', { method: 'POST', json: { customer_id: customerId, name: '测试项目', owner: '项目负责人' } });
   assert.equal(result.response.status, 201, JSON.stringify(result.data));
   const projectId = result.data.data.id;
 
@@ -492,7 +501,7 @@ try {
   assert.match(result.response.headers.get('content-type') || '', /spreadsheet/);
 
   const db = new Database(databasePath, { readonly: true });
-  assert.equal(db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '32');
+  assert.equal(db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '33');
   assert.ok(db.prepare("SELECT COUNT(*) FROM pragma_table_info('catalog_sources') WHERE name='library_name'").pluck().get(), 'v30 应为资料库补充名称字段');
   assert.equal(db.prepare("PRAGMA index_list('catalog_sources')").all().filter((index) => index.unique && index.origin !== 'pk').length, 0, 'v30 应移除客户/厂商唯一限制，允许同一客户多个报价库');
   assert.equal(db.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('catalog_quote_items','catalog_cost_items')").pluck().get(), 2, 'v27 应创建报价库/成本库分表');
@@ -507,6 +516,9 @@ try {
   assert.ok(db.prepare("SELECT COUNT(*) FROM pragma_table_info('catalog_cost_items') WHERE name='cost_unit'").pluck().get(), '成本库应含成本单价字段');
   assert.ok(db.prepare("SELECT COUNT(*) FROM pragma_table_info('reimbursements_simple') WHERE name='source_line_id'").pluck().get(), 'v31 应为报销补充订单行关联字段');
   assert.ok(db.prepare("SELECT COUNT(*) FROM pragma_table_info('audit_logs') WHERE name='actor_uid'").pluck().get(), '审计表应包含操作者 UID');
+  assert.equal(db.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='customers_simple'").pluck().get(), 0, 'v33 应移除旧客户表');
+  assert.ok(db.prepare('SELECT COUNT(*) FROM customer_profiles').pluck().get() >= 1, 'v33 订单客户应来自客户管理档案');
+  assert.equal(db.prepare('SELECT COUNT(*) FROM orders_simple o LEFT JOIN customer_profiles c ON c.id=o.customer_id WHERE c.id IS NULL').pluck().get(), 0, '订单客户应能关联到客户档案');
   assert.equal(db.prepare("SELECT COUNT(*) FROM reimbursements_simple WHERE source_line_id<>''").pluck().get(), 0, '取消垫付后不应残留自动报销记录');
   assert.ok(db.prepare('SELECT COUNT(*) FROM audit_logs WHERE actor_uid=826').pluck().get() >= 1, '审计应记录操作者 UID');
   assert.equal(db.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='system_admin_identity'").pluck().get(), 1, '系统管理员额外身份应持久化保存');
@@ -529,7 +541,7 @@ try {
     legacy.prepare("UPDATE orders_simple SET status='待确认'").run();
     legacy.pragma('ignore_check_constraints = OFF');
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '32');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '33');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('audit_logs') WHERE name='actor_uid'").pluck().get(), 'v23 数据库迁移后应补齐审计 actor_uid');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v23 数据库重启后应保留订单');
     assert.equal(migrated.prepare('SELECT order_source FROM orders_simple LIMIT 1').pluck().get(), '旧部门-旧联系人', 'v29 迁移应按部门-联系人合并订单来源');
@@ -551,7 +563,7 @@ try {
     `);
     legacy.pragma('foreign_keys = ON');
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '32');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '33');
     assert.equal(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('catalog_quote_items') WHERE name IN ('price_excl_tax','tax_rate')").pluck().get(), 0, 'v28 应移除报价税务列');
     assert.equal(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('catalog_cost_items') WHERE name IN ('cost_unit_excl_tax','tax_rate')").pluck().get(), 0, 'v28 应移除成本税务列');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM order_products').pluck().get(), 1, '迁移不应丢失订单项');
@@ -575,7 +587,7 @@ try {
       ALTER TABLE audit_logs ADD COLUMN actor_user_id TEXT;
     `);
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '32');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '33');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='idempotency_key'").pluck().get(), 'v18 数据库应补齐幂等字段');
     assert.equal(migrated.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('users','sessions')").pluck().get(), 0, '迁移后不应保留登录表');
     for (const [table, column] of [['orders_simple', 'created_by_user_id'], ['reimbursements_simple', 'employee_user_id'], ['reimbursements_simple', 'voucher_archived_by_user_id'], ['order_attachments', 'uploaded_by_user_id'], ['reimbursement_attachments', 'uploaded_by_user_id'], ['catalog_sources', 'maintained_by_user_id'], ['audit_logs', 'actor_user_id']]) {
@@ -589,7 +601,7 @@ try {
     restoreLegacyCatalog(legacy);
     legacy.exec('ALTER TABLE orders_simple DROP COLUMN planner; ALTER TABLE orders_simple DROP COLUMN execution_company;');
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '32');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '33');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='planner'").pluck().get(), 'v20 数据库应补齐策划人字段');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='execution_company'").pluck().get(), 'v20 数据库应补齐执行公司字段');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v20 迁移不应丢失订单');
@@ -600,7 +612,7 @@ try {
     restoreLegacyCatalog(legacy);
     legacy.exec('ALTER TABLE orders_simple DROP COLUMN execution_company;');
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '32');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '33');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='execution_company'").pluck().get(), 'v21 数据库应补齐执行公司字段');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v21 迁移不应丢失订单');
     assert.deepEqual(migrated.prepare('PRAGMA foreign_key_check').all(), []);

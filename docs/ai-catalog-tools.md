@@ -73,7 +73,7 @@ kind 必填，source_id 可选，q 搜索名称/分类/规格。金额全部为�
 {"tool":"create_source","arguments":{"kind":"cost","owner_name":"示例印刷厂"}}
 ```
 
-默认仅预览，加dry_run=false才提交。返回source.id，同类型同公司重复409，应查询复用。报价库公司名成为可选客户。
+默认仅预览，加dry_run=false才提交。返回source.id，同类型同公司重复409，应查询复用。报价库公司名会确保在客户管理中建档，并成为订单可选客户；客户资料本身请先在 OA 客户管理中维护。
 
 ```json
 {"tool":"upsert_items","arguments":{"source_id":"成本库ID","rows":[{"name":"喷画","category":"广告制作","unit":"平方米","cost_unit":"12.34","remark":"含安装"}]}}

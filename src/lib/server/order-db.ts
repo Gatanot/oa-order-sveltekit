@@ -675,6 +675,100 @@ export function getOrderDb() {
         `);
       })();
     }
+    // v33：订单/项目客户改为引用客户管理档案；迁移完成后移除 customers_simple。
+    // 旧订单客户按 id（同名时按客户档案 id）迁移，报价库历史 owner_name 也补建为最小客户档案。
+    if (appVersion < 33) {
+      instance.pragma('foreign_keys = OFF');
+      try {
+        instance.transaction(() => {
+          const timestamp = now();
+          const hasLegacyCustomers = Boolean(instance!.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='customers_simple'").get());
+          const profiles = instance!.prepare('SELECT id,name,contact FROM customer_profiles').all() as Array<{ id: string; name: string; contact: string }>;
+          const byId = new Map(profiles.map((profile) => [profile.id, profile]));
+          const byName = new Map(profiles.map((profile) => [profile.name, profile]));
+          const remap = new Map<string, string>();
+          const insertProfile = instance!.prepare(`INSERT OR IGNORE INTO customer_profiles
+            (id,name,tax_no,contact,phone,address,bank_name,bank_account,note,created_at,updated_at)
+            VALUES(?,?,'',?,'','','','','',?,?)`);
+          if (hasLegacyCustomers) {
+            const rows = instance!.prepare('SELECT id,name,contact,created_at FROM customers_simple').all() as Array<Record<string, unknown>>;
+            for (const row of rows) {
+              const id = text(row.id);
+              const name = text(row.name);
+              if (!name) continue;
+              const existing = byId.get(id) || byName.get(name);
+              if (existing) {
+                if (existing.id !== id) remap.set(id, existing.id);
+                if (!text(existing.contact) && text(row.contact)) {
+                  instance!.prepare('UPDATE customer_profiles SET contact=? WHERE id=?').run(text(row.contact), existing.id);
+                  existing.contact = text(row.contact);
+                }
+                continue;
+              }
+              const profile = { id, name, contact: text(row.contact) };
+              insertProfile.run(id, name, profile.contact, text(row.created_at) || timestamp, timestamp);
+              byId.set(id, profile);
+              byName.set(name, profile);
+            }
+          }
+          // 历史报价库 owner_name 没有档案时补建；成本库 owner 是厂商，不写成客户。
+          const owners = instance!.prepare("SELECT DISTINCT owner_name FROM catalog_sources WHERE kind='quote'").all() as Array<{ owner_name: string }>;
+          for (const owner of owners) {
+            const name = text(owner.owner_name);
+            if (!name || quoteLibraryPlaceholderOwners.has(name) || byName.has(name)) continue;
+            const profile = { id: uuid(), name, contact: '' };
+            insertProfile.run(profile.id, name, '', timestamp, timestamp);
+            byId.set(profile.id, profile);
+            byName.set(name, profile);
+          }
+          const updateProjectCustomer = instance!.prepare('UPDATE projects_simple SET customer_id=? WHERE customer_id=?');
+          const updateOrderCustomer = instance!.prepare('UPDATE orders_simple SET customer_id=? WHERE customer_id=?');
+          for (const [oldId, newId] of remap) {
+            if (oldId === newId) continue;
+            updateProjectCustomer.run(newId, oldId);
+            updateOrderCustomer.run(newId, oldId);
+          }
+          instance!.exec(`
+            CREATE TABLE projects_simple_v33(
+              id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, name TEXT NOT NULL,
+              owner TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '进行中', created_at TEXT NOT NULL,
+              UNIQUE(customer_id,name), FOREIGN KEY(customer_id) REFERENCES customer_profiles(id)
+            );
+            INSERT INTO projects_simple_v33(id,customer_id,name,owner,status,created_at)
+              SELECT id,customer_id,name,owner,status,created_at FROM projects_simple;
+            DROP TABLE projects_simple;
+            ALTER TABLE projects_simple_v33 RENAME TO projects_simple;
+
+            CREATE TABLE orders_simple_v33(
+              id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, customer_id TEXT NOT NULL, project_id TEXT NOT NULL,
+              service_name TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 1, unit TEXT NOT NULL DEFAULT '项',
+              quote_amount INTEGER NOT NULL DEFAULT 0, cost_amount INTEGER NOT NULL DEFAULT 0, order_date TEXT NOT NULL,
+              delivery_date TEXT NOT NULL DEFAULT '', order_source TEXT NOT NULL DEFAULT '',
+              designer TEXT NOT NULL DEFAULT '', planner TEXT NOT NULL DEFAULT '', execution_company TEXT NOT NULL DEFAULT '',
+              created_by TEXT NOT NULL, status TEXT NOT NULL DEFAULT '已提交' CHECK(status IN ('已提交','已完成')),
+              payment_status TEXT NOT NULL DEFAULT '未结款', note TEXT NOT NULL DEFAULT '', specification TEXT NOT NULL DEFAULT '',
+              products_json TEXT NOT NULL DEFAULT '[]', costs_json TEXT NOT NULL DEFAULT '[]', is_extra INTEGER NOT NULL DEFAULT 0,
+              idempotency_key TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, created_by_uid INTEGER, designer_uid INTEGER, planner_uid INTEGER,
+              FOREIGN KEY(customer_id) REFERENCES customer_profiles(id), FOREIGN KEY(project_id) REFERENCES projects_simple(id)
+            );
+            INSERT INTO orders_simple_v33(id,code,customer_id,project_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,delivery_date,order_source,designer,planner,execution_company,created_by,status,payment_status,note,specification,products_json,costs_json,is_extra,idempotency_key,created_at,created_by_uid,designer_uid,planner_uid)
+              SELECT id,code,customer_id,project_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,delivery_date,order_source,designer,planner,execution_company,created_by,status,payment_status,note,specification,products_json,costs_json,is_extra,idempotency_key,created_at,created_by_uid,designer_uid,planner_uid FROM orders_simple;
+            DROP TABLE orders_simple;
+            ALTER TABLE orders_simple_v33 RENAME TO orders_simple;
+            CREATE INDEX idx_simple_orders_date ON orders_simple(order_date DESC);
+            CREATE INDEX idx_simple_orders_customer ON orders_simple(customer_id,project_id);
+            CREATE UNIQUE INDEX idx_orders_idempotency ON orders_simple(idempotency_key) WHERE idempotency_key <> '';
+
+            DROP TABLE IF EXISTS customers_simple;
+            UPDATE schema_meta SET value='33' WHERE key='order_app_version';
+          `);
+        })();
+      } finally {
+        instance.pragma('foreign_keys = ON');
+      }
+      const v33Violations = instance.pragma('foreign_key_check') as Array<Record<string, unknown>>;
+      if (v33Violations.length) throw new Error(`v33 迁移后存在 ${v33Violations.length} 条外键异常`);
+    }
     importBundledExcel(instance);
   }
   return instance;
@@ -725,6 +819,7 @@ function importBundledExcel(db: Database.Database) {
         db.prepare('INSERT OR IGNORE INTO catalog_sources(id,kind,owner_name,library_name,source_file,source_method,active,created_at,updated_at) VALUES(?,?,?,?,?,?,1,?,?)').run(sourceId, kind, owner, libraryName, file, 'bundled', now(), now());
         source = { id: sourceId };
       }
+      if (kind === 'quote') ensureCustomerProfile(db, owner);
       const workbook = XLSX.read(readFileSync(path), { type: 'buffer' });
       for (const sheet of workbook.SheetNames) {
         const rows = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[sheet], { header: 1, defval: '' });
@@ -756,39 +851,42 @@ function importBundledExcel(db: Database.Database) {
   })();
 }
 
-// 客户集合由「客户报价库」决定：新增/导入报价库时填写的公司名称就是订单可选的客户名称。
-// 名称只做首尾去空格，不改写、不做同义合并——填什么就用什么。
-// 唯一的例外是旧数据迁移时给缺失客户名补的占位名，它不是真实客户。
+// 订单可选的客户唯一来自「客户管理」（customer_profiles）。
+// 报价库仍按 owner_name 归属客户；历史资料库或外部接口创建的新客户名会补一条最小客户档案，
+// 但订单/项目保存的是客户档案 id，不再靠名称匹配。
 const quoteLibraryPlaceholderOwners = new Set(['通用客户报价']);
 
-function ensureCustomerRow(db: Database.Database, name: string): string | null {
+function ensureCustomerProfile(db: Database.Database, name: string, contact = ''): string | null {
   const customerName = text(name);
   if (!customerName || quoteLibraryPlaceholderOwners.has(customerName)) return null;
-  const existing = db.prepare('SELECT id FROM customers_simple WHERE name=?').get(customerName) as { id: string } | undefined;
+  const existing = db.prepare('SELECT id FROM customer_profiles WHERE name=?').get(customerName) as { id: string } | undefined;
   if (existing) return existing.id;
   const id = uuid();
-  db.prepare('INSERT INTO customers_simple(id,name,contact,created_at) VALUES(?,?,?,?)').run(id, customerName, '', now());
+  const timestamp = now();
+  db.prepare(`INSERT INTO customer_profiles(id,name,tax_no,contact,phone,address,bank_name,bank_account,note,created_at,updated_at) VALUES(?,?,'',?,'','','','','',?,?)`)
+    .run(id, customerName, text(contact), timestamp, timestamp);
   return id;
 }
 
-/** 把已有客户报价库的公司名同步为可选客户，保证在此规则之前导入的报价库也能直接下单。 */
+/** 兼容历史报价库：资料库 owner_name 还没有对应客户档案时补建，保证其客户可在订单中选择。 */
 function syncQuoteLibraryCustomers(db: Database.Database) {
   const rows = db.prepare("SELECT DISTINCT owner_name FROM catalog_sources WHERE kind='quote' AND active=1").all() as Array<{ owner_name: string }>;
   if (!rows.length) return;
-  db.transaction(() => { for (const row of rows) ensureCustomerRow(db, row.owner_name); })();
+  db.transaction(() => { for (const row of rows) ensureCustomerProfile(db, row.owner_name); })();
 }
 
 export function listCustomers() {
   const db = getOrderDb();
   syncQuoteLibraryCustomers(db);
-  return db.prepare('SELECT * FROM customers_simple ORDER BY name').all();
+  // 订单页面只需要选择客户所需的最小字段，不把开票资料等客户档案详情下发到工作台。
+  return db.prepare('SELECT id,name,contact FROM customer_profiles ORDER BY name').all();
 }
 
 export function listProjects(customerId?: string) {
   const db = getOrderDb();
   return customerId
-    ? db.prepare('SELECT p.*, c.name AS customer_name FROM projects_simple p JOIN customers_simple c ON c.id=p.customer_id WHERE p.customer_id=? ORDER BY p.name').all(customerId)
-    : db.prepare('SELECT p.*, c.name AS customer_name FROM projects_simple p JOIN customers_simple c ON c.id=p.customer_id ORDER BY c.name,p.name').all();
+    ? db.prepare('SELECT p.*, c.name AS customer_name FROM projects_simple p JOIN customer_profiles c ON c.id=p.customer_id WHERE p.customer_id=? ORDER BY p.name').all(customerId)
+    : db.prepare('SELECT p.*, c.name AS customer_name FROM projects_simple p JOIN customer_profiles c ON c.id=p.customer_id ORDER BY c.name,p.name').all();
 }
 
 export function listCatalog() {
@@ -851,8 +949,8 @@ export function createCatalogSource(data: Record<string, unknown>) {
         for (const item of copyItems) insertQuote.run({ id: uuid(), sourceId: id, itemNo: item.item_no, category: item.category, name: item.name, specification: item.specification, unit: item.unit, estimatedQuantity: item.estimated_quantity, price: item.price_incl_tax, maxPrice: item.max_price, customerName: owner, projectName: item.project_name, remark: item.remark, sourceFile: item.source_file, sourceSheet: item.source_sheet, sourceType: item.source_type, raw: item.raw_data, createdAt });
       }
     }
-    // 客户报价库的公司名直接成为订单可选客户；成本库的 owner 是厂商，不写入客户表。
-    if (kind === 'quote') ensureCustomerRow(db, owner);
+    // 客户报价库必须归属客户管理中的客户；缺失时补建最小档案，兼容外部接口和历史数据。
+    if (kind === 'quote') ensureCustomerProfile(db, owner);
     return db.prepare(`SELECT cs.*, CASE cs.kind WHEN 'cost' THEN (SELECT COUNT(*) FROM catalog_cost_items ki WHERE ki.source_id=cs.id AND ki.active=1) ELSE (SELECT COUNT(*) FROM catalog_quote_items qi WHERE qi.source_id=cs.id AND qi.active=1) END AS item_count FROM catalog_sources cs WHERE cs.id=?`).get(id);
   })();
 }
@@ -1269,12 +1367,12 @@ export function canEmployeeAccessOrder(id: string, uid: number): boolean {
 /** 按 ID 读取完整订单；调用方必须先进行行级权限检查。 */
 export function getOrderById(id: string): Record<string, any> | undefined {
   const row = getOrderDb().prepare(`SELECT o.*,c.name AS customer_name,p.name AS project_name
-    FROM orders_simple o JOIN customers_simple c ON c.id=o.customer_id JOIN projects_simple p ON p.id=o.project_id WHERE o.id=?`).get(id) as Record<string, unknown> | undefined;
+    FROM orders_simple o JOIN customer_profiles c ON c.id=o.customer_id JOIN projects_simple p ON p.id=o.project_id WHERE o.id=?`).get(id) as Record<string, unknown> | undefined;
   return row ? hydrateOrder(row) : undefined;
 }
 
 export function listOrders(): Array<Record<string, any>> {
-  const rows = getOrderDb().prepare(`SELECT o.*, c.name AS customer_name, c.contact AS customer_contact, p.name AS project_name, p.owner AS project_owner FROM orders_simple o JOIN customers_simple c ON c.id=o.customer_id JOIN projects_simple p ON p.id=o.project_id ORDER BY o.order_date DESC,o.created_at DESC`).all() as Array<Record<string, unknown>>;
+  const rows = getOrderDb().prepare(`SELECT o.*, c.name AS customer_name, c.contact AS customer_contact, p.name AS project_name, p.owner AS project_owner FROM orders_simple o JOIN customer_profiles c ON c.id=o.customer_id JOIN projects_simple p ON p.id=o.project_id ORDER BY o.order_date DESC,o.created_at DESC`).all() as Array<Record<string, unknown>>;
   return rows.map(hydrateOrder);
 }
 
@@ -1332,7 +1430,8 @@ export type CustomerProfile = {
 };
 type CustomerProfileActor = { name?: string; uid?: number | null };
 
-// 客户管理仅维护开票所需的客户资料，不参与订单、报价库或成本库的任何匹配。
+// 客户管理是订单客户的唯一来源；订单与项目通过 customer_id 直接引用客户档案，
+// 客户改名后历史订单/项目展示自动跟随，不再按名称匹配订单归属。
 function customerProfileValues(data: Record<string, unknown>) {
   const name = text(data.name);
   if (!name) throw new Error('客户名称不能为空');
@@ -1376,9 +1475,10 @@ export function updateCustomerProfile(id: unknown, data: Record<string, unknown>
   db.transaction(() => {
     db.prepare('UPDATE customer_profiles SET name=?,tax_no=?,contact=?,phone=?,address=?,bank_name=?,bank_account=?,note=?,updated_at=? WHERE id=?')
       .run(values.name, values.tax_no, values.contact, values.phone, values.address, values.bank_name, values.bank_account, values.note, now(), targetId);
-    // 报价库按客户名称归属；客户改名时同步来源归属，避免出现重复客户分组。
+    // 报价库按客户名称归属；客户改名时同步来源归属和报价条目快照，避免出现重复客户分组或旧名称匹配失效。
     if (existing.name !== values.name) {
       db.prepare("UPDATE catalog_sources SET owner_name=? WHERE kind='quote' AND owner_name=?").run(values.name, existing.name);
+      db.prepare('UPDATE catalog_quote_items SET customer_name=? WHERE customer_name=?').run(values.name, existing.name);
     }
     recordAudit(db, { actorName: actor?.name, actorUid: actor?.uid, action: 'update_customer_profile', entityType: 'customer_profile', entityId: targetId, fromValue: existing.name, toValue: values.name, detail: { name: values.name } });
   })();
@@ -1391,6 +1491,12 @@ export function deleteCustomerProfile(id: unknown, actor?: CustomerProfileActor)
   const db = getOrderDb();
   const existing = db.prepare('SELECT id,name FROM customer_profiles WHERE id=?').get(targetId) as { id: string; name: string } | undefined;
   if (!existing) throw new Error('客户不存在');
+  const usage = db.prepare(`SELECT
+      (SELECT COUNT(*) FROM orders_simple WHERE customer_id=?) AS orders,
+      (SELECT COUNT(*) FROM projects_simple WHERE customer_id=?) AS projects,
+      (SELECT COUNT(*) FROM catalog_sources WHERE kind='quote' AND owner_name=?) AS sources`)
+    .get(targetId, targetId, existing.name) as { orders: number; projects: number; sources: number };
+  if (usage.orders || usage.projects || usage.sources) throw new Error('该客户已有订单、项目或报价库，不能删除');
   db.prepare('DELETE FROM customer_profiles WHERE id=?').run(targetId);
   recordAudit(db, { actorName: actor?.name, actorUid: actor?.uid, action: 'delete_customer_profile', entityType: 'customer_profile', entityId: targetId, detail: { name: existing.name } });
   return { id: targetId };
@@ -1687,7 +1793,6 @@ export function exportOrders(filters: Record<string, string>) {
 }
 
 export interface CreateProjectInput {
-  customer?: string;
   customer_id?: string;
   name: string;
   owner?: string;
@@ -1696,19 +1801,14 @@ export interface CreateProjectInput {
 export function createProject(data: CreateProjectInput) {
   const db = getOrderDb();
   return db.transaction(() => {
-    let customerId = data.customer_id;
-    if (!customerId) {
-      const customer = String(data.customer || '').trim();
-      if (!customer) throw new Error('请填写客户名称');
-      const existing = db.prepare('SELECT id FROM customers_simple WHERE name=?').get(customer) as { id: string } | undefined;
-      customerId = existing?.id || uuid();
-      if (!existing) db.prepare('INSERT INTO customers_simple VALUES(?,?,?,?)').run(customerId, customer, '', now());
-    }
+    const customerId = text(data.customer_id);
+    if (!customerId) throw new Error('请从客户管理选择客户');
+    if (!db.prepare('SELECT 1 FROM customer_profiles WHERE id=?').get(customerId)) throw new Error('客户不存在，请先在客户管理中创建客户');
     const name = String(data.name || '').trim();
     if (!name) throw new Error('请填写项目名称');
     const projectId = uuid();
     db.prepare('INSERT INTO projects_simple VALUES(?,?,?,?,?,?)').run(projectId, customerId, name, String(data.owner || '').trim(), '进行中', now());
-    return db.prepare('SELECT p.*, c.name AS customer_name FROM projects_simple p JOIN customers_simple c ON c.id=p.customer_id WHERE p.id=?').get(projectId);
+    return db.prepare('SELECT p.*, c.name AS customer_name FROM projects_simple p JOIN customer_profiles c ON c.id=p.customer_id WHERE p.id=?').get(projectId);
   })();
 }
 
@@ -1736,7 +1836,7 @@ export function createOrder(data: Record<string, unknown>) {
   // 项目选填后客户不能再由项目反查，必须由前端显式提交并校验。
   const customerId = project?.customer_id || text(data.customer_id);
   if (!customerId) throw new Error('请选择客户');
-  if (!db.prepare('SELECT 1 FROM customers_simple WHERE id=?').get(customerId)) throw new Error('客户不存在');
+  if (!db.prepare('SELECT 1 FROM customer_profiles WHERE id=?').get(customerId)) throw new Error('客户不存在');
   const projectId = project?.id || ensureUnassignedProject(db, customerId).id;
   const orderSource = text(data.order_source);
   const deliveryDate = text(data.delivery_date);
@@ -1811,7 +1911,7 @@ export function updateOrder(id: string, data: Record<string, unknown>) {
   if (requestedProjectId && !targetProject) throw new Error('项目不存在');
   const targetCustomerId = targetProject?.customer_id || text(data.customer_id) || text(existing.customer_id);
   if (!targetCustomerId) throw new Error('请选择客户');
-  if (!db.prepare('SELECT 1 FROM customers_simple WHERE id=?').get(targetCustomerId)) throw new Error('客户不存在');
+  if (!db.prepare('SELECT 1 FROM customer_profiles WHERE id=?').get(targetCustomerId)) throw new Error('客户不存在');
   const targetProjectId = targetProject?.id || ensureUnassignedProject(db, targetCustomerId).id;
   const orderSource = text(data.order_source);
   db.transaction(() => {
@@ -1819,7 +1919,7 @@ export function updateOrder(id: string, data: Record<string, unknown>) {
     const lineIds = syncNormalizedOrderLines(db, id, products, costs);
     syncOrderAdvanceReimbursements(db, { id, code: text(existing.code), order_date: text(data.order_date || existing.order_date) }, products, lineIds, advanceActor);
   })();
-  return hydrateOrder(db.prepare(`SELECT o.*,c.name customer_name,p.name project_name,p.owner project_owner FROM orders_simple o JOIN customers_simple c ON c.id=o.customer_id JOIN projects_simple p ON p.id=o.project_id WHERE o.id=?`).get(id) as Record<string, unknown>);
+  return hydrateOrder(db.prepare(`SELECT o.*,c.name customer_name,p.name project_name,p.owner project_owner FROM orders_simple o JOIN customer_profiles c ON c.id=o.customer_id JOIN projects_simple p ON p.id=o.project_id WHERE o.id=?`).get(id) as Record<string, unknown>);
 }
 
 export function deleteOrder(id: string) {
@@ -1839,7 +1939,7 @@ export function listReimbursementOrders(filters: Record<string, string> = {}) {
     FROM reimbursements_simple r
     LEFT JOIN orders_simple o ON o.id = r.order_id
     LEFT JOIN projects_simple p ON p.id = o.project_id
-    LEFT JOIN customers_simple c ON c.id = o.customer_id
+    LEFT JOIN customer_profiles c ON c.id = o.customer_id
     LEFT JOIN reimbursement_attachments ra ON ra.reimbursement_id = r.id
     GROUP BY r.id
     ORDER BY r.advance_date DESC, r.created_at DESC`).all() as Array<Record<string, any>>;
@@ -2153,7 +2253,7 @@ export function importCatalog(rows: Array<Record<string, unknown>>, sourceId = '
     if (source) {
       const summary = JSON.stringify({ rows: rows.length, imported: count, replaced: Boolean(options.replace), imported_at: now() });
       db.prepare("UPDATE catalog_sources SET source_file=COALESCE(NULLIF(?,''),source_file),source_method='upload',import_summary_json=?,updated_at=? WHERE id=?").run(text(rows[0]?.source_file), summary, now(), sourceId);
-      if (kind === 'quote') ensureCustomerRow(db, text(source.owner_name));
+      if (kind === 'quote') ensureCustomerProfile(db, text(source.owner_name));
       recordAudit(db, { actorName: options.actorName, actorUid: options.actorUid ?? null, action: options.replace ? 'replace_catalog' : 'import_catalog', entityType: 'catalog_source', entityId: sourceId, detail: { rows: rows.length, imported: count } });
     }
     return count;
@@ -2254,10 +2354,12 @@ function ensureDemoProjects() {
   const result: Array<{ id: string; customer_id: string; customer_name: string; name: string; owner: string }> = [];
   db.transaction(() => {
     for (const [customerName, projectName, owner] of definitions) {
-      let customer = db.prepare('SELECT id FROM customers_simple WHERE name=?').get(customerName) as { id: string } | undefined;
+      let customer = db.prepare('SELECT id FROM customer_profiles WHERE name=?').get(customerName) as { id: string } | undefined;
       if (!customer) {
         customer = { id: uuid() };
-        db.prepare('INSERT INTO customers_simple(id,name,contact,created_at) VALUES(?,?,?,?)').run(customer.id, customerName, '模拟联系人', now());
+        const timestamp = now();
+        db.prepare(`INSERT INTO customer_profiles(id,name,tax_no,contact,phone,address,bank_name,bank_account,note,created_at,updated_at) VALUES(?,?,'',?,'','','','','',?,?)`)
+          .run(customer.id, customerName, '模拟联系人', timestamp, timestamp);
       }
       let project = db.prepare('SELECT id FROM projects_simple WHERE customer_id=? AND name=?').get(customer.id, projectName) as { id: string } | undefined;
       if (!project) {

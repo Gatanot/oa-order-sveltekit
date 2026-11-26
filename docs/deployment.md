@@ -15,7 +15,7 @@ node build
 
 ## 数据库迁移
 
-应用启动时在 SQLite 事务中自动执行显式迁移。当前版本为 29：订单的「客户部门」与「联系人/下单人」合并为 `orders_simple.order_source`，旧数据按 `部门-联系人` 拼接（只有其中一个时取该值）；v28 为报价库与成本库拆分为 `catalog_quote_items`（统一价格、限价）和 `catalog_cost_items`（统一价格、供应商），价格默认按含税价处理；迁移移除不含税价与税率列并保留现有主价格，订单行分别外键到对应库，并移除 `orders_simple.catalog_id`；旧 `catalog_items` 数据按来源类型迁入新表后删除。此前的 v20 会重建相关业务表并移除旧版 `users`、`sessions` 及其关联；v21 至 v26 为增量字段、权限与业务调整。
+应用启动时在 SQLite 事务中自动执行显式迁移。当前版本为 33：订单和项目客户改为外键引用 `customer_profiles`，历史 `customers_simple` 客户及历史报价库 owner 迁移为客户档案，随后移除 `customers_simple`；客户改名会同步报价库来源和报价条目客户快照。v32 为报销增加部门快照并按部门配置三级审核人；v29 将订单的「客户部门」与「联系人/下单人」合并为 `orders_simple.order_source`，旧数据按 `部门-联系人` 拼接（只有其中一个时取该值）；v28 为报价库与成本库拆分为 `catalog_quote_items`（统一价格、限价）和 `catalog_cost_items`（统一价格、供应商），价格默认按含税价处理；迁移移除不含税价与税率列并保留现有主价格，订单行分别外键到对应库，并移除 `orders_simple.catalog_id`；旧 `catalog_items` 数据按来源类型迁入新表后删除。此前的 v20 会重建相关业务表并移除旧版 `users`、`sessions` 及其关联；v21 至 v26 为增量字段、权限与业务调整。
 
 升级前先停止应用并备份数据库和附件目录；迁移失败时恢复备份后检查日志，不要手工删除业务表。
 

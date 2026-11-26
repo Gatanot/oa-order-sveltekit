@@ -165,7 +165,6 @@ export function createOrderDesk(data: Data) {
   let attachmentPreviewRequest = 0;
   let uploadingFiles = $state(false);
   let creatorName = $state("");
-  let newCustomer = $state("");
   let newProject = $state("");
   let newOwner = $state("");
   let showProjectForm = $state(false);
@@ -1266,15 +1265,14 @@ export function createOrderDesk(data: Data) {
       notify("请填写项目名称", true);
       return;
     }
-    if (!customerId && !newCustomer.trim()) {
-      notify("请先选择客户", true);
+    if (!customerId) {
+      notify("请先在客户管理中选择客户", true);
       return;
     }
     busy = true;
     try {
       const result = await api.post<{ data: Project }>("/api/projects", {
-        customer_id: customerId || undefined,
-        customer: customerId ? undefined : newCustomer.trim(),
+        customer_id: customerId,
         name,
         owner: newOwner,
       });
@@ -1978,7 +1976,6 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "attachmentPreviewBlob", { get: () => attachmentPreviewBlob });
   Object.defineProperty(desk, "uploadingFiles", { get: () => uploadingFiles, set: (value) => { uploadingFiles = value; } });
   Object.defineProperty(desk, "creatorName", { get: () => creatorName });
-  Object.defineProperty(desk, "newCustomer", { get: () => newCustomer, set: (value) => { newCustomer = value; } });
   Object.defineProperty(desk, "newProject", { get: () => newProject, set: (value) => { newProject = value; } });
   Object.defineProperty(desk, "newOwner", { get: () => newOwner, set: (value) => { newOwner = value; } });
   Object.defineProperty(desk, "showProjectForm", { get: () => showProjectForm, set: (value) => { showProjectForm = value; } });

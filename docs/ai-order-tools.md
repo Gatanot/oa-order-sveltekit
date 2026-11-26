@@ -25,7 +25,7 @@ HTTP：GET `/api/ai/orders` 获取Schema，POST同路径 `{tool,arguments}` 执�
 
 员工返回全部active=1且非pending的档案，只含catsco_uid/display_name/department/role，可按role筛选。创建人不限岗位；设计/策划必须对应岗位。同名时需核实，不自动取第一个，不创建虚构员工。
 
-resource可选customers/projects/employees/execution_companies。customer_id仅用于projects，role仅用于employees。分页默认20、最多100，结果items/total/limit/offset。项目需先在OA中存在，本期没有代录创建项目工具。
+resource可选customers/projects/employees/execution_companies。customers返回客户管理中的客户档案 id/name；customer_id仅用于projects，role仅用于employees。分页默认20、最多100，结果items/total/limit/offset。项目需先在OA中存在，本期没有代录创建项目工具。
 
 ## 单笔订单
 

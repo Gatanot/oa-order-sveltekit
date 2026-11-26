@@ -56,6 +56,7 @@
       if (editingId) await api.patch('/api/customer-profiles', { id: editingId, ...form });
       else await api.post('/api/customer-profiles', { ...form });
       await loadProfiles();
+      await desk.refresh();
       success = editingId ? '客户资料已保存' : '客户已新增';
       formOpen = false; editingId = ''; form = emptyForm();
     } catch (reason) {
@@ -66,11 +67,12 @@
   }
   async function remove(profile: CustomerProfile) {
     if (saving) return;
-    if (!await desk.requestConfirm('删除客户', `确定删除客户「${profile.name}」？该操作只删除客户资料，不影响其他业务数据。`)) return;
+    if (!await desk.requestConfirm('删除客户', `确定删除客户「${profile.name}」？已有订单、项目或报价库的客户不能删除。`)) return;
     saving = true; error = ''; success = '';
     try {
       await api.delete('/api/customer-profiles', { id: profile.id });
       profiles = profiles.filter((item) => item.id !== profile.id);
+      await desk.refresh();
       if (editingId === profile.id) cancelForm();
       success = '客户已删除';
     } catch (reason) {
@@ -87,7 +89,7 @@
   <div class="customer-manager-head">
     <div>
       <h3 id="customer-manager-title"><Building2 size={16} />客户资料</h3>
-      <span>维护客户资料；新增客户报价库时可从这里选择归属客户</span>
+      <span>订单可选的客户全部来自这里；新增报价库时也从这里选择归属客户</span>
     </div>
     {#if desk.canManageCatalog && !formOpen}
       <button class="mini-create" type="button" title="新增客户" onclick={startCreate}><Plus size={15} />新增</button>

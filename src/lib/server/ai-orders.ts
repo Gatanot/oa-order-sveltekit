@@ -203,7 +203,7 @@ function normalizeOrder(input: Record<string, unknown>, path: string, identity: 
   return order;
 }
 function previewOrder(order: Record<string, any>) {
-  const project = getOrderDb().prepare('SELECT p.id,p.name,p.customer_id,c.name AS customer_name FROM projects_simple p JOIN customers_simple c ON c.id=p.customer_id WHERE p.id=?').get(order.project_id) as Record<string, unknown>;
+  const project = getOrderDb().prepare('SELECT p.id,p.name,p.customer_id,c.name AS customer_name FROM projects_simple p JOIN customer_profiles c ON c.id=p.customer_id WHERE p.id=?').get(order.project_id) as Record<string, unknown>;
   const result: Record<string, unknown> = { ...order, customer_id: project.customer_id, customer_name: project.customer_name, project_name: project.name, currency: 'CNY', money_unit: 'yuan' };
   for (const type of ['products', 'costs']) {
     const rows = order[type] as Record<string, unknown>[];
@@ -219,9 +219,9 @@ function listReferences(data: Record<string, unknown>) {
   const { limit, offset } = pagination(data);
   let from: string, columns: string, sort: string;
   const where: string[] = [], values: string[] = [];
-  if (resource === 'customers') { from = 'customers_simple'; columns = 'id,name'; sort = 'name,id'; }
+  if (resource === 'customers') { from = 'customer_profiles'; columns = 'id,name'; sort = 'name,id'; }
   else if (resource === 'projects') {
-    from = 'projects_simple p JOIN customers_simple c ON c.id=p.customer_id';
+    from = 'projects_simple p JOIN customer_profiles c ON c.id=p.customer_id';
     columns = 'p.id,p.name,p.customer_id,c.name AS customer_name,p.status'; sort = 'p.name,p.id';
     if (data.customer_id !== undefined) { where.push('p.customer_id=?'); values.push(str(data.customer_id, 'arguments.customer_id', true)); }
   } else if (resource === 'employees') { from = 'employees'; columns = 'catsco_uid,display_name,department,role'; sort = 'display_name,catsco_uid'; where.push("role<>'pending'"); }
@@ -346,7 +346,7 @@ export function runOrderTool(tool: string, input: unknown, identity: CurrentIden
     for (const [key, op] of [['order_date_from', '>='], ['order_date_to', '<=']]) if (data[key] !== undefined) { clauses.push(`o.order_date${op}?`); values.push(date(data[key], `arguments.${key}`)); }
     const q = str(data.q, 'arguments.q');
     if (q) { clauses.push('(instr(lower(o.code),lower(?))>0 OR instr(lower(o.service_name),lower(?))>0 OR instr(lower(c.name),lower(?))>0 OR instr(lower(p.name),lower(?))>0)'); values.push(q, q, q, q); }
-    const from = `orders_simple o JOIN customers_simple c ON c.id=o.customer_id JOIN projects_simple p ON p.id=o.project_id${clauses.length ? ` WHERE ${clauses.join(' AND ')}` : ''}`;
+    const from = `orders_simple o JOIN customer_profiles c ON c.id=o.customer_id JOIN projects_simple p ON p.id=o.project_id${clauses.length ? ` WHERE ${clauses.join(' AND ')}` : ''}`;
     return db.transaction(() => ({
       items: (db.prepare(`SELECT o.id FROM ${from} ORDER BY o.order_date DESC,o.created_at DESC,o.id LIMIT ? OFFSET ?`).all(...values, limit, offset) as { id: string }[]).map(({ id }) => publicOrder(access(id, identity), identity)),
       total: (db.prepare(`SELECT COUNT(*) AS n FROM ${from}`).get(...values) as { n: number }).n, limit, offset
