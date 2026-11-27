@@ -52,21 +52,28 @@
   text-align: center;
 }
 
-/* 表头与输入对齐：规格是主字段（加深字重），定宽数值列的表头右对齐到同列数值右侧。 */
+/* 规格是主字段，表头加深字重区别于其他列。 */
 .repeat-header-fields > .head-spec {
   color: var(--ink);
   font-weight: 700;
 }
 
+/* 数值列表头右对齐到同列数值的右边缘。
+   单价/小计/成本 带“（元）”，全角右括号自身有约 6px 的右侧空白，
+   固定 8px 内边距会让表头看起来比数字偏左一截，所以按字形空白反向补偿（8 - 6 ≈ 2）。 */
 .repeat-header-fields > :is(:nth-child(3), :nth-child(5), :nth-child(6), :nth-child(8)) {
   padding-right: 8px;
   text-align: right;
 }
 
+.repeat-header-fields > :is(:nth-child(5), :nth-child(6)) {
+  padding-right: 2px;
+}
+
 /* 成本列右侧还有一个“从成本库选择”按钮（30px + 4px 间距），数值在按钮左侧，
    表头要跟数值右对齐，而不是贴着整个列宽的最右边。 */
 .repeat-header-fields > :nth-child(8) {
-  padding-right: 43px;
+  padding-right: 36px;
 }
 
 .repeat-header-fields > :nth-child(9) {
