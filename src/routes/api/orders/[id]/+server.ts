@@ -1,5 +1,5 @@
 import { action, body } from '$lib/server/http';
-import { hasAnyRole, orderManageRoles, getEmployeeDisplayName } from '$lib/server/identity';
+import { hasAnyRole, orderDeleteRoles, orderManageRoles, getEmployeeDisplayName } from '$lib/server/identity';
 import { addAuditLog, deleteOrder, getOrderAccessInfo, resolveOrderEmployeeUid, setOrderEmployees, updateOrder } from '$lib/server/order-db';
 import type { RequestHandler } from './$types';
 
@@ -34,10 +34,16 @@ export const PATCH: RequestHandler = async (event) => {
 };
 export const DELETE: RequestHandler = async (event) => {
   const identity = await event.locals.getCurrentIdentity();
-  if (!identity || !hasAnyRole(identity, orderManageRoles)) return new Response(JSON.stringify({ error: { code: 'FORBIDDEN', message: '没有删除订单权限' } }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+  if (!identity || !hasAnyRole(identity, orderDeleteRoles)) return new Response(JSON.stringify({ error: { code: 'FORBIDDEN', message: '没有删除订单权限' } }), { status: 403, headers: { 'Content-Type': 'application/json' } });
   return action(() => {
-  deleteOrder(event.params.id);
-  addAuditLog({ actorName: identity.displayName, actorUid: identity.uid, action: 'delete', entityType: 'order', entityId: event.params.id });
-  return { ok: true };
-});
+    const existing = getOrderAccessInfo(event.params.id);
+    if (!existing) throw new Error('ORDER_NOT_FOUND');
+    // 管理员/老板可删除任意订单；执行只能删除自己创建或参与的订单，避免仅凭订单 ID 越权。
+    const canDeleteAny = hasAnyRole(identity, orderManageRoles);
+    const participant = existing.created_by_uid === identity.uid || existing.designer_uid === identity.uid || existing.planner_uid === identity.uid;
+    if (!canDeleteAny && !participant) throw new Error('FORBIDDEN');
+    deleteOrder(event.params.id);
+    addAuditLog({ actorName: identity.displayName, actorUid: identity.uid, action: 'delete', entityType: 'order', entityId: event.params.id });
+    return { ok: true };
+  });
 };

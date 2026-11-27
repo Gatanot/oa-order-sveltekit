@@ -17,7 +17,7 @@ export type CurrentIdentity = { uid: number; username: string; displayName: stri
 export type AdminExtraIdentity = { role: EmployeeRole };
 
 // 权限集合集中定义，避免页面和 API 各自维护一份角色列表。
-export { orderViewAllRoles, orderManageRoles, orderExportRoles, orderCreateRoles, reimbursementViewAllRoles, reimbursementActionRoles, catalogViewRoles, catalogManageRoles, employeeManageRoles, executionCompanyManageRoles, hasAnyRole } from '$lib/permissions';
+export { orderViewAllRoles, orderManageRoles, orderDeleteRoles, orderExportRoles, orderCreateRoles, reimbursementViewAllRoles, reimbursementActionRoles, catalogViewRoles, catalogManageRoles, employeeManageRoles, executionCompanyManageRoles, hasAnyRole } from '$lib/permissions';
 
 // 业务身份层级只用于员工管理授权判定：上级可管理下级，同级与更高级别不可互相管理。
 // 部门即身份后，老板是唯一业务上级；pending/未知身份按最低级别处理。

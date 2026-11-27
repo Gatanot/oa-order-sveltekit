@@ -48,6 +48,8 @@ export function departmentForRole(role: string): Department | '' {
 
 export const orderViewAllRoles = ['admin', 'business', 'owner', 'finance'] as const;
 export const orderManageRoles = ['admin', 'owner'] as const;
+// 删除订单与结款/编辑等管理权限分开：执行可删除自己可见范围内的订单，但不能改结款或管理其他订单。
+export const orderDeleteRoles = ['admin', 'owner', 'executor'] as const;
 export const orderExportRoles = ['admin', 'business', 'owner', 'executor', 'finance'] as const;
 export const orderCreateRoles = ['admin', 'business', 'owner', 'executor'] as const;
 export const reimbursementViewAllRoles = ['admin', 'owner', 'finance'] as const;

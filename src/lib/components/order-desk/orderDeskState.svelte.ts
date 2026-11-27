@@ -3,7 +3,7 @@ import { pushState, replaceState } from "$app/navigation";
 import type * as XLSXType from "xlsx";
 import type { PublicArtifactVisitor } from "$lib/artifact-visitor";
 import { api, appPath, currentAppPath } from "$lib/api";
-import { hasAnyRole, orderCreateRoles, orderExportRoles, orderManageRoles, orderViewAllRoles, reimbursementActionRoles, reimbursementViewAllRoles, catalogViewRoles, catalogManageRoles, employeeManageRoles, executionCompanyManageRoles } from "$lib/permissions";
+import { hasAnyRole, orderCreateRoles, orderDeleteRoles, orderExportRoles, orderManageRoles, orderViewAllRoles, reimbursementActionRoles, reimbursementViewAllRoles, catalogViewRoles, catalogManageRoles, employeeManageRoles, executionCompanyManageRoles } from "$lib/permissions";
 
 const apiFetch = (input: RequestInfo | URL, init?: RequestInit) => {
   const headers = new Headers(init?.headers);
@@ -2084,7 +2084,7 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "showOrderStatistics", { get: () => !["designer", "planner"].includes(data.identity.role) });
   Object.defineProperty(desk, "canViewAllReimbursements", { get: () => canViewAllReimbursements });
   Object.defineProperty(desk, "canManageReimbursements", { get: () => canReviewReimbursements });
-  Object.defineProperty(desk, "canDeleteOrders", { get: () => hasAnyRole(data.identity, orderManageRoles) });
+  Object.defineProperty(desk, "canDeleteOrders", { get: () => hasAnyRole(data.identity, orderDeleteRoles) });
   Object.defineProperty(desk, "canManageCatalog", { get: () => hasAnyRole(data.identity, catalogManageRoles) });
   Object.defineProperty(desk, "canViewCatalog", { get: () => hasAnyRole(data.identity, catalogViewRoles) });
   Object.defineProperty(desk, "canManageEmployees", { get: () => hasAnyRole(data.identity, employeeManageRoles) });

@@ -991,7 +991,19 @@ try {
   });
 
   await withIdentityServer(1006, async (base) => {
-    let result = await requestOn(base, '/api/execution-companies');
+    // 执行可删除自己创建/参与的订单，但不能删除与自己无关的订单。
+    let result = await requestOn(base, '/api/orders', { method: 'POST', json: {
+      project_id: projectId, order_date: '2026-09-19', idempotency_key: 'smoke-executor-delete-1',
+      products: [{ name: '执行删除测试产品', unit: '项', quantity: 1, unit_price: '10.00', cost_unit: '2.00' }],
+      costs: [{ name: '执行删除测试产品', vendor: '测试厂商', unit: '项', quantity: 1, unit_price: '2.00' }]
+    } });
+    assert.equal(result.response.status, 201, JSON.stringify(result.data));
+    const executorOrderId = result.data.data.id;
+    result = await requestOn(base, `/api/orders/${executorOrderId}`, { method: 'DELETE' });
+    assert.equal(result.response.status, 200, '执行可删除自己创建的订单');
+    result = await requestOn(base, `/api/orders/${orderId}`, { method: 'DELETE' });
+    assert.equal(result.response.status, 403, '执行不能删除与自己无关的订单');
+    result = await requestOn(base, '/api/execution-companies');
     assert.equal(result.response.status, 200, '执行可查看执行公司');
     result = await requestOn(base, '/api/execution-companies', { method: 'POST', json: { name: '执行新增公司' } });
     assert.equal(result.response.status, 201, '执行可新增执行公司');
