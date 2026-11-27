@@ -31,14 +31,14 @@
     82px                   /* 单价 */
     82px                   /* 小计 */
     minmax(84px, .75fr)    /* 供应商 */
-    100px                  /* 成本 */
+    108px                  /* 成本（成本库按钮占 34px，数值右对齐后仍要给“成本（元）”表头留出位置） */
     40px                   /* 个人垫付 */
     104px;                 /* 额外成本 + 行备注 + 删除 */
   gap: 7px;
   align-items: start;
 }
 
-/* 与产品行卡片的内边距对齐，保证表头标签与输入框上下对齐 */
+/* 表头与输入框外框上下对齐（卡片内边距 14），列宽才能和下方行完全一致。 */
 .repeat-header-fields {
   padding: 0 14px;
 }
@@ -63,8 +63,20 @@
   text-align: right;
 }
 
+/* 成本列右侧还有一个“从成本库选择”按钮（30px + 4px 间距），数值在按钮左侧，
+   表头要跟数值右对齐，而不是贴着整个列宽的最右边。 */
+.repeat-header-fields > :nth-child(8) {
+  padding-right: 43px;
+}
+
 .repeat-header-fields > :nth-child(9) {
   text-align: center;
+}
+
+/* 左对齐的列：表头名称要与输入框里的文字对齐（输入框边框 1 + 内边距 11），
+   否则名称比下面输入的内容偏左一截。带按钮的成本列在下面单独处理。 */
+.repeat-header-fields > :is(:nth-child(1), :nth-child(2), :nth-child(4), :nth-child(7)) {
+  padding-left: 12px;
 }
 
 /* 数值列右对齐：位数对齐便于扫读，定宽窄列也能容纳 4 位整数 + 两位小数。 */

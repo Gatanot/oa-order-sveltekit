@@ -538,9 +538,12 @@ html body :is(button, [tabindex])[data-cc-pointer-focus="true"]:focus-visible { 
   .desktop-order-table .order-date-column { width: 100px; font-variant-numeric: tabular-nums; }
   .desktop-order-table .order-payment-column { width: 66px; }
   .desktop-order-table .order-status-column { width: 70px; }
-  .desktop-order-table .order-action-column { width: 108px; min-width: 0; overflow: visible; }
+  /* 操作列的表头和按钮统一左对齐：表头文字靠左，图标也贴着同一起点排，
+     列宽按 3 个 30px 按钮 + 2 个 4px 间距 + 两侧 8px 内边距（114px）给足，避免按钮回挤或被裁。 */
+  .desktop-order-table .order-action-column { width: 114px; min-width: 0; overflow: visible; }
   .desktop-order-table .bulk-selected :is(.order-index-column, .order-info-column, .order-action-column) { background: var(--blue-soft); }
-  .desktop-order-table .order-row-actions { justify-content: flex-end; gap: 2px; }
+  /* 操作列的表头和图标统一左对齐：图标按钮满改 30px，左移半个内边距让图标的视觉左边缘与表头文字对齐。 */
+  .desktop-order-table .order-row-actions { justify-content: flex-start; gap: 4px; margin-left: -7px; }
   .desktop-order-table .order-row-actions .icon-control { width: 30px; min-width: 30px; height: 30px; min-height: 30px; flex-basis: 30px; }
   .desktop-order-table :is(.order-info-column, .order-project-column) b { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; white-space: normal; line-height: 1.4; overflow-wrap: anywhere; }
   .desktop-order-table :is(.order-info-column, .order-project-column) small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 3px; }
@@ -551,7 +554,7 @@ html body :is(button, [tabindex])[data-cc-pointer-focus="true"]:focus-visible { 
   .desktop-order-table.extra-columns .order-info-column { width: 220px; min-width: 220px; }
   .desktop-order-table.extra-columns .order-project-column { min-width: 150px; }
   /* 勾了额外列后表格必然横向滚动，右侧固定列会盖住最后一列数据，这里让操作列跟着表格一起滑。 */
-  .desktop-order-table.extra-columns .order-action-column { position: static; min-width: 108px; box-shadow: none; }
+  .desktop-order-table.extra-columns .order-action-column { position: static; min-width: 114px; box-shadow: none; }
   .desktop-order-table.extra-columns th.order-action-column { z-index: auto; }
 }
 /* 内容区放不下整张表时（窄窗口）表格会横向滑动，此时右侧固定的操作列会盖住“状态/结款状态”；
