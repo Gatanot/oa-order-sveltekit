@@ -58,6 +58,29 @@ function sanitizeLines(lines: Array<Record<string, unknown>>, nameKey: string): 
   return lines.filter((item) => text(item[nameKey]));
 }
 
+/**
+ * 额外成本是订单行内部的机动补充：只保存名称、供应商、单位和金额快照，
+ * 不关联 catalog_quote_items/catalog_cost_items，编辑和再次保存时也不会被资料库覆盖。
+ */
+function normalizeExtraCosts(value: unknown): Array<Record<string, unknown>> {
+  const rows = Array.isArray(value) ? value as Array<Record<string, unknown>> : [];
+  return rows.map((item) => {
+    const quantity = Number(item.quantity ?? 1);
+    const rawAmount = item.amount;
+    const hasAmount = rawAmount !== undefined && rawAmount !== null && String(rawAmount).trim() !== '';
+    const divisor = Number.isFinite(quantity) && quantity > 0 ? quantity : 1;
+    const unitPrice = hasAmount ? Number(rawAmount) / divisor : Number(item.unit_price ?? 0);
+    return { name: text(item.name), vendor: text(item.vendor), unit: text(item.unit) || '项', quantity, unit_price: unitPrice };
+  }).filter((item) => item.name || item.vendor || (Number.isFinite(Number(item.unit_price)) && Number(item.unit_price) > 0));
+}
+
+function flattenExtraCosts(products: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return products.flatMap((product) => normalizeExtraCosts(product.extra_costs).map((extra) => ({
+    ...extra,
+    name: text(extra.name) || text(product.name) || '订单产品'
+  })));
+}
+
 /** 明细为空时的回退解析：空/缺省金额视为 0，非法值仍然报错。 */
 function optionalMoneyToCents(value: unknown): number {
   if (value === '' || value === null || value === undefined) return 0;
@@ -894,6 +917,18 @@ export function getOrderDb() {
       const v35Violations = instance.pragma('foreign_key_check') as Array<Record<string, unknown>>;
       if (v35Violations.length) throw new Error(`v35 迁移后存在 ${v35Violations.length} 条外键异常`);
     }
+    // v36：订单产品行支持额外成本。额外成本作为 order_costs 的补充行保存，
+    // parent_line_id 指向所属产品行，保留供应商和金额快照，不要求匹配报价/成本库。
+    if (appVersion < 36) {
+      instance.transaction(() => {
+        const costColumns = new Set((instance!.pragma('table_info(order_costs)') as Array<{ name: string }>).map((column) => column.name));
+        if (!costColumns.has('parent_line_id')) instance!.exec("ALTER TABLE order_costs ADD COLUMN parent_line_id TEXT NOT NULL DEFAULT ''");
+        instance!.exec(`
+          CREATE INDEX IF NOT EXISTS idx_order_costs_parent ON order_costs(order_id,parent_line_id);
+          UPDATE schema_meta SET value='36' WHERE key='order_app_version';
+        `);
+      })();
+    }
     importBundledExcel(instance);
   }
   return instance;
@@ -1035,7 +1070,45 @@ export function listCatalogSources() {
   return getOrderDb().prepare(`SELECT cs.*,
       CASE cs.kind WHEN 'cost' THEN (SELECT COUNT(*) FROM catalog_cost_items ki WHERE ki.source_id=cs.id AND ki.active=1)
         ELSE (SELECT COUNT(*) FROM catalog_quote_items qi WHERE qi.source_id=cs.id AND qi.active=1) END AS item_count
-    FROM catalog_sources cs ORDER BY cs.kind,cs.owner_name,cs.library_name,cs.updated_at DESC`).all();
+    FROM catalog_sources cs WHERE cs.active=1 ORDER BY cs.kind,cs.owner_name,cs.library_name,cs.updated_at DESC`).all();
+}
+
+type CatalogActor = { name?: string; uid?: number | null };
+
+/** 报价库/成本库的条目只做软删除（active=0）：订单里的历史行仍保留引用，列表默认不再展示。 */
+export function deleteCatalogItem(kind: unknown, id: unknown, actor?: CatalogActor) {
+  const table = text(kind) === 'cost' ? 'catalog_cost_items' : text(kind) === 'quote' ? 'catalog_quote_items' : '';
+  const targetId = text(id);
+  if (!table || !targetId) throw new Error('资料条目不存在或已被删除');
+  const db = getOrderDb();
+  const row = db.prepare(`SELECT id,name FROM ${table} WHERE id=? AND active=1`).get(targetId) as { id: string; name: string } | undefined;
+  if (!row) throw new Error('资料条目不存在或已被删除');
+  db.prepare(`UPDATE ${table} SET active=0 WHERE id=?`).run(targetId);
+  recordAudit(db, {
+    actorName: actor?.name, actorUid: actor?.uid, action: 'delete_catalog_item',
+    entityType: table === 'catalog_cost_items' ? 'catalog_cost_item' : 'catalog_quote_item',
+    entityId: targetId, detail: { name: row.name, kind: table === 'catalog_cost_items' ? 'cost' : 'quote' }
+  });
+  return { id: targetId, name: row.name };
+}
+
+/** 删除整个资料库来源：来源标记失效，其下条目一并软删除，订单里已保存的报价/成本不受影响。 */
+export function deleteCatalogSource(id: unknown, actor?: CatalogActor) {
+  const targetId = text(id);
+  if (!targetId) throw new Error('资料库不存在或已被删除');
+  const db = getOrderDb();
+  const source = db.prepare('SELECT id,kind,owner_name,library_name FROM catalog_sources WHERE id=? AND active=1').get(targetId) as { id: string; kind: string; owner_name: string; library_name: string } | undefined;
+  if (!source) throw new Error('资料库不存在或已被删除');
+  db.transaction(() => {
+    db.prepare('UPDATE catalog_quote_items SET active=0 WHERE source_id=?').run(targetId);
+    db.prepare('UPDATE catalog_cost_items SET active=0 WHERE source_id=?').run(targetId);
+    db.prepare('UPDATE catalog_sources SET active=0,updated_at=? WHERE id=?').run(now(), targetId);
+    recordAudit(db, {
+      actorName: actor?.name, actorUid: actor?.uid, action: 'delete_catalog_source', entityType: 'catalog_source', entityId: targetId,
+      detail: { kind: source.kind, owner_name: source.owner_name, library_name: source.library_name }
+    });
+  })();
+  return { id: targetId };
 }
 
 export function createCatalogSource(data: Record<string, unknown>) {
@@ -1360,21 +1433,29 @@ function syncNormalizedOrderLines(db: Database.Database, orderId: string, produc
   db.prepare('DELETE FROM order_products WHERE order_id=?').run(orderId);
   db.prepare('DELETE FROM order_costs WHERE order_id=?').run(orderId);
   const productInsert = db.prepare('INSERT INTO order_products(id,order_id,position,catalog_item_id,name,specification,remark,unit,quantity,unit_price,subtotal) VALUES(?,?,?,?,?,?,?,?,?,?,?)');
-  const costInsert = db.prepare('INSERT INTO order_costs(id,order_id,position,catalog_item_id,name,vendor,unit,quantity,unit_price,subtotal) VALUES(?,?,?,?,?,?,?,?,?,?)');
+  const costInsert = db.prepare('INSERT INTO order_costs(id,order_id,position,catalog_item_id,name,vendor,unit,quantity,unit_price,subtotal,parent_line_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)');
   products.forEach((item, index) => productInsert.run(lineIds[index], orderId, index, text(item.catalog_id) || null, text(item.name), text(item.specification), text(item.remark), text(item.unit) || '项', Number(item.quantity || 1), optionalMoneyToCents(item.unit_price), moneyToCents(lineTotalYuan(item))));
   // 成本单价允许由行成本合计反算（可能超过两位小数），入库时四舍五入到分，行小计仍按合计金额保存。
-  costs.forEach((item, index) => costInsert.run(uuid(), orderId, index, text(item.catalog_id) || null, text(item.name), text(item.vendor), text(item.unit) || '项', Number(item.quantity || 1), Math.round(Number(item.unit_price || 0) * 100), moneyToCents(lineTotalYuan(item))));
+  costs.forEach((item, index) => costInsert.run(uuid(), orderId, index, text(item.catalog_id) || null, text(item.name), text(item.vendor), text(item.unit) || '项', Number(item.quantity || 1), Math.round(Number(item.unit_price || 0) * 100), moneyToCents(lineTotalYuan(item)), ''));
+  // 额外成本跟在主成本之后写入，parent_line_id 指回产品行，便于详情/编辑按产品归组。
+  let position = costs.length;
+  products.forEach((product, index) => {
+    for (const extra of normalizeExtraCosts(product.extra_costs)) {
+      costInsert.run(uuid(), orderId, position++, null, text(extra.name) || text(product.name) || '订单产品', text(extra.vendor), text(extra.unit) || '项', Number(extra.quantity || 1), Math.round(Number(extra.unit_price || 0) * 100), moneyToCents(lineTotalYuan(extra)), lineIds[index]);
+    }
+  });
   return lineIds;
 }
 
 type AdvanceActor = { name: string; uid: number | null };
 
-/** 个人垫付的报销金额取该行成本合计（数量 × 成本单价）。 */
+/** 个人垫付的报销金额取该行成本合计（主成本 + 额外成本）。 */
 function advanceLineAmount(item: Record<string, unknown>): number {
   const quantity = Number(item.quantity);
   const costUnit = Number(item.cost_unit);
   if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(costUnit) || costUnit < 0) return 0;
-  return Math.round(quantity * costUnit * 100);
+  const extras = normalizeExtraCosts(item.extra_costs).reduce((sum, extra) => sum + Math.round(Number(extra.quantity || 0) * Number(extra.unit_price || 0) * 100), 0);
+  return Math.round(quantity * costUnit * 100) + extras;
 }
 
 function advanceItemName(item: Record<string, unknown>): string {
@@ -1441,9 +1522,22 @@ function hydrateOrder(row: Record<string, unknown>): Record<string, any> {
   const db = getOrderDb();
   const normalizedProducts = db.prepare(`SELECT op.id AS line_id,op.catalog_item_id AS catalog_id,op.name,op.specification,op.remark,op.unit,op.quantity,op.unit_price / 100.0 AS unit_price,op.subtotal / 100.0 AS subtotal,qi.category
     FROM order_products op LEFT JOIN catalog_quote_items qi ON qi.id=op.catalog_item_id WHERE op.order_id=? ORDER BY op.position`).all(row.id) as Array<Record<string, unknown>>;
-  const normalizedCosts = db.prepare('SELECT catalog_item_id AS catalog_id,name,vendor,unit,quantity,unit_price / 100.0 AS unit_price,subtotal / 100.0 AS subtotal FROM order_costs WHERE order_id=? ORDER BY position').all(row.id) as Array<Record<string, unknown>>;
-  const products = normalizedProducts.length ? normalizedProducts : parseList(row.products_json);
-  const costs = normalizedCosts.length ? normalizedCosts : parseList(row.costs_json);
+  const normalizedCosts = db.prepare('SELECT catalog_item_id AS catalog_id,parent_line_id,name,vendor,unit,quantity,unit_price / 100.0 AS unit_price,subtotal / 100.0 AS subtotal FROM order_costs WHERE order_id=? ORDER BY position').all(row.id) as Array<Record<string, unknown>>;
+  const rawCosts: Array<Record<string, unknown>> = normalizedCosts.length ? normalizedCosts : parseList(row.costs_json).map((cost) => ({ parent_line_id: '', ...(cost as Record<string, unknown>) }));
+  // 额外成本不混入订单级主成本列表，而是挂回所属产品行，详情和编辑页可以按行展示/维护。
+  const costs = rawCosts.filter((cost) => !text(cost.parent_line_id)).map(({ parent_line_id, ...cost }) => cost);
+  const pendingExtras = new Map<string, Array<Record<string, unknown>>>();
+  for (const cost of rawCosts) {
+    const parent = text(cost.parent_line_id);
+    if (!parent) continue;
+    const list = pendingExtras.get(parent) || [];
+    list.push({ ...cost, amount: Number(cost.subtotal ?? Number(cost.quantity || 0) * Number(cost.unit_price || 0)) });
+    pendingExtras.set(parent, list);
+  }
+  const products = (normalizedProducts.length ? normalizedProducts : parseList(row.products_json)).map((product): Record<string, any> => ({
+    ...product,
+    extra_costs: pendingExtras.get(text(product.line_id)) || normalizeExtraCosts(product.extra_costs).map((extra) => ({ ...extra, amount: Number(extra.quantity || 0) * Number(extra.unit_price || 0) }))
+  }));
   const advances = (db.prepare(`SELECT r.id,r.employee,r.item,r.amount / 100.0 AS amount,r.advance_date AS date,r.invoice,r.note,r.status,r.source_line_id,
     (SELECT ra.id FROM reimbursement_attachments ra WHERE ra.reimbursement_id=r.id ORDER BY ra.created_at DESC LIMIT 1) AS attachment_id,
     (SELECT COUNT(*) FROM reimbursement_attachments ra WHERE ra.reimbursement_id=r.id) AS attachment_count
@@ -1657,7 +1751,7 @@ export function deleteCustomerProfile(id: unknown, actor?: CustomerProfileActor)
   const usage = db.prepare(`SELECT
       (SELECT COUNT(*) FROM orders_simple WHERE customer_id=?) AS orders,
       (SELECT COUNT(*) FROM projects_simple WHERE customer_id=?) AS projects,
-      (SELECT COUNT(*) FROM catalog_sources WHERE kind='quote' AND owner_name=?) AS sources`)
+      (SELECT COUNT(*) FROM catalog_sources WHERE kind='quote' AND active=1 AND owner_name=?) AS sources`)
     .get(targetId, targetId, existing.name) as { orders: number; projects: number; sources: number };
   if (usage.orders || usage.projects || usage.sources) throw new Error('该客户已有订单、项目或报价库，不能删除');
   db.prepare('DELETE FROM customer_profiles WHERE id=?').run(targetId);
@@ -1975,6 +2069,22 @@ export function createProject(data: CreateProjectInput) {
   })();
 }
 
+/** 删除项目：系统归档项目「非分配项目」不可删，项目下还有订单时也不可删。 */
+export function deleteProject(id: unknown, actor?: { name?: string; uid?: number | null }) {
+  const targetId = text(id);
+  if (!targetId) throw new Error('项目不存在或已被删除');
+  const db = getOrderDb();
+  const project = db.prepare(`SELECT p.id,p.name,p.customer_id,
+      (SELECT COUNT(*) FROM orders_simple o WHERE o.project_id=p.id) AS order_count
+    FROM projects_simple p WHERE p.id=?`).get(targetId) as { id: string; name: string; customer_id: string; order_count: number } | undefined;
+  if (!project) throw new Error('项目不存在或已被删除');
+  if (project.name === unassignedProjectName) throw new Error('「非分配项目」是系统归档项目，不能删除');
+  if (project.order_count > 0) throw new Error(`该项目下还有 ${project.order_count} 张订单，不能删除`);
+  db.prepare('DELETE FROM projects_simple WHERE id=?').run(targetId);
+  recordAudit(db, { actorName: actor?.name, actorUid: actor?.uid, action: 'delete_project', entityType: 'project', entityId: targetId, detail: { name: project.name, customer_id: project.customer_id } });
+  return { id: targetId, name: project.name };
+}
+
 // 未填写项目时使用的虚拟项目：按客户分别归档，避免和新订单的客户信息脱节。
 const unassignedProjectName = '非分配项目';
 function ensureUnassignedProject(db: Database.Database, customerId: string) {
@@ -2006,10 +2116,11 @@ export function createOrder(data: Record<string, unknown>) {
   const designer = text(data.designer);
   const planner = text(data.planner);
   const executionCompany = text(data.execution_company);
-  const products = sanitizeLines(Array.isArray(data.products) ? data.products as Array<Record<string, unknown>> : [], 'name');
+  const products = sanitizeLines(Array.isArray(data.products) ? data.products as Array<Record<string, unknown>> : [], 'name').map((item): Record<string, unknown> => ({ ...item, extra_costs: normalizeExtraCosts(item.extra_costs) }));
   const costs = sanitizeLines(Array.isArray(data.costs) ? data.costs as Array<Record<string, unknown>> : [], 'name');
+  const extraCosts = flattenExtraCosts(products);
   if (!products.length) throw new Error('请至少填写一项产品');
-  for (const item of [...products, ...costs]) {
+  for (const item of [...products, ...costs, ...extraCosts]) {
     if (!Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0) throw new Error('产品和成本数量必须大于 0');
     if (!Number.isFinite(Number(item.unit_price)) || Number(item.unit_price) < 0) throw new Error('产品和成本单价不能为负数');
   }
@@ -2031,7 +2142,8 @@ export function createOrder(data: Record<string, unknown>) {
   const date = String(data.order_date || todayInBizTZ());
   const code = `ORD-${date.replaceAll('-', '')}-${id.slice(0, 6).toUpperCase()}`;
   const quoteCents = products.length ? products.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0) : optionalMoneyToCents(data.quote_amount);
-  const costCents = costs.length ? costs.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0) : optionalMoneyToCents(data.cost_amount);
+  const allCostLines = [...costs, ...extraCosts];
+  const costCents = allCostLines.length ? allCostLines.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0) : optionalMoneyToCents(data.cost_amount);
   db.transaction(() => {
     db.prepare('INSERT INTO orders_simple(id,code,customer_id,project_id,service_name,quantity,unit,quote_amount,cost_amount,order_date,created_by,status,note,created_at,specification,is_extra,delivery_date,order_source,designer,planner,payment_status,products_json,costs_json,idempotency_key,execution_company) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id, code, customerId, projectId, serviceName, quantity, String(data.unit || products[0]?.unit || '项'), quoteCents, costCents, date, String(data.created_by || '填写人'), normalizeOrderStatus(data.status), String(data.note || '').trim(), created, text(data.specification || products[0]?.specification), data.is_extra ? 1 : 0, deliveryDate, orderSource, designer, planner, text(data.payment_status) || '未结款', JSON.stringify(products), JSON.stringify(costs), idempotencyKey, executionCompany);
     const lineIds = syncNormalizedOrderLines(db, id, products, costs);
@@ -2044,16 +2156,18 @@ export function updateOrder(id: string, data: Record<string, unknown>) {
   const db = getOrderDb();
   const existing = db.prepare('SELECT * FROM orders_simple WHERE id=?').get(id) as Record<string, unknown> | undefined;
   if (!existing) throw new Error('ORDER_NOT_FOUND');
-  const existingProducts = db.prepare('SELECT id AS line_id,catalog_item_id AS catalog_id,name,specification,remark,unit,quantity,unit_price / 100.0 AS unit_price,subtotal / 100.0 AS subtotal FROM order_products WHERE order_id=? ORDER BY position').all(id) as Array<Record<string, unknown>>;
-  const existingCosts = db.prepare('SELECT catalog_item_id AS catalog_id,name,vendor,unit,quantity,unit_price / 100.0 AS unit_price,subtotal / 100.0 AS subtotal FROM order_costs WHERE order_id=? ORDER BY position').all(id) as Array<Record<string, unknown>>;
-  const products = sanitizeLines(Array.isArray(data.products) ? data.products as Array<Record<string, unknown>> : existingProducts.length ? existingProducts : parseList(existing.products_json), 'name');
+  const existingHydrated = hydrateOrder(existing);
+  const existingProducts = existingHydrated.products as Array<Record<string, unknown>>;
+  const existingCosts = existingHydrated.costs as Array<Record<string, unknown>>;
+  const products = sanitizeLines(Array.isArray(data.products) ? data.products as Array<Record<string, unknown>> : existingProducts.length ? existingProducts : parseList(existing.products_json), 'name').map((item): Record<string, unknown> => ({ ...item, extra_costs: normalizeExtraCosts(item.extra_costs) }));
   const costs = sanitizeLines(Array.isArray(data.costs) ? data.costs as Array<Record<string, unknown>> : existingCosts.length ? existingCosts : parseList(existing.costs_json), 'name');
+  const extraCosts = flattenExtraCosts(products);
   if (!products.length) throw new Error('请至少保留一项产品');
   const deliveryDate = text(data.delivery_date);
   const designer = text(data.designer);
   const planner = text(data.planner);
   const executionCompany = text(data.execution_company);
-  for (const item of [...products, ...costs]) {
+  for (const item of [...products, ...costs, ...extraCosts]) {
     if (!Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0) throw new Error('产品和成本数量必须大于 0');
     if (!Number.isFinite(Number(item.unit_price)) || Number(item.unit_price) < 0) throw new Error('产品和成本单价不能为负数');
   }
@@ -2065,7 +2179,7 @@ export function updateOrder(id: string, data: Record<string, unknown>) {
     uid: Number.isSafeInteger(Number(data.advance_employee_uid)) && Number(data.advance_employee_uid) > 0 ? Number(data.advance_employee_uid) : null
   };
   const quote = products.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0);
-  const cost = costs.reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0);
+  const cost = [...costs, ...extraCosts].reduce((sum, item) => sum + moneyToCents(lineTotalYuan(item)), 0);
   const service = products.map((item) => text(item.name)).filter(Boolean).join('、') || text(data.service_name) || String(existing.service_name);
   const requestedProjectId = Object.hasOwn(data, 'project_id') ? text(data.project_id) : text(existing.project_id);
   const targetProject = requestedProjectId
@@ -2430,6 +2544,30 @@ export function getReimbursementAttachment(attachmentId: string) {
 
 export function getOrderAttachment(attachmentId: string) {
   return getOrderDb().prepare('SELECT id,order_id,file_name,mime_type,file_size,storage_path,created_at FROM order_attachments WHERE id=?').get(attachmentId);
+}
+
+/** 删除单个订单附件（含磁盘文件）。权限由调用方校验。 */
+export function deleteOrderAttachment(attachmentId: string, actor?: { name?: string; uid?: number | null }) {
+  const db = getOrderDb();
+  const row = db.prepare('SELECT id,order_id,file_name,storage_path FROM order_attachments WHERE id=?').get(attachmentId) as { id: string; order_id: string; file_name: string; storage_path: string } | undefined;
+  if (!row) throw new Error('附件不存在或已被删除');
+  const result = db.prepare('DELETE FROM order_attachments WHERE id=?').run(attachmentId);
+  if (!result.changes) throw new Error('附件不存在或已被删除');
+  removeAttachmentFile(row.storage_path);
+  recordAudit(db, { actorName: actor?.name, actorUid: actor?.uid, action: 'delete_attachment', entityType: 'order', entityId: row.order_id, detail: { attachment_id: row.id, file_name: row.file_name } });
+  return { id: row.id, order_id: row.order_id, file_name: row.file_name };
+}
+
+/** 删除单张报销票据（含磁盘文件）。权限由调用方校验。 */
+export function deleteReimbursementAttachment(attachmentId: string, actor?: { name?: string; uid?: number | null }) {
+  const db = getOrderDb();
+  const row = db.prepare('SELECT id,reimbursement_id,file_name,storage_path FROM reimbursement_attachments WHERE id=?').get(attachmentId) as { id: string; reimbursement_id: string; file_name: string; storage_path: string } | undefined;
+  if (!row) throw new Error('附件不存在或已被删除');
+  const result = db.prepare('DELETE FROM reimbursement_attachments WHERE id=?').run(attachmentId);
+  if (!result.changes) throw new Error('附件不存在或已被删除');
+  removeAttachmentFile(row.storage_path);
+  recordAudit(db, { actorName: actor?.name, actorUid: actor?.uid, action: 'delete_attachment', entityType: 'reimbursement', entityId: row.reimbursement_id, detail: { attachment_id: row.id, file_name: row.file_name } });
+  return { id: row.id, reimbursement_id: row.reimbursement_id, file_name: row.file_name };
 }
 
 export function readAttachmentFile(row: { storage_path: string }): Buffer {

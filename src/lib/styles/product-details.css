@@ -21,8 +21,20 @@
 .repeat-row.editor-row,
 .repeat-header-fields {
   display: grid;
-  grid-template-columns: minmax(0, 1.8fr) minmax(0, 1.2fr) 76px 68px 92px 92px minmax(0, .9fr) 104px 78px 34px;
-  gap: 8px;
+  /* 列宽分配：规格和技术要求是行里信息量最大的自由文本列，独占最多的弹性空间；
+     数量/单位/单价/小计/成本/垫付/删除按实际内容压到最小定宽，把宽度让给产品名称和规格。 */
+  grid-template-columns:
+    minmax(140px, 1.1fr)   /* 产品名称 */
+    minmax(170px, 2.5fr)   /* 规格和技术要求 */
+    62px                   /* 数量 */
+    66px                   /* 单位 */
+    82px                   /* 单价 */
+    82px                   /* 小计 */
+    minmax(84px, .75fr)    /* 供应商 */
+    100px                  /* 成本 */
+    40px                   /* 个人垫付 */
+    104px;                 /* 额外成本 + 行备注 + 删除 */
+  gap: 7px;
   align-items: start;
 }
 
@@ -38,6 +50,38 @@
 
 .repeat-header.editor-row .row-index-head {
   text-align: center;
+}
+
+/* 表头与输入对齐：规格是主字段（加深字重），定宽数值列的表头右对齐到同列数值右侧。 */
+.repeat-header-fields > .head-spec {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.repeat-header-fields > :is(:nth-child(3), :nth-child(5), :nth-child(6), :nth-child(8)) {
+  padding-right: 8px;
+  text-align: right;
+}
+
+.repeat-header-fields > :nth-child(9) {
+  text-align: center;
+}
+
+/* 数值列右对齐：位数对齐便于扫读，定宽窄列也能容纳 4 位整数 + 两位小数。 */
+.product-row input[type="number"],
+.product-row input[readonly] {
+  padding-inline: 8px;
+  text-align: right;
+}
+
+/* 产品名称列的对勾标记只保留图标（说明放在 title 里），把输入宽度还给产品名。 */
+.product-name-cell .autocomplete-field.catalog-matched input {
+  padding-right: 38px;
+}
+
+/* 供应商/成本列没有位置再放角标：命中成本库时只用绿色描边和底色提示，不再为角标留白。 */
+.repeat-row > .autocomplete-field.catalog-matched input {
+  padding-right: 11px;
 }
 
 /* 产品名称单元格：输入框与“已匹配”标记并排 */
@@ -108,18 +152,21 @@
   width: 100%;
 }
 
-/* 规格和技术要求与其它字段同高，默认只占一行；内容多时在框内滚动。 */
+/* 规格和技术要求：默认与其它字段同高（36px），随内容自动增高到约 4 行，再多则在框内滚动。
+   高度由组件里的 autosize 逻辑写入行内样式，这里给出上下限兜底。 */
 .product-spec-cell .product-spec-field {
   height: 36px;
   min-height: 36px;
+  max-height: 90px;
   padding-block: 7px;
+  overflow-y: auto;
   line-height: 1.4;
   resize: none;
 }
 
-/* 行备注独占产品行下方的整行，使用单行输入。 */
+/* 行备注是选填项：默认收在行尾按钮里，展开后单独占一行并铺满整行，不再为每行产品预留空行。 */
 .product-remark-field {
-  grid-column: 1 / 9;
+  grid-column: 1 / -1;
   width: 100%;
   max-width: 100%;
   min-height: 32px;
@@ -128,15 +175,184 @@
   font-size: 12px;
 }
 
-/* 删除按钮固定为 34px，避免超出最后一列或被卡片裁切。 */
-.product-row .delete-action {
-  width: 34px;
-  min-width: 34px;
-  height: 34px;
-  min-height: 34px;
+/* 额外成本：作为产品行下方的补充卡片，沿用下单明细的白底、圆角和输入框规格。 */
+.extra-cost-editor {
+  grid-column: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: -2px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.extra-cost-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 16px;
+}
+
+.extra-cost-heading > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.extra-cost-heading b {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.extra-cost-heading small {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.extra-cost-heading > span {
+  color: var(--blue-strong, var(--blue));
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.extra-cost-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.extra-cost-columns,
+.extra-cost-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.15fr) minmax(140px, 1fr) 150px 32px;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 与下单明细表头一致：小号灰字，帮助明确每列含义。 */
+.extra-cost-columns {
+  padding: 0 2px;
+  color: #66758b;
+  font-size: 11.5px;
+}
+
+.extra-cost-columns > span:nth-child(3) {
+  padding-right: 8px;
+  text-align: right;
+}
+
+.extra-cost-row input {
+  width: 100%;
+  min-width: 0;
+}
+
+/* 与下单明细行内输入保持一致：同一套全局控件高度、底色和圆角。 */
+.order-app .extra-cost-row input {
+  border-radius: 6px;
+}
+
+.extra-cost-row input[type="number"] {
+  text-align: right;
+}
+
+.extra-cost-row .delete-action {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
   padding: 0;
-  justify-self: center;
-  align-self: start;
+}
+
+/* 额外成本开关：与行备注按钮并列，有内容时显示蓝底和条数角标。 */
+.extra-cost-toggle {
+  position: relative;
+  color: #9aa7ba;
+  cursor: pointer;
+}
+
+.extra-cost-toggle:hover {
+  background: #eef3fb;
+  color: var(--blue);
+}
+
+.extra-cost-toggle.has-content {
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 9%, #fff);
+}
+
+.extra-cost-toggle.has-content:hover {
+  background: color-mix(in srgb, var(--blue) 16%, #fff);
+}
+
+.extra-cost-count {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--blue);
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* 末列是“行备注 + 删除”两个图标按钮，与 36px 输入框垂直居中对齐，且不超出卡片右边缘。 */
+.row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.product-row .row-actions > button {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+}
+
+/* 行备注开关：空备注时是浅色图标，写完备注后常亮，提示这一行带了备注。 */
+.remark-toggle {
+  color: #9aa7ba;
+  cursor: pointer;
+}
+
+.remark-toggle:hover {
+  background: #eef3fb;
+  color: var(--blue);
+}
+
+.remark-toggle.is-open {
+  background: #eef3fb;
+  color: var(--blue);
+}
+
+.remark-toggle.has-content {
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 9%, #fff);
+}
+
+.remark-toggle.has-content:hover,
+.remark-toggle.has-content.is-open {
+  background: color-mix(in srgb, var(--blue) 16%, #fff);
 }
 
 /* 个人垫付开关：开启后保存订单会为当前录入人生成该行成本的报销记录。 */
@@ -144,10 +360,12 @@
   display: flex;
   min-width: 0;
   grid-column: 9;
-  grid-row: 1 / span 2;
+  grid-row: 1;
   align-items: center;
   justify-content: center;
-  align-self: center;
+  align-self: start;
+  /* 与 36px 输入框垂直居中对齐；规格框自动增高时开关仍停在首行。 */
+  padding-top: 5px;
 }
 
 .advance-switch {
@@ -215,6 +433,10 @@
   font-size: 11px;
 }
 
+.detail-remark.extra-cost-detail {
+  color: var(--blue);
+}
+
 .advance-detail {
   display: inline-block;
   padding: 2px 7px;
@@ -239,27 +461,78 @@
   font-size: 12px;
   font-weight: 700;
 }
-@media (max-width: 1280px) {
-  .repeat-row.editor-row,
-  .repeat-header-fields {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+/* 窄屏（≤1320px）改成 4 列 3 行：产品名称 + 规格占首行，数量/单位/单价/小计一行，
+   供应商/成本/操作一行；比原来两列十行紧凑一半，表头随之让位给输入框的占位提示。 */
+@media (max-width: 1320px) {
+  .repeat-row.editor-row {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
+
+  .detail-editor .repeat-header {
+    display: none;
+  }
+
+  .repeat-row.editor-row > .product-name-cell,
+  .repeat-row.editor-row > .product-spec-cell,
+  .repeat-row.editor-row > .autocomplete-field:not(.cost-field) {
+    grid-column: span 2;
+  }
+
   .product-spec-cell {
     align-self: start;
   }
+
+  /* 垫付开关与行尾两个图标按钮共用最后一格：开关靠左，按钮靠右。 */
   .advance-cell {
-    grid-column: auto;
-    grid-row: auto;
-    align-self: start;
-    justify-content: flex-start;
+    grid-column: 4;
+    grid-row: 3;
+    justify-self: start;
+    align-self: center;
+    padding-top: 0;
   }
+
+  .row-actions {
+    grid-column: 4;
+    grid-row: 3;
+    justify-self: end;
+    padding-top: 0;
+  }
+
   .product-remark-field {
     grid-column: 1 / -1;
   }
 }
+
 @media (max-width: 700px) {
   .repeat-row.editor-row,
   .repeat-header-fields {
     grid-template-columns: 1fr;
+  }
+
+  .repeat-row.editor-row > :is(.product-name-cell, .product-spec-cell, .autocomplete-field:not(.cost-field), .product-remark-field),
+  .advance-cell,
+  .row-actions {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .row-actions {
+    justify-self: start;
+  }
+
+  .extra-cost-editor {
+    grid-column: 1 / -1;
+  }
+
+  .extra-cost-columns {
+    display: none;
+  }
+
+  .extra-cost-row {
+    grid-template-columns: 1fr;
+  }
+
+  .extra-cost-row .delete-action {
+    justify-self: start;
   }
 }

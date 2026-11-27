@@ -26,7 +26,7 @@
   const somePageSelected = $derived(desk.pagedOrders.some((order: any) => desk.bulkOrderIds.includes(order.id)));
   const hasExtraColumns = $derived(desk.visibleOrderColumns.some((key: string) => ['source', 'designer', 'creator', 'delivery'].includes(key)));
   const hasFilters = $derived([desk.search, desk.filterCustomer, desk.filterProject, desk.filterPayment, desk.filterFrom, desk.filterTo, desk.filterDesigner, desk.filterPlanner, desk.filterOwner, desk.filterCreator].some(Boolean));
-  // 详情按「下单明细」展示：把同名成本并入产品行，只有成本没有产品的历史行单独保留。
+  // 详情按「下单明细」展示：主成本并入产品行；额外成本按所属产品行展示并计入该行成本；只有成本没有产品的历史行单独保留。
   const detailLines = $derived.by(() => {
     const order = desk.detailOrder;
     if (!order) return [];
@@ -36,6 +36,13 @@
       const name = String(product.name || '').trim().toLowerCase();
       const index = name ? pending.findIndex((cost: any) => String(cost.name || '').trim().toLowerCase() === name) : -1;
       const cost = index >= 0 ? pending.splice(index, 1)[0] : null;
+      const primaryCost = cost ? lineTotal(cost) : 0;
+      const extraCosts = (product.extra_costs || []).map((extra: any) => ({
+        name: extra.name || product.name,
+        vendor: extra.vendor || '',
+        amount: Number(extra.amount ?? extra.subtotal ?? Number(extra.quantity || 0) * Number(extra.unit_price || 0))
+      }));
+      const extraCost = extraCosts.reduce((sum: number, extra: any) => sum + extra.amount, 0);
       return {
         line_id: product.line_id,
         name: product.name,
@@ -45,13 +52,15 @@
         unit_price: Number(product.unit_price || 0),
         subtotal: lineTotal(product),
         vendor: cost?.vendor || '',
-        cost: cost ? lineTotal(cost) : 0,
+        cost: primaryCost + extraCost,
+        extra_cost: extraCost,
+        extra_costs: extraCosts,
         advance: Boolean(product.advance),
         remark: product.remark || ''
       };
     });
     for (const cost of pending) {
-      lines.push({ line_id: cost.id, name: cost.name, specification: '', quantity: cost.quantity, unit: cost.unit || '项', unit_price: 0, subtotal: 0, vendor: cost.vendor || '', cost: lineTotal(cost), advance: false, remark: '' });
+      lines.push({ line_id: cost.id, name: cost.name, specification: '', quantity: cost.quantity, unit: cost.unit || '项', unit_price: 0, subtotal: 0, vendor: cost.vendor || '', cost: lineTotal(cost), extra_cost: 0, extra_costs: [], advance: false, remark: '' });
     }
     return lines;
   });
@@ -75,7 +84,7 @@
     <div class="detail-card">
       <div class="section-heading"><div><p class="section-kicker">订单详情</p><h2>{desk.detailOrder.code}</h2><span>{desk.detailOrder.customer_name} · {desk.detailOrder.project_name}</span></div><div class="top-actions"><button class="outline-action" onclick={() => desk.navigate('/orders')}>返回列表</button>{#if desk.canCompleteOrder(desk.detailOrder)}<button class="primary-action" onclick={() => desk.openCompleteOrder(desk.detailOrder)}>标记完成</button>{/if}{#if desk.canWrite}<button class="outline-action" onclick={() => desk.editOrder(desk.detailOrder)}>编辑订单</button>{/if}</div></div>
       <div class="info-grid"><div><small>订单来源</small><b>{desk.detailOrder.order_source || "—"}</b></div><div><small>录入人 / 开单员</small><b>{desk.detailOrder.created_by || "—"}</b></div><div><small>指定设计师</small><b>{desk.detailOrder.designer || "—"}</b></div><div><small>指定策划人</small><b>{desk.detailOrder.planner || "—"}</b></div><div><small>项目负责人</small><b>{desk.detailOrder.project_owner || "—"}</b></div><div><small>执行公司</small><b>{desk.detailOrder.execution_company || "—"}</b></div><div><small>下单日期</small><b>{desk.detailOrder.order_date}</b></div><div><small>交货日期</small><b>{desk.detailOrder.delivery_date || "—"}</b></div><div><small>状态</small><b>{desk.detailOrder.status}</b></div><div><small>结款状态</small><b>{desk.detailOrder.payment_status || "未结款"}</b></div><div><small>销售总额</small><b>{desk.money(desk.detailOrder.quote_amount)}</b></div><div><small>制作成本</small><b>{desk.money(desk.detailOrder.cost_amount)}</b></div><div><small>关联报销</small><b>{desk.money((desk.detailOrder.advances || []).reduce((sum: number, item: any) => sum + Math.round(Number(item.amount || 0) * 100), 0))}</b></div><div><small>预计毛利</small><b>{desk.money(desk.detailOrder.quote_amount - desk.detailOrder.cost_amount - (desk.detailOrder.advances || []).reduce((sum: number, item: any) => sum + Math.round(Number(item.amount || 0) * 100), 0))}</b></div></div>
-      <h3>下单明细</h3><div class="table-panel"><div class="table-scroll"><table><thead><tr><th>序号</th><th>产品名称</th><th>规格和技术要求</th><th>数量</th><th>单位</th><th>单价</th><th>小计</th><th>供应商</th><th>成本</th><th>个人垫付</th></tr></thead><tbody>{#each detailLines as line, i}<tr><td>{i + 1}</td><td>{line.name}</td><td class="detail-spec">{line.specification || "—"}{#if line.remark}<small class="detail-remark">备注：{line.remark}</small>{/if}</td><td>{line.quantity}</td><td>{line.unit}</td><td>{line.unit_price.toFixed(2)}</td><td>{line.subtotal.toFixed(2)}</td><td>{line.vendor || "—"}</td><td>{line.cost.toFixed(2)}</td><td>{#if line.advance}<span class="advance-detail">已垫付</span>{:else}—{/if}</td></tr>{/each}</tbody></table></div></div>
+      <h3>下单明细</h3><div class="table-panel"><div class="table-scroll"><table><thead><tr><th>序号</th><th>产品名称</th><th>规格和技术要求</th><th>数量</th><th>单位</th><th>单价</th><th>小计</th><th>供应商</th><th>成本</th><th>个人垫付</th></tr></thead><tbody>{#each detailLines as line, i}<tr><td>{i + 1}</td><td>{line.name}</td><td class="detail-spec">{line.specification || "—"}{#if line.remark}<small class="detail-remark">备注：{line.remark}</small>{/if}</td><td>{line.quantity}</td><td>{line.unit}</td><td>{line.unit_price.toFixed(2)}</td><td>{line.subtotal.toFixed(2)}</td><td>{line.vendor || "—"}{#each line.extra_costs as extra}<small class="detail-remark extra-cost-detail">补充：{extra.vendor || extra.name || "未填供应商"} ¥{extra.amount.toFixed(2)}</small>{/each}</td><td>{line.cost.toFixed(2)}{#if line.extra_cost > 0}<small class="detail-remark">含额外成本 {line.extra_cost.toFixed(2)}</small>{/if}</td><td>{#if line.advance}<span class="advance-detail">已垫付</span>{:else}—{/if}</td></tr>{/each}</tbody></table></div></div>
       <h3>关联报销</h3>{#if desk.detailOrder.advances?.length}<div class="table-panel"><div class="table-scroll"><table><thead><tr><th>报销人</th><th>报销物品</th><th>垫付日期</th><th>金额</th><th>发票</th><th>状态</th></tr></thead><tbody>{#each desk.detailOrder.advances as advance}<tr><td>{advance.employee || desk.detailOrder.designer || "—"}</td><td>{advance.item || "—"}</td><td>{advance.date || desk.detailOrder.order_date}</td><td>{Number(advance.amount || 0).toFixed(2)}</td><td>{#if advance.attachment_id}<button class="attachment-link" type="button" onclick={() => desk.openAttachmentPreview(desk.reimbursementAttachmentUrl(advance.attachment_id), advance.invoice || '发票附件')}>{advance.invoice || "查看发票"}</button>{:else}{advance.invoice || "未上传"}{/if}</td><td><ReimbursementStatus status={advance.status || "待审核"} /></td></tr>{/each}</tbody></table></div></div>{:else}<p class="empty-table">本订单暂无关联报销，可在“我的报销”中发起报销并关联此订单。</p>{/if}
       <h3>备注 / 制作说明</h3><div class="order-note">{desk.detailOrder.note || "暂无备注。"}</div>
       <h3>设计图</h3>
@@ -88,6 +97,7 @@
               <small>{file.mime_type === "application/pdf" ? "PDF" : "图片"} · {desk.formatFileSize(file.file_size)}</small>
             </button>
             <span class="attachment-date">{formatDateInBizTZ(file.created_at)}</span>
+            {#if desk.canDeleteOrderAttachment(desk.detailOrder)}<button class="attachment-remove" type="button" title="删除该附件" aria-label={`删除附件 ${file.file_name}`} disabled={desk.busy} onclick={() => desk.deleteOrderAttachment(file)}><Trash2 size={13} /></button>{/if}
           </li>{/each}</ul>
       {:else}<p class="empty-table">暂无设计图。设计师完成订单时需上传设计图。</p>{/if}
       <h3>备注附件</h3>
@@ -100,6 +110,7 @@
               <small>{file.mime_type === "application/pdf" ? "PDF" : "图片"} · {desk.formatFileSize(file.file_size)}</small>
             </button>
             <span class="attachment-date">{formatDateInBizTZ(file.created_at)}</span>
+            {#if desk.canDeleteOrderAttachment(desk.detailOrder)}<button class="attachment-remove" type="button" title="删除该附件" aria-label={`删除附件 ${file.file_name}`} disabled={desk.busy} onclick={() => desk.deleteOrderAttachment(file)}><Trash2 size={13} /></button>{/if}
           </li>{/each}</ul>
       {:else}<p class="empty-table">本订单暂无附件。</p>{/if}
     </div>
@@ -161,15 +172,15 @@
       <table class="order-list-table">
         <thead
           ><tr
-            ><th class="order-index-column">{#if desk.bulkMode}<input type="checkbox" aria-label="全选当前页订单" checked={allPageSelected} indeterminate={somePageSelected && !allPageSelected} disabled={desk.bulkRunning} onchange={() => desk.toggleBulkPage()} />{:else}序号{/if}</th><th class="order-info-column">订单信息</th><th class="order-project-column">客户 / 项目</th>{#if desk.visibleOrderColumns.includes("source")}<th>订单来源</th>{/if}{#if desk.visibleOrderColumns.includes("designer")}<th>设计师</th>{/if}{#if desk.visibleOrderColumns.includes("owner")}<th class="order-person-column">负责人</th>{/if}{#if desk.visibleOrderColumns.includes("quote")}<th class="order-money-column">报价</th>{/if}{#if desk.visibleOrderColumns.includes("cost")}<th class="order-money-column">成本</th>{/if}{#if desk.visibleOrderColumns.includes("creator")}<th>录入人</th>{/if}{#if desk.visibleOrderColumns.includes("date")}<th class="order-date-column">日期</th>{/if}{#if desk.visibleOrderColumns.includes("delivery")}<th>交货日期</th>{/if}{#if desk.visibleOrderColumns.includes("payment")}<th class="order-payment-column">结款状态</th>{/if}{#if desk.visibleOrderColumns.includes("status")}<th class="order-status-column">状态</th>{/if}<th class="order-action-column">操作</th></tr
+            ><th class="order-index-column">{#if desk.bulkMode}<input type="checkbox" aria-label="全选当前页订单" checked={allPageSelected} indeterminate={somePageSelected && !allPageSelected} disabled={desk.bulkRunning} onchange={() => desk.toggleBulkPage()} />{:else}序号{/if}</th><th class="order-project-column">项目 / 客户</th><th class="order-info-column">订单信息</th>{#if desk.visibleOrderColumns.includes("source")}<th>订单来源</th>{/if}{#if desk.visibleOrderColumns.includes("designer")}<th>设计师</th>{/if}{#if desk.visibleOrderColumns.includes("owner")}<th class="order-person-column">负责人</th>{/if}{#if desk.visibleOrderColumns.includes("quote")}<th class="order-money-column">报价</th>{/if}{#if desk.visibleOrderColumns.includes("cost")}<th class="order-money-column">成本</th>{/if}{#if desk.visibleOrderColumns.includes("creator")}<th>录入人</th>{/if}{#if desk.visibleOrderColumns.includes("date")}<th class="order-date-column">日期</th>{/if}{#if desk.visibleOrderColumns.includes("delivery")}<th>交货日期</th>{/if}{#if desk.visibleOrderColumns.includes("payment")}<th class="order-payment-column">结款状态</th>{/if}{#if desk.visibleOrderColumns.includes("status")}<th class="order-status-column">状态</th>{/if}<th class="order-action-column">操作</th></tr
           ></thead
         ><tbody
-          >{#each desk.pagedOrders as order, i}<tr class="order-click-row" class:bulk-selected={desk.bulkMode && desk.bulkOrderIds.includes(order.id)} aria-pressed={desk.bulkMode ? desk.bulkOrderIds.includes(order.id) : undefined} tabindex="0" role="button" aria-label={`查看订单 ${order.service_name}`} onclick={() => activateRow(order)} onkeydown={(event) => openRow(event, order)}><td class="order-index-column">{#if desk.bulkMode}<input type="checkbox" aria-label={`选择订单 ${order.code}`} checked={desk.bulkOrderIds.includes(order.id)} disabled={desk.bulkRunning} onchange={() => desk.toggleBulkOrder(order.id)} onclick={(event) => event.stopPropagation()} />{:else}{(desk.orderPage - 1) * desk.orderPageSize + i + 1}{/if}</td><td class="order-info-column"
+          >{#each desk.pagedOrders as order, i}<tr class="order-click-row" class:bulk-selected={desk.bulkMode && desk.bulkOrderIds.includes(order.id)} aria-pressed={desk.bulkMode ? desk.bulkOrderIds.includes(order.id) : undefined} tabindex="0" role="button" aria-label={`查看订单 ${order.service_name}`} onclick={() => activateRow(order)} onkeydown={(event) => openRow(event, order)}><td class="order-index-column">{#if desk.bulkMode}<input type="checkbox" aria-label={`选择订单 ${order.code}`} checked={desk.bulkOrderIds.includes(order.id)} disabled={desk.bulkRunning} onchange={() => desk.toggleBulkOrder(order.id)} onclick={(event) => event.stopPropagation()} />{:else}{(desk.orderPage - 1) * desk.orderPageSize + i + 1}{/if}</td><td class="order-project-column" title={`${order.project_name} · ${order.customer_name}`}
+                ><b>{order.project_name}</b><small>{order.customer_name}</small
+                ></td
+              ><td class="order-info-column"
                 title={`${order.service_name} · ${order.code}`}><b>{order.service_name}</b><small
                   >{order.code} · {order.quantity}{order.unit}</small
-                ></td
-              ><td class="order-project-column" title={`${order.customer_name} · ${order.project_name}`}
-                ><b>{order.customer_name}</b><small>{order.project_name}</small
                 ></td
               >{#if desk.visibleOrderColumns.includes("source")}<td title={order.order_source || "—"}>{order.order_source || "—"}</td>{/if}{#if desk.visibleOrderColumns.includes("designer")}<td title={order.designer || "—"}>{order.designer || "—"}</td>{/if}{#if desk.visibleOrderColumns.includes("owner")}<td class="order-person-column" title={order.project_owner || "未分配"}>{order.project_owner || "未分配"}</td>{/if}{#if desk.visibleOrderColumns.includes("quote")}<td class="money order-money-column">{desk.money(order.quote_amount)}</td>{/if}{#if desk.visibleOrderColumns.includes("cost")}<td class="money cost order-money-column">{desk.money(order.cost_amount)}</td>{/if}{#if desk.visibleOrderColumns.includes("creator")}<td>{order.created_by}</td>{/if}{#if desk.visibleOrderColumns.includes("date")}<td class="order-date-column">{order.order_date}</td>{/if}{#if desk.visibleOrderColumns.includes("delivery")}<td>{order.delivery_date || "—"}</td>{/if}{#if desk.visibleOrderColumns.includes("payment")}<td class="order-payment-column">{order.payment_status || "未结款"}</td>{/if}{#if desk.visibleOrderColumns.includes("status")}<td class="order-status-column"
                 ><span class="status-dot">{order.status}</span
@@ -196,7 +207,7 @@
           <div class="mobile-order-card-title"><b>{order.service_name}</b><small>{order.code} · {order.quantity}{order.unit}</small></div>
           {#if desk.bulkMode}<input type="checkbox" aria-label={`选择订单 ${order.code}`} checked={desk.bulkOrderIds.includes(order.id)} disabled={desk.bulkRunning} onchange={() => desk.toggleBulkOrder(order.id)} onclick={(event) => event.stopPropagation()} />{/if}
         </div>
-        <div class="mobile-order-card-project"><b>{order.customer_name}</b><span>{order.project_name}</span></div>
+        <div class="mobile-order-card-project"><b>{order.project_name}</b><span>{order.customer_name}</span></div>
         <div class="mobile-order-card-meta">
           <span><small>报价</small><b class="money">{desk.money(order.quote_amount)}</b></span>
           <span><small>成本</small><b class="money cost">{desk.money(order.cost_amount)}</b></span>

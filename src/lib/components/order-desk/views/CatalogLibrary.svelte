@@ -1,7 +1,7 @@
 <script lang="ts">
   import { getContext, onMount } from 'svelte';
   import { api } from '$lib/api';
-  import { Building2, ChevronLeft, ChevronRight, Factory, FileSpreadsheet, Plus, Search, Upload, Users, X } from 'lucide-svelte';
+  import { Building2, ChevronLeft, ChevronRight, Factory, FileSpreadsheet, Plus, Search, Trash2, Upload, Users, X } from 'lucide-svelte';
   import WorkbenchListFilters from '../WorkbenchListFilters.svelte';
   import CustomerManager from '../CustomerManager.svelte';
   import { formatDateInBizTZ } from '$lib/time';
@@ -208,7 +208,7 @@
                   <td>
                     <div class="catalog-source-actions">
                       <button class="link-action" type="button" onclick={() => openQuoteSource(source)}>查看明细</button>
-                      {#if desk.canManageCatalog}<button class="link-action" type="button" onclick={() => { if (desk.beginCatalogReupload(source.id)) reuploadInput?.click(); }}>重新上传</button>{/if}
+                      {#if desk.canManageCatalog}<button class="link-action" type="button" onclick={() => { if (desk.beginCatalogReupload(source.id)) reuploadInput?.click(); }}>重新上传</button><button class="link-action danger-link" type="button" title="删除该报价库及其条目" disabled={desk.busy} onclick={() => desk.deleteCatalogSource(source)}>删除报价库</button>{/if}
                     </div>
                   </td>
                 </tr>
@@ -271,15 +271,15 @@
             <button class="catalog-source-select" onclick={() => desk.catalogSourceId = desk.catalogSourceId === source.id ? '' : source.id}><span>厂商</span><b>{source.owner_name}</b><small>{source.item_count} 个项目 · {sourceLabel(source)}</small></button>
             <div class="catalog-source-actions">
               <button class="catalog-source-detail" onclick={() => { detailSearch = ''; detailSource = source; }}>查看明细</button>
-              {#if desk.canManageCatalog}<button class="catalog-source-detail" onclick={() => { if (desk.beginCatalogReupload(source.id)) reuploadInput?.click(); }}>重新上传配置</button>{/if}
+              {#if desk.canManageCatalog}<button class="catalog-source-detail" onclick={() => { if (desk.beginCatalogReupload(source.id)) reuploadInput?.click(); }}>重新上传配置</button><button class="catalog-source-detail danger-link" title="删除该成本库及其条目" disabled={desk.busy} onclick={() => desk.deleteCatalogSource(source)}>删除成本库</button>{/if}
             </div>
           </div>
         {:else}<div class="catalog-empty-source"><FileSpreadsheet size={20} /><span>暂无厂商成本来源</span></div>{/each}
       </div>
     </details>
     <div class="table-panel catalog-table-panel"><div class="table-scroll"><table>
-      <thead><tr><th>分类</th><th>项目名称</th><th>厂商</th><th>制作要求 / 备注</th><th>单位</th><th>成本单价</th></tr></thead>
-      <tbody>{#each desk.pagedCatalog as item}<tr><td><span class="category-label" title={item.category || '未分类'}>{item.category || '未分类'}</span></td><td title={item.name}><b>{item.name}</b></td><td title={item.source_owner || item.customer_name || '通用'}>{item.source_owner || item.customer_name || '通用'}</td><td title={item.specification || item.remark || '—'}>{item.specification || item.remark || '—'}</td><td title={item.unit}>{item.unit}</td><td class="money" title={desk.money(item.cost_unit)}>{desk.money(item.cost_unit)}</td></tr>{:else}<tr><td colspan="6"><div class="empty-table">当前资料库没有符合条件的条目。{#if filterFields.some((field) => field.value)}<button class="outline-action" type="button" onclick={clearFilters}>清空筛选</button>{/if}</div></td></tr>{/each}</tbody>
+      <thead><tr><th>分类</th><th>项目名称</th><th>厂商</th><th>制作要求 / 备注</th><th>单位</th><th>成本单价</th>{#if desk.canManageCatalog}<th class="catalog-item-action">操作</th>{/if}</tr></thead>
+      <tbody>{#each desk.pagedCatalog as item}<tr><td><span class="category-label" title={item.category || '未分类'}>{item.category || '未分类'}</span></td><td title={item.name}><b>{item.name}</b></td><td title={item.source_owner || item.customer_name || '通用'}>{item.source_owner || item.customer_name || '通用'}</td><td title={item.specification || item.remark || '—'}>{item.specification || item.remark || '—'}</td><td title={item.unit}>{item.unit}</td><td class="money" title={desk.money(item.cost_unit)}>{desk.money(item.cost_unit)}</td>{#if desk.canManageCatalog}<td class="catalog-item-action"><button class="delete-action" type="button" title="删除该条成本资料" aria-label={`删除成本资料 ${item.name}`} disabled={desk.busy} onclick={() => desk.deleteCatalogItem('cost', item)}><Trash2 size={14} /></button></td>{/if}</tr>{:else}<tr><td colspan={desk.canManageCatalog ? 7 : 6}><div class="empty-table">当前资料库没有符合条件的条目。{#if filterFields.some((field) => field.value)}<button class="outline-action" type="button" onclick={clearFilters}>清空筛选</button>{/if}</div></td></tr>{/each}</tbody>
     </table></div></div>
     {#if desk.catalogPageCount > 1}
       <nav class="order-pagination catalog-pagination" aria-label="资料库分页">
@@ -334,7 +334,7 @@
   <div class="drawer-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) detailSource = null; }}>
     <div class="export-drawer catalog-detail-viewer" role="dialog" aria-modal="true" aria-labelledby="catalog-detail-title">
       <div class="drawer-head"><div><p class="section-kicker">资料库明细</p><h2 id="catalog-detail-title">{detailSource.owner_name} · {sourceLabel(detailSource)}</h2><span>{detailSource.source_file || '手工配置'} · {detailSource.item_count} 个项目</span></div><button class="icon-control" aria-label="关闭明细" onclick={() => detailSource = null}><X size={17} /></button></div>
-      <div class="drawer-body"><label class="search-field"><Search size={16} /><input bind:value={detailSearch} placeholder="搜索名称、分类或制作要求" /></label><div class="table-panel"><div class="table-scroll"><table><thead><tr><th>分类</th><th>名称</th><th>规格 / 要求</th><th>单位</th><th>单价</th></tr></thead><tbody>{#each detailItems() as item}<tr><td>{item.category || '未分类'}</td><td><b>{item.name}</b></td><td>{item.specification || item.remark || '—'}</td><td>{item.unit}</td><td class="money">{desk.money(detailSource.kind === 'quote' ? item.price_incl_tax : item.cost_unit)}</td></tr>{:else}<tr><td colspan="5"><div class="empty-table">没有匹配的资料条目。</div></td></tr>{/each}</tbody></table></div></div></div>
+      <div class="drawer-body"><label class="search-field"><Search size={16} /><input bind:value={detailSearch} placeholder="搜索名称、分类或制作要求" /></label><div class="table-panel"><div class="table-scroll"><table><thead><tr><th>分类</th><th>名称</th><th>规格 / 要求</th><th>单位</th><th>单价</th>{#if desk.canManageCatalog}<th class="catalog-item-action">操作</th>{/if}</tr></thead><tbody>{#each detailItems() as item}<tr><td>{item.category || '未分类'}</td><td><b>{item.name}</b></td><td>{item.specification || item.remark || '—'}</td><td>{item.unit}</td><td class="money">{desk.money(detailSource.kind === 'quote' ? item.price_incl_tax : item.cost_unit)}</td>{#if desk.canManageCatalog}<td class="catalog-item-action"><button class="delete-action" type="button" title="删除该条资料" aria-label={`删除资料 ${item.name}`} disabled={desk.busy} onclick={() => desk.deleteCatalogItem(detailSource.kind, item)}><Trash2 size={14} /></button></td>{/if}</tr>{:else}<tr><td colspan={desk.canManageCatalog ? 6 : 5}><div class="empty-table">没有匹配的资料条目。</div></td></tr>{/each}</tbody></table></div></div></div>
       <div class="drawer-footer"><button class="outline-action" onclick={() => detailSource = null}>关闭</button></div>
     </div>
   </div>

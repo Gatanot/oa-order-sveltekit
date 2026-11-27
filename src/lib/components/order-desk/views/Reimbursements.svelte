@@ -90,6 +90,16 @@
     selectionMode = false;
     desk.selectedReimbursementIds = [];
   }
+  async function loadAttachments(reimbursementId: string) {
+    try {
+      const response = await fetch(appPath(`/api/reimbursements/${encodeURIComponent(reimbursementId)}/attachments`));
+      if (!response.ok) throw new Error("附件加载失败");
+      const files = (await response.json()).data;
+      attachmentsByOrder = { ...attachmentsByOrder, [reimbursementId]: files };
+    } catch {
+      attachmentsByOrder = { ...attachmentsByOrder, [reimbursementId]: [] };
+    }
+  }
   async function showAttachments(item: any) {
     const reimbursementId = item.id;
     if (attachmentsByOrder[reimbursementId]) {
@@ -98,13 +108,25 @@
       attachmentsByOrder = next;
       return;
     }
+    await loadAttachments(reimbursementId);
+  }
+  // 票据删除与「删除报销」同一口径：本人且停留在待上传证明/待一级审核，或管理员/财务。
+  function canDeleteAttachment(item: any) {
+    if (!['待上传证明', '待一级审核'].includes(item.reimbursement_status)) return false;
+    return item.employee_uid === desk.identity?.uid || ['admin', 'finance'].includes(desk.identity?.role);
+  }
+  async function removeAttachment(item: any, file: any) {
+    if (!await desk.requestConfirm('删除票据', `确认删除附件「${file.file_name}」？删除后不可恢复。`)) return;
     try {
-      const response = await fetch(appPath(`/api/reimbursements/${encodeURIComponent(reimbursementId)}/attachments`));
-      if (!response.ok) throw new Error("附件加载失败");
-      const files = (await response.json()).data;
-      attachmentsByOrder = { ...attachmentsByOrder, [reimbursementId]: files };
-    } catch {
-      attachmentsByOrder = { ...attachmentsByOrder, [reimbursementId]: [] };
+      const response = await fetch(appPath(`/api/reimbursement-attachments/${encodeURIComponent(file.id)}`), { method: 'DELETE' });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.error?.message || '票据删除失败');
+      }
+      await loadAttachments(item.id);
+      desk.notify('票据已删除');
+    } catch (reason) {
+      desk.notify(reason instanceof Error ? reason.message : '票据删除失败', true);
     }
   }
 </script>
@@ -213,6 +235,7 @@
                           <span class="attachment-name">{file.file_name}</span>
                           <small>{file.mime_type === "application/pdf" ? "PDF" : "图片"} · {desk.formatFileSize(file.file_size)}</small>
                         </button>
+                        {#if canDeleteAttachment(item)}<button class="attachment-remove" type="button" title="删除该票据" aria-label={`删除票据 ${file.file_name}`} disabled={desk.busy} onclick={() => removeAttachment(item, file)}><Trash2 size={13} /></button>{/if}
                       </li>{/each}</ul></td
                 ></tr
               >{/if}{:else}<tr

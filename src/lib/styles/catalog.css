@@ -40,6 +40,38 @@
   gap: 14px;
 }
 
+/* 删除类动作与蓝色主操作区分开，避免误点。 */
+:is(.catalog-source-detail, .link-action).danger-link {
+  color: var(--red);
+}
+
+:is(.catalog-source-detail, .link-action).danger-link:hover {
+  color: color-mix(in srgb, var(--red) 78%, #7a1414);
+  text-decoration: underline;
+}
+
+/* 报价库/成本库条目的删除列：贴右对齐，宽度只占图标；窄窗口下收紧内边距，避免按钮被裁。 */
+.catalog-item-action {
+  width: 56px;
+  text-align: right;
+}
+
+.catalog-table-panel :is(th, td).catalog-item-action,
+.catalog-detail-viewer :is(th, td).catalog-item-action {
+  padding-inline: 4px;
+}
+
+.catalog-item-action .delete-action {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+}
+
 .catalog-customer-link {
   margin-top: 2px;
   padding-inline: 0;

@@ -42,7 +42,7 @@ const STATES = [
   { name: 'orders-confirm-modal', route: '/orders', marker: '.confirm-modal', steps: [{ clickSel: 'button[aria-label^="删除订单"]:visible' }] },
   { name: 'orders-detail-attachment', route: `/orders/${orderId}`, marker: '.attachment-preview-backdrop', steps: [{ clickSel: '.attachment-link' }] },
   { name: 'new-project-modal', route: '/orders/new', marker: '.project-modal', steps: [{ clickText: '新建项目' }] },
-  { name: 'new-suggestion-menu', route: '/orders/new', marker: '.suggestion-menu', steps: [{ type: 'input[placeholder="输入产品名称以匹配报价库"]', value: '喷绘' }] },
+  { name: 'new-suggestion-menu', route: '/orders/new', marker: '.suggestion-menu', steps: [{ type: 'input[placeholder="产品或报价库名称"]', value: '喷绘' }] },
   { name: 'reimbursement-modal', route: '/reimbursements', marker: '.reimbursement-modal', steps: [{ clickText: '报销录入' }] },
   { name: 'reimbursement-detail', route: '/reimbursements', marker: '.reimbursement-detail', steps: [{ clickAnyText: ['查看进度', '查看单据'] }] },
   { name: 'review-detail', route: '/reimbursements/review', marker: '.reimbursement-detail', steps: [{ clickAnyText: ['查看进度', '查看单据'] }] },

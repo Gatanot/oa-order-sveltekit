@@ -526,17 +526,18 @@ html body :is(button, [tabindex])[data-cc-pointer-focus="true"]:focus-visible { 
 .order-more-menu button.danger { color: var(--red); }
 .order-more-menu button.danger:hover { background: var(--red-soft); }
 @media (min-width: 701px) {
-  .desktop-order-table .order-list-table { width: 100%; min-width: 1040px; table-layout: fixed; }
+  /* 列宽合计要能塞进 1280 笔记本的内容宽度（约 990px），否则表头/状态胶囊会被右侧固定的操作列遮住一截。 */
+  .desktop-order-table .order-list-table { width: 100%; min-width: 980px; table-layout: fixed; }
   .desktop-order-table th, .desktop-order-table td { min-width: 0; padding: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .desktop-order-table .order-click-row td { height: 52px; }
   .desktop-order-table .order-index-column { width: 40px; min-width: 0; }
-  .desktop-order-table .order-info-column { position: static; width: 24%; min-width: 0; box-shadow: none; }
-  .desktop-order-table .order-project-column { width: 16%; min-width: 0; }
-  .desktop-order-table .order-person-column { width: 60px; }
-  .desktop-order-table .order-money-column { width: 96px; text-align: left; font-variant-numeric: tabular-nums; }
-  .desktop-order-table .order-date-column { width: 108px; font-variant-numeric: tabular-nums; }
-  .desktop-order-table .order-payment-column { width: 70px; }
-  .desktop-order-table .order-status-column { width: 74px; }
+  .desktop-order-table .order-info-column { position: static; width: 22%; min-width: 0; box-shadow: none; }
+  .desktop-order-table .order-project-column { width: 15%; min-width: 0; }
+  .desktop-order-table .order-person-column { width: 56px; }
+  .desktop-order-table .order-money-column { width: 88px; text-align: left; font-variant-numeric: tabular-nums; }
+  .desktop-order-table .order-date-column { width: 100px; font-variant-numeric: tabular-nums; }
+  .desktop-order-table .order-payment-column { width: 66px; }
+  .desktop-order-table .order-status-column { width: 70px; }
   .desktop-order-table .order-action-column { width: 108px; min-width: 0; overflow: visible; }
   .desktop-order-table .bulk-selected :is(.order-index-column, .order-info-column, .order-action-column) { background: var(--blue-soft); }
   .desktop-order-table .order-row-actions { justify-content: flex-end; gap: 2px; }
@@ -549,7 +550,15 @@ html body :is(button, [tabindex])[data-cc-pointer-focus="true"]:focus-visible { 
   .desktop-order-table.extra-columns .order-index-column { min-width: 40px; }
   .desktop-order-table.extra-columns .order-info-column { width: 220px; min-width: 220px; }
   .desktop-order-table.extra-columns .order-project-column { min-width: 150px; }
-  .desktop-order-table.extra-columns .order-action-column { min-width: 108px; }
+  /* 勾了额外列后表格必然横向滚动，右侧固定列会盖住最后一列数据，这里让操作列跟着表格一起滑。 */
+  .desktop-order-table.extra-columns .order-action-column { position: static; min-width: 108px; box-shadow: none; }
+  .desktop-order-table.extra-columns th.order-action-column { z-index: auto; }
+}
+/* 内容区放不下整张表时（窄窗口）表格会横向滑动，此时右侧固定的操作列会盖住“状态/结款状态”；
+   改成让操作列跟着表格一起滑，宁可多滑一下，也不要把状态胶囊截断。 */
+@media (min-width: 701px) and (max-width: 1279px) {
+  .desktop-order-table .order-action-column { position: static; box-shadow: none; }
+  .desktop-order-table th.order-action-column { z-index: auto; }
 }
 @media (max-width: 760px) {
   .order-filter-primary { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }

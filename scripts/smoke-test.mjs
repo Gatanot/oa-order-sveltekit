@@ -419,6 +419,52 @@ try {
   result = await request(`/api/orders/${orderId}/attachments`);
   assert.equal(result.data.data.length, 2, '多附件应按文件独立上传并全部保留');
 
+  // 删除入口：订单附件与报销票据可单删，资料库条目/来源软删除，项目在有订单时拒删。
+  const uploadedAttachments = (await request(`/api/orders/${orderId}/attachments`)).data.data;
+  result = await request(`/api/attachments/${uploadedAttachments[0].id}`, { method: 'DELETE' });
+  assert.equal(result.response.status, 200, '订单附件应可单个删除');
+  result = await request(`/api/orders/${orderId}/attachments`);
+  assert.equal(result.data.data.length, 1, '删除后订单只应剩下一个附件');
+  result = await request(`/api/attachments/${uploadedAttachments[0].id}`);
+  assert.equal(result.response.status, 404, '已删除的订单附件不能再预览');
+
+  result = await request('/api/projects', { method: 'DELETE', json: { id: projectId } });
+  assert.equal(result.response.status, 400, '项目下已有订单时不能删除');
+  result = await request('/api/projects', { method: 'POST', json: { customer_id: customerId, name: '待删除项目', owner: '' } });
+  const removableProjectId = result.data.data.id;
+  result = await request('/api/projects', { method: 'DELETE', json: { id: removableProjectId } });
+  assert.equal(result.response.status, 200, '没有订单的项目应可删除');
+  assert.ok(!(await request('/api/projects')).data.data.some((item) => item.id === removableProjectId), '删除后项目列表不应再出现该项目');
+
+  result = await request('/api/catalog/sources', { method: 'POST', json: { kind: 'cost', owner_name: '待删除厂商', library_name: '待删除成本库' } });
+  const removableSourceId = result.data.data.id;
+  result = await request('/api/catalog', { method: 'POST', json: { source_id: removableSourceId, rows: [{ name: '待删除条目', unit: '项', cost_unit: 1.5 }] } });
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  const removableItem = (await request('/api/catalog')).data.data.cost.find((item) => item.source_id === removableSourceId);
+  assert.ok(removableItem, '导入后的成本条目应可查询');
+  result = await request('/api/catalog', { method: 'DELETE', json: { kind: 'cost', id: removableItem.id } });
+  assert.equal(result.response.status, 200, '资料条目应可单条删除');
+  assert.ok(!(await request('/api/catalog')).data.data.cost.some((item) => item.id === removableItem.id), '软删除的条目不应再出现在资料库列表');
+  result = await request('/api/catalog/sources', { method: 'DELETE', json: { id: removableSourceId } });
+  assert.equal(result.response.status, 200, '资料库来源应可删除');
+  assert.ok(!(await request('/api/catalog/sources')).data.data.some((item) => item.id === removableSourceId), '删除后来源列表不应再出现该资料库');
+
+  result = await request('/api/reimbursements', { method: 'POST', json: { item: '票据删除测试', amount: '9.00', advance_date: '2026-09-19' } });
+  const removableReimbursementId = result.data.data.id;
+  const removableInvoiceForm = new FormData();
+  removableInvoiceForm.append('kind', 'invoice');
+  removableInvoiceForm.append('file', new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], { type: 'image/png' }), 'removable-invoice.png');
+  result = await request(`/api/reimbursements/${removableReimbursementId}/attachments`, { method: 'POST', body: removableInvoiceForm });
+  const removableInvoiceId = result.data.data.id;
+  result = await request(`/api/reimbursement-attachments/${removableInvoiceId}`, { method: 'DELETE' });
+  assert.equal(result.response.status, 200, '报销票据应可单个删除');
+  result = await request(`/api/reimbursements/${removableReimbursementId}/attachments`);
+  assert.equal(result.data.data.length, 0, '删除后该报销不应再有票据');
+  result = await request(`/api/reimbursement-attachments/${removableInvoiceId}`);
+  assert.equal(result.response.status, 404, '已删除的报销票据不能再预览');
+  result = await request(`/api/reimbursements/${removableReimbursementId}`, { method: 'DELETE' });
+  assert.equal(result.response.status, 200, '票据删除测试的报销记录应可清理');
+
   result = await request(`/api/orders/${orderId}/complete`, { method: 'POST', body: new FormData() });
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
   assert.equal(result.data.data.status, '已完成', '录入人（执行）可将订单标记为已完成');
@@ -565,8 +611,32 @@ try {
   assert.equal(result.response.status, 200);
   assert.match(result.response.headers.get('content-type') || '', /spreadsheet/);
 
+  // v36：订单行额外成本不要求匹配资料库，但必须计入订单总成本，并在编辑回显时仍挂在原产品行。
+  result = await request('/api/orders', { method: 'POST', json: {
+    project_id: projectId, order_date: '2026-09-16', idempotency_key: 'smoke-extra-cost-1',
+    products: [{ name: '额外成本测试产品', unit: '项', quantity: 1, unit_price: '10.00', cost_unit: '2.00', extra_costs: [{ name: '加急费', vendor: '临时供应商', unit: '项', quantity: 1, unit_price: '3.50' }] }],
+    costs: [{ name: '额外成本测试产品', vendor: '成本库厂商', unit: '项', quantity: 1, unit_price: '2.00' }]
+  } });
+  assert.equal(result.response.status, 201, JSON.stringify(result.data));
+  const extraCostOrderId = result.data.data.id;
+  const extraCostLineId = result.data.data.products[0].line_id;
+  assert.equal(result.data.data.cost_amount, 550, '额外成本应计入订单总成本');
+  assert.equal(result.data.data.products[0].extra_costs[0].vendor, '临时供应商', '额外成本应返回供应商快照');
+  assert.equal(result.data.data.products[0].extra_costs[0].amount, 3.5, '额外成本应按行合计金额返回');
+  result = await request(`/api/orders/${extraCostOrderId}`, { method: 'PATCH', json: {
+    project_id: projectId, order_date: '2026-09-16',
+    products: [{ name: '额外成本测试产品', unit: '项', quantity: 1, unit_price: '10.00', cost_unit: '2.00', line_id: extraCostLineId, extra_costs: [{ name: '加急费', vendor: '临时供应商二', amount: '4.25' }] }],
+    costs: [{ name: '额外成本测试产品', vendor: '成本库厂商', unit: '项', quantity: 1, unit_price: '2.00' }]
+  } });
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  assert.equal(result.data.data.cost_amount, 625, '编辑后额外成本金额应同步到订单总成本');
+  assert.equal(result.data.data.products[0].extra_costs[0].vendor, '临时供应商二');
+  assert.equal(readDb((db) => db.prepare("SELECT COUNT(*) FROM order_costs WHERE order_id=? AND parent_line_id=?").pluck().get(extraCostOrderId, extraCostLineId)), 1, '额外成本应按所属产品行归一化保存');
+  result = await request(`/api/orders/${extraCostOrderId}`, { method: 'DELETE' });
+  assert.equal(result.response.status, 200, '额外成本测试订单应可清理');
+
   const db = new Database(databasePath, { readonly: true });
-  assert.equal(db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '35');
+  assert.equal(db.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '36');
   assert.ok(db.prepare("SELECT COUNT(*) FROM pragma_table_info('catalog_sources') WHERE name='library_name'").pluck().get(), 'v30 应为资料库补充名称字段');
   assert.equal(db.prepare("PRAGMA index_list('catalog_sources')").all().filter((index) => index.unique && index.origin !== 'pk').length, 0, 'v30 应移除客户/厂商唯一限制，允许同一客户多个报价库');
   assert.equal(db.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('catalog_quote_items','catalog_cost_items')").pluck().get(), 2, 'v27 应创建报价库/成本库分表');
@@ -594,6 +664,7 @@ try {
   assert.ok(db.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name IN ('created_by_uid','designer_uid','planner_uid')").pluck().get() === 3, '订单应保存员工 UID 关联');
   assert.equal(db.prepare("SELECT COUNT(*) FROM pragma_table_info('order_products') WHERE name='remark'").pluck().get(), 1, '订单项表应包含行备注列');
   assert.equal(db.prepare("SELECT remark FROM order_products WHERE name='测试产品'").pluck().get(), '行备注丙', '行备注应写入规范化的订单项表');
+  assert.ok(db.prepare("SELECT COUNT(*) FROM pragma_table_info('order_costs') WHERE name='parent_line_id'").pluck().get(), 'v36 应支持订单行额外成本归属');
   assert.equal(db.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('users','sessions')").pluck().get(), 0, '全新数据库不应创建登录或角色表');
   assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
   assert.ok(db.prepare('SELECT COUNT(*) FROM audit_logs').pluck().get() >= 5);
@@ -607,7 +678,7 @@ try {
     legacy.prepare("UPDATE orders_simple SET status='待确认'").run();
     legacy.pragma('ignore_check_constraints = OFF');
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '35');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '36');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('audit_logs') WHERE name='actor_uid'").pluck().get(), 'v23 数据库迁移后应补齐审计 actor_uid');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v23 数据库重启后应保留订单');
     assert.equal(migrated.prepare('SELECT order_source FROM orders_simple LIMIT 1').pluck().get(), '旧部门-旧联系人', 'v29 迁移应按部门-联系人合并订单来源');
@@ -629,7 +700,7 @@ try {
     `);
     legacy.pragma('foreign_keys = ON');
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '35');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '36');
     assert.equal(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('catalog_quote_items') WHERE name IN ('price_excl_tax','tax_rate')").pluck().get(), 0, 'v28 应移除报价税务列');
     assert.equal(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('catalog_cost_items') WHERE name IN ('cost_unit_excl_tax','tax_rate')").pluck().get(), 0, 'v28 应移除成本税务列');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM order_products').pluck().get(), 1, '迁移不应丢失订单项');
@@ -653,7 +724,7 @@ try {
       ALTER TABLE audit_logs ADD COLUMN actor_user_id TEXT;
     `);
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '35');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '36');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='idempotency_key'").pluck().get(), 'v18 数据库应补齐幂等字段');
     assert.equal(migrated.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('users','sessions')").pluck().get(), 0, '迁移后不应保留登录表');
     for (const [table, column] of [['orders_simple', 'created_by_user_id'], ['reimbursements_simple', 'employee_user_id'], ['reimbursements_simple', 'voucher_archived_by_user_id'], ['order_attachments', 'uploaded_by_user_id'], ['reimbursement_attachments', 'uploaded_by_user_id'], ['catalog_sources', 'maintained_by_user_id'], ['audit_logs', 'actor_user_id']]) {
@@ -667,7 +738,7 @@ try {
     restoreLegacyCatalog(legacy);
     legacy.exec('ALTER TABLE orders_simple DROP COLUMN planner; ALTER TABLE orders_simple DROP COLUMN execution_company;');
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '35');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '36');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='planner'").pluck().get(), 'v20 数据库应补齐策划人字段');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='execution_company'").pluck().get(), 'v20 数据库应补齐执行公司字段');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v20 迁移不应丢失订单');
@@ -678,7 +749,7 @@ try {
     restoreLegacyCatalog(legacy);
     legacy.exec('ALTER TABLE orders_simple DROP COLUMN execution_company;');
   }, (migrated) => {
-    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '35');
+    assert.equal(migrated.prepare("SELECT value FROM schema_meta WHERE key='order_app_version'").pluck().get(), '36');
     assert.ok(migrated.prepare("SELECT COUNT(*) FROM pragma_table_info('orders_simple') WHERE name='execution_company'").pluck().get(), 'v21 数据库应补齐执行公司字段');
     assert.equal(migrated.prepare('SELECT COUNT(*) FROM orders_simple').pluck().get(), 1, 'v21 迁移不应丢失订单');
     assert.deepEqual(migrated.prepare('PRAGMA foreign_key_check').all(), []);
@@ -1154,7 +1225,7 @@ try {
     );
   });
 
-  console.log('Smoke test passed: public workbench, catalog import/copy, creator snapshots, order totals, personal advances, independent attachments, order-linked reimbursements, reimbursement filters/state machine, voucher idempotency, aligned exports, employee management authorization, execution company management, local entry identity and catalog tools preview/money/conflict handling, failure-closed web AI routes, audit and v18/v20/v21/v23/v27 migrations.');
+  console.log('Smoke test passed: public workbench, catalog import/copy, creator snapshots, order totals, personal advances, independent attachments, order-linked reimbursements, reimbursement filters/state machine, voucher idempotency, resource deletion (orders/catalog/projects/attachments), aligned exports, employee management authorization, execution company management, local entry identity and catalog tools preview/money/conflict handling, failure-closed web AI routes, audit and v18/v20/v21/v23/v27 migrations.');
 } finally {
   server.kill('SIGTERM');
   if (localServer) localServer.kill('SIGTERM');

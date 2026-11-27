@@ -1232,12 +1232,35 @@ export function createOrderDesk(data: Data) {
       detailAttachmentsLoading = false;
     }
   }
+  function extraCostAmount(extra: any): number {
+    const value = Number(extra?.amount);
+    return Number.isFinite(value) && value >= 0 ? value : 0;
+  }
+  function productCostTotal(product: any): number {
+    const primary = Number(product?.quantity || 0) * Number(product?.cost_unit || 0);
+    const extras = (Array.isArray(product?.extra_costs) ? product.extra_costs : []).reduce((sum: number, extra: any) => sum + extraCostAmount(extra), 0);
+    return primary + extras;
+  }
+  // 额外成本只作为订单行内的机动补充，不匹配资料库，提交时转换成服务端成本行结构。
+  function normalizedExtraCosts(product: any) {
+    return (Array.isArray(product?.extra_costs) ? product.extra_costs : [])
+      .filter((extra: any) => String(extra?.name || '').trim() || String(extra?.vendor || '').trim() || extraCostAmount(extra) > 0)
+      .map((extra: any) => ({
+        name: String(extra.name || '').trim() || String(product?.name || '').trim(),
+        vendor: String(extra.vendor || '').trim(),
+        unit: '项',
+        quantity: 1,
+        unit_price: extraCostAmount(extra).toFixed(2)
+      }));
+  }
   async function submitOrder(event: SubmitEvent) {
     event.preventDefault();
     const hasName = (value: string) => String(value || '').trim().length > 0;
     // 成本和产品明细是订单的最小可保存单位；勾选个人垫付的行由服务端在保存时自动生成报销。
-    const validProducts = products.filter((item) => hasName(item.name));
-    // 成本随产品明细自动匹配，提交时展开为订单成本行。
+    const validProducts = products
+      .filter((item) => hasName(item.name))
+      .map((item: Record<string, any>): Record<string, any> => ({ ...item, extra_costs: normalizedExtraCosts(item) }));
+    // 主成本随产品明细自动匹配；额外成本保存在产品行内，由服务端一并计入订单总成本。
     const validCosts = validProducts
       .filter((item) => Number(item.cost_unit) > 0)
       .map((item) => ({
@@ -1253,7 +1276,7 @@ export function createOrderDesk(data: Data) {
       notify("请至少添加一项产品", true);
       return;
     }
-    const advanceIndex = validProducts.findIndex((item) => item.advance && !(Number(item.cost_unit) > 0));
+    const advanceIndex = validProducts.findIndex((item) => item.advance && !(productCostTotal(item) > 0));
     if (advanceIndex >= 0) {
       notify(`第 ${advanceIndex + 1} 项已开启个人垫付，请填写成本`, true);
       return;
@@ -1302,6 +1325,72 @@ export function createOrderDesk(data: Data) {
     } finally {
       busy = false;
     }
+  }
+  /** 删除项目：项目下已有订单、或为系统「非分配项目」时由服务端拒绝。 */
+  function deleteProject(project: any) {
+    if (!project?.id) return;
+    askConfirm("删除项目", `确认删除项目「${project.name}」？项目下已有订单时不能删除，删除后不可恢复。`, async () => {
+      busy = true;
+      try {
+        await api.delete("/api/projects", { id: project.id });
+        if (projectId === project.id) projectId = "";
+        await refresh();
+        notify("项目已删除");
+      } catch (e) {
+        notify(e instanceof Error ? e.message : "项目删除失败", true);
+      } finally { busy = false; }
+    });
+  }
+  /** 报价库/成本库单条资料：软删除，不影响已保存订单里的历史报价与成本。 */
+  function deleteCatalogItem(kind: string, item: any) {
+    if (!item?.id) return;
+    askConfirm("删除资料", `确认删除「${item.name}」？删除后该条资料不再出现在${kind === "cost" ? "成本库" : "报价库"}中，已保存的订单不受影响。`, async () => {
+      busy = true;
+      try {
+        await api.delete("/api/catalog", { kind: kind === "cost" ? "cost" : "quote", id: item.id });
+        await refresh();
+        notify("资料已删除");
+      } catch (e) {
+        notify(e instanceof Error ? e.message : "资料删除失败", true);
+      } finally { busy = false; }
+    });
+  }
+  /** 删除整个资料库来源：来源与其下所有条目一起失效。 */
+  function deleteCatalogSource(source: any) {
+    if (!source?.id) return;
+    const count = Number(source.item_count || 0);
+    askConfirm("删除资料库", `确认删除「${source.owner_name}${source.library_name ? " · " + source.library_name : ""}」？该库下 ${count} 条资料会一起移除，已保存的订单不受影响。`, async () => {
+      busy = true;
+      try {
+        await api.delete("/api/catalog/sources", { id: source.id });
+        await refresh();
+        notify("资料库已删除");
+      } catch (e) {
+        notify(e instanceof Error ? e.message : "资料库删除失败", true);
+      } finally { busy = false; }
+    });
+  }
+  /** 删除单个订单附件：订单管理角色，或该订单的录入人/设计师/策划人。 */
+  function deleteOrderAttachment(file: any) {
+    const orderId = detailOrder?.id;
+    if (!file?.id || !orderId) return;
+    askConfirm("删除附件", `确认删除附件「${file.file_name}」？删除后不可恢复。`, async () => {
+      busy = true;
+      try {
+        await api.delete(`/api/attachments/${encodeURIComponent(file.id)}`);
+        await loadDetailAttachments(orderId);
+        notify("附件已删除");
+      } catch (e) {
+        notify(e instanceof Error ? e.message : "附件删除失败", true);
+      } finally { busy = false; }
+    });
+  }
+  /** 是否可以在详情页删除该订单的附件（与后端权限保持一致）。 */
+  function canDeleteOrderAttachment(order: any) {
+    if (!order) return false;
+    if (hasAnyRole(data.identity, orderManageRoles)) return true;
+    const uid = data.identity?.uid;
+    return [order.created_by_uid, order.designer_uid, order.planner_uid].some((value) => value != null && value === uid);
   }
   async function submitProject() {
     const name = newProject.trim();
@@ -1563,13 +1652,37 @@ export function createOrderDesk(data: Data) {
       return { ...base, vendor: cost.vendor || "", cost_unit: costUnitOf(cost, base.cost_unit), cost_catalog_id: cost.catalog_id };
     });
     for (const cost of pending) {
-      merged.push({ name: cost.name, unit: cost.unit || "项", quantity: cost.quantity ?? 1, unit_price: 0, cost_unit: costUnitOf(cost, 0), vendor: cost.vendor || "", specification: "", remark: "", cost_catalog_id: cost.catalog_id, line_id: crypto.randomUUID(), advance: false });
+      merged.push({ name: cost.name, unit: cost.unit || "项", quantity: cost.quantity ?? 1, unit_price: 0, cost_unit: costUnitOf(cost, 0), vendor: cost.vendor || "", specification: "", remark: "", cost_catalog_id: cost.catalog_id, line_id: crypto.randomUUID(), advance: false, extra_costs: [] });
     }
     return merged;
   }
-  function newProductRow() { return { name: "", quantity: 1, unit: "项", unit_price: 0, cost_unit: 0, vendor: "", subtotal: 0, specification: "", remark: "", line_id: crypto.randomUUID(), advance: false }; }
+  function newProductRow() { return { name: "", quantity: 1, unit: "项", unit_price: 0, cost_unit: 0, vendor: "", subtotal: 0, specification: "", remark: "", line_id: crypto.randomUUID(), advance: false, extra_costs: [] }; }
   function addProduct() { products = [...products, newProductRow()]; orderFormDirty = true; }
   function removeProduct(index: number) { products = products.filter((_, i) => i !== index); orderFormDirty = true; }
+  function addExtraCost(index: number) {
+    const product = products[index];
+    if (!product) return;
+    products[index] = { ...product, extra_costs: [...(product.extra_costs || []), { name: "", vendor: "", amount: "", line_id: crypto.randomUUID() }] };
+    products = [...products];
+    orderFormDirty = true;
+  }
+  function removeExtraCost(index: number, extraIndex: number) {
+    const product = products[index];
+    if (!product) return;
+    products[index] = { ...product, extra_costs: (product.extra_costs || []).filter((_: any, i: number) => i !== extraIndex) };
+    products = [...products];
+    orderFormDirty = true;
+  }
+  function updateExtraCost(index: number, extraIndex: number, key: string, value: unknown) {
+    const product = products[index];
+    const extra = product?.extra_costs?.[extraIndex];
+    if (!product || !extra) return;
+    const extraCosts = [...product.extra_costs];
+    extraCosts[extraIndex] = { ...extra, [key]: value };
+    products[index] = { ...product, extra_costs: extraCosts };
+    products = [...products];
+    orderFormDirty = true;
+  }
   function updateProduct(index: number, key: string, value: unknown) {
     const product = products[index];
     if (!product) return;
@@ -2175,6 +2288,11 @@ export function createOrderDesk(data: Data) {
   desk.onStandaloneInvoiceChange = onStandaloneInvoiceChange;
   desk.submitOrder = submitOrder;
   desk.submitProject = submitProject;
+  desk.deleteProject = deleteProject;
+  desk.deleteCatalogItem = deleteCatalogItem;
+  desk.deleteCatalogSource = deleteCatalogSource;
+  desk.deleteOrderAttachment = deleteOrderAttachment;
+  desk.canDeleteOrderAttachment = canDeleteOrderAttachment;
   desk.setExecutionCompanies = setExecutionCompanies;
   desk.toggleCostPicker = toggleCostPicker;
   desk.costOptions = costOptions;
@@ -2222,6 +2340,9 @@ export function createOrderDesk(data: Data) {
   desk.startNewOrder = startNewOrder;
   desk.addProduct = addProduct;
   desk.removeProduct = removeProduct;
+  desk.addExtraCost = addExtraCost;
+  desk.removeExtraCost = removeExtraCost;
+  desk.updateExtraCost = updateExtraCost;
   desk.updateProduct = updateProduct;
   desk.updateProductCost = updateProductCost;
   desk.applyProductCatalog = applyProductCatalog;

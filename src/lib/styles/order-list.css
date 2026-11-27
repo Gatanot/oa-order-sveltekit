@@ -142,32 +142,39 @@
 
   .catalog-table-panel th:nth-child(1),
   .catalog-table-panel td:nth-child(1) {
-    width: 13%;
+    width: 12%;
   }
 
   .catalog-table-panel th:nth-child(2),
   .catalog-table-panel td:nth-child(2) {
-    width: 23%;
+    width: 20%;
   }
 
   .catalog-table-panel th:nth-child(3),
   .catalog-table-panel td:nth-child(3) {
-    width: 17%;
+    width: 15%;
   }
 
   .catalog-table-panel th:nth-child(4),
   .catalog-table-panel td:nth-child(4) {
-    width: 29%;
+    width: 26%;
   }
 
   .catalog-table-panel th:nth-child(5),
   .catalog-table-panel td:nth-child(5) {
-    width: 9%;
+    width: 8%;
   }
 
   .catalog-table-panel th:nth-child(6),
   .catalog-table-panel td:nth-child(6) {
-    width: 9%;
+    width: 11%;
+  }
+
+  /* 第 7 列是条目删除按钮，只有可维护资料库的身份才出现；按比例给窄宽，窄窗口仍放得下 28px 按钮。 */
+  .catalog-table-panel th:nth-child(7),
+  .catalog-table-panel td:nth-child(7) {
+    width: 6%;
+    min-width: 34px;
   }
 }
 

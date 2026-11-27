@@ -110,6 +110,24 @@
   margin-top: 0;
 }
 
+/* 删除项目与「新建项目」并排，保持 36px 高度对齐且不抢输入宽度。 */
+.form-grid .field-with-action > .project-delete {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  flex: 0 0 36px;
+  margin-top: 0;
+  border: 0;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--red) 8%, #fff);
+  color: var(--red);
+}
+
+.form-grid .field-with-action > .project-delete:hover:not(:disabled) {
+  background: var(--red-soft);
+}
+
 .mini-create {
   flex: 0 0 auto;
   display: inline-flex;
