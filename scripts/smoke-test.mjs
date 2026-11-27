@@ -442,6 +442,11 @@ try {
   assert.equal(result.response.status, 200, JSON.stringify(result.data));
   const removableItem = (await request('/api/catalog')).data.data.cost.find((item) => item.source_id === removableSourceId);
   assert.ok(removableItem, '导入后的成本条目应可查询');
+  // 首屏不再背报价库：订单列表的 SSR 数据里不能出现资料库条目，报价库页面仍要带上。
+  const ordersPageHtml = Buffer.from((await request('/orders')).data).toString('utf8');
+  assert.ok(!ordersPageHtml.includes('待删除条目'), '订单列表首屏不应下发报价库条目');
+  const catalogPageHtml = Buffer.from((await request('/catalog')).data).toString('utf8');
+  assert.ok(catalogPageHtml.includes('待删除条目'), '报价库页面应由服务端渲染出资料库条目');
   result = await request('/api/catalog', { method: 'DELETE', json: { kind: 'cost', id: removableItem.id } });
   assert.equal(result.response.status, 200, '资料条目应可单条删除');
   assert.ok(!(await request('/api/catalog')).data.data.cost.some((item) => item.id === removableItem.id), '软删除的条目不应再出现在资料库列表');

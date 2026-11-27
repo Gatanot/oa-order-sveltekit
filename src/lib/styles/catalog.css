@@ -12,6 +12,17 @@
   font-size: 13.5px;
 }
 
+/* 报价库改为按需加载后，从进入页面到数据到达之间给一行状态提示。 */
+.catalog-loading {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border: 1px dashed var(--line-soft);
+  border-radius: 9px;
+  background: var(--paper);
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
 .catalog-source-grid {
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 12px;

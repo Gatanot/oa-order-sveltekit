@@ -105,8 +105,8 @@ export type Data = {
     today: string;
     customers: Customer[];
     projects: Project[];
-    catalog: { quote: QuoteCatalog[]; cost: CostCatalog[] };
-    catalogSources: Array<Record<string, any>>;
+    catalog?: { quote: QuoteCatalog[]; cost: CostCatalog[] };
+    catalogSources?: Array<Record<string, any>>;
     employees: Array<{ catsco_uid: number; display_name: string; department: string; role: string }>;
     executionCompanies: ExecutionCompanyRow[];
     orders: Order[];
@@ -127,10 +127,14 @@ export function createOrderDesk(data: Data) {
   let onArtifactGateway = $state(false);
   let customers = $state(data.customers);
   let projects = $state(data.projects);
-  let catalogQuote = $state<QuoteCatalog[]>(data.catalog.quote);
-  let catalogCost = $state<CostCatalog[]>(data.catalog.cost);
+  let catalogQuote = $state<QuoteCatalog[]>(data.catalog?.quote || []);
+  let catalogCost = $state<CostCatalog[]>(data.catalog?.cost || []);
   let employees = $state(data.employees);
-  let catalogSources = $state(data.catalogSources);
+  let catalogSources = $state(data.catalogSources || []);
+  // 报价库有近万条记录，不再随首屏下发：进到需要它的页面（报价库、订单录入）才拉取。
+  let catalogLoaded = $state(Boolean(data.catalog));
+  let catalogLoading = $state(false);
+  let catalogRequest: Promise<void> | null = null;
   let orders = $state(data.orders);
   let reimbursements = $state(data.reimbursements);
   let reviewReimbursements = $state(data.reviewReimbursements);
@@ -798,12 +802,44 @@ export function createOrderDesk(data: Data) {
     else view = "overview";
     if (view !== previousView && (view === "reimbursements" || view === "review")) resetReimbursementFilters();
   }
+  /** 按需加载报价库/成本库：并发请求合并成一次，页面切换不会重复拉取。 */
+  async function ensureCatalog() {
+    if (!hasAnyRole(data.identity, catalogViewRoles)) return;
+    if (catalogLoaded || catalogRequest) return catalogRequest || undefined;
+    catalogLoading = true;
+    catalogRequest = (async () => {
+      try {
+        const [items, sources] = await Promise.all([
+          api.get<{ data: { quote: QuoteCatalog[]; cost: CostCatalog[] } }>("/api/catalog"),
+          api.get<{ data: Array<Record<string, any>> }>("/api/catalog/sources"),
+        ]);
+        catalogQuote = items.data.quote;
+        catalogCost = items.data.cost;
+        catalogSources = sources.data;
+        catalogLoaded = true;
+      } catch (reason) {
+        notify(reason instanceof Error ? reason.message : "报价库加载失败", true);
+      } finally {
+        catalogLoading = false;
+        catalogRequest = null;
+      }
+    })();
+    return catalogRequest;
+  }
+  // 报价库只在报价库页面和订单录入（报价/成本联想）用到，其他页面不背这份数据。
+  $effect(() => {
+    if (view === "catalog" || view === "entry") void ensureCatalog();
+  });
   async function refresh() {
+    // 报价库只在报价库页面会被修改；订单保存等其他刷新不再顺带重取近万条资料。
+    const withCatalog = catalogLoaded && view === "catalog";
     const [o, c, p, k, r, review, history] = await Promise.all([
       api.get<{ data: Order[] }>("/api/orders"),
       api.get<{ data: Customer[] }>("/api/customers"),
       api.get<{ data: Project[] }>("/api/projects"),
-      api.get<{ data: { quote: QuoteCatalog[]; cost: CostCatalog[] } }>("/api/catalog"),
+      withCatalog
+        ? api.get<{ data: { quote: QuoteCatalog[]; cost: CostCatalog[] } }>("/api/catalog")
+        : Promise.resolve(null),
       api.get<{ data: Reimbursement[] }>("/api/reimbursements?scope=mine"),
       canReviewReimbursements
         ? api.get<{ data: Reimbursement[] }>("/api/reimbursements?scope=review")
@@ -815,10 +851,12 @@ export function createOrderDesk(data: Data) {
     orders = o.data;
     customers = c.data;
     projects = p.data;
-    catalogQuote = k.data.quote;
-    catalogCost = k.data.cost;
-    const sources = await api.get<{ data: Array<Record<string, any>> }>("/api/catalog/sources");
-    catalogSources = sources.data;
+    if (k) {
+      catalogQuote = k.data.quote;
+      catalogCost = k.data.cost;
+      const sources = await api.get<{ data: Array<Record<string, any>> }>("/api/catalog/sources");
+      catalogSources = sources.data;
+    }
     reimbursements = r.data;
     reviewReimbursements = review.data;
     historyReimbursements = history.data;
@@ -2098,6 +2136,9 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "projects", { get: () => projects, set: (value) => { projects = value; } });
   Object.defineProperty(desk, "catalogQuote", { get: () => catalogQuote, set: (value) => { catalogQuote = value; } });
   Object.defineProperty(desk, "catalogCost", { get: () => catalogCost, set: (value) => { catalogCost = value; } });
+  Object.defineProperty(desk, "catalogLoaded", { get: () => catalogLoaded });
+  Object.defineProperty(desk, "catalogLoading", { get: () => catalogLoading });
+  desk.ensureCatalog = ensureCatalog;
   Object.defineProperty(desk, "employees", { get: () => employees, set: (value) => { employees = value; } });
   Object.defineProperty(desk, "catalogSources", { get: () => catalogSources, set: (value) => { catalogSources = value; } });
   Object.defineProperty(desk, "orders", { get: () => orders, set: (value) => { orders = value; } });

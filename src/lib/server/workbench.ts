@@ -9,7 +9,6 @@ export function loadWorkbench(identity?: CurrentIdentity) {
   const canViewAllReimbursements = !identity || hasAnyRole(identity, reimbursementViewAllRoles);
   // 部门审核人即使没有审核角色，也可以进入审核页处理自己负责的节点。
   const canReviewReimbursements = !identity || hasAnyRole(identity, reimbursementActionRoles) || isDepartmentApprover(identity.uid);
-  const canViewCatalog = !identity || hasAnyRole(identity, catalogViewRoles);
   const identityUid = identity?.uid;
   const orders = canViewAllOrders ? allOrders : allOrders.filter((order) =>
     order.created_by_uid === identityUid || order.designer_uid === identityUid || order.planner_uid === identityUid
@@ -28,8 +27,6 @@ export function loadWorkbench(identity?: CurrentIdentity) {
     today: todayInBizTZ(),
     customers: listCustomers(),
     projects: listProjects(),
-    catalog: canViewCatalog ? listCatalog() : { quote: [], cost: [] },
-    catalogSources: canViewCatalog ? listCatalogSources() : [],
     employees: listActiveEmployees(),
     executionCompanies: listExecutionCompanies(),
     orders,
@@ -38,5 +35,17 @@ export function loadWorkbench(identity?: CurrentIdentity) {
     historyReimbursements,
     canReviewReimbursements,
     canViewAllReimbursements
+  };
+}
+
+/**
+ * 报价库/成本库单独加载：全量有近万条记录（明文数 MB），只有报价库页面和订单录入
+ * 的报价/成本联想需要它。放在布局层会让每个页面都背上这份数据，首屏因此慢一个量级。
+ */
+export function loadCatalogSection(identity?: CurrentIdentity) {
+  const canViewCatalog = !identity || hasAnyRole(identity, catalogViewRoles);
+  return {
+    catalog: canViewCatalog ? listCatalog() : { quote: [], cost: [] },
+    catalogSources: canViewCatalog ? listCatalogSources() : []
   };
 }

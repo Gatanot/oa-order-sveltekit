@@ -187,6 +187,10 @@
     <button role="tab" aria-selected={activeCatalogTab === 'customers'} tabindex={activeCatalogTab === 'customers' ? 0 : -1} class:active={activeCatalogTab === 'customers'} onclick={() => selectCatalogTab('customers')} onkeydown={(event) => onCatalogTabKeydown(event, 2)}><Users size={16} />客户管理</button>
   </div>
 
+  {#if desk.catalogLoading && !desk.catalogLoaded}
+    <p class="catalog-loading" role="status">正在加载报价库与成本库…</p>
+  {/if}
+
   {#if customerTabOpen}
     <CustomerManager />
   {:else if desk.catalogKind === 'quote'}
