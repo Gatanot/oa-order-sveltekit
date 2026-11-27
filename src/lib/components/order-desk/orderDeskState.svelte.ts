@@ -79,6 +79,8 @@ const apiFetch = (input: RequestInfo | URL, init?: RequestInit) => {
     products?: Array<Record<string, any>>;
     costs?: Array<Record<string, any>>;
     advances?: Array<Record<string, any>>;
+    // 列表投影里带的产品名/成本名搜索串，完整明细在打开详情或编辑时按需加载。
+    search_text?: string;
     note: string;
   };
   type Reimbursement = Order & {
@@ -164,6 +166,8 @@ export function createOrderDesk(data: Data) {
   let detailOrder = $state<any>(null);
   let detailAttachments = $state<any[]>([]);
   let detailAttachmentsLoading = $state(false);
+  // 详情明细（产品行/成本行/关联报销）按需加载时的占位状态。
+  let detailLinesLoading = $state(false);
   let attachmentPreviewOpen = $state(false);
   let attachmentPreviewLoading = $state(false);
   let attachmentPreviewError = $state("");
@@ -363,7 +367,7 @@ export function createOrderDesk(data: Data) {
     orders.filter(
       (o) =>
         (!search ||
-          `${o.code}${o.customer_name}${o.project_name}${o.service_name}${o.order_source || ""}${o.designer || ""}${o.created_by || ""}${o.note || ""}${(o.products || []).map((item: any) => `${item.name || ""}${item.specification || ""}${item.remark || ""}`).join("")}${(o.costs || []).map((item: any) => item.name || "").join("")}`
+          `${o.code}${o.customer_name}${o.project_name}${o.service_name}${o.order_source || ""}${o.designer || ""}${o.created_by || ""}${o.note || ""}${o.search_text || ""}${(o.products || []).map((item: any) => `${item.name || ""}${item.specification || ""}${item.remark || ""}`).join("")}${(o.costs || []).map((item: any) => item.name || "").join("")}`
             .toLowerCase()
             .includes(search.toLowerCase())) &&
         (!filterCustomer || o.customer_id === filterCustomer) &&
@@ -1639,6 +1643,23 @@ export function createOrderDesk(data: Data) {
     } catch (e) { notify(e instanceof Error ? e.message : "文件导入失败", true); }
     finally { busy = false; }
   }
+  /** 列表只带订单摘要，产品行/成本行/关联报销在打开详情或编辑时单独取一次。 */
+  async function fetchOrderDetail(id: string): Promise<any> {
+    const result = await api.get<{ data: any }>(`/api/orders/${encodeURIComponent(id)}`);
+    return result.data;
+  }
+  async function loadDetailLines(order: any) {
+    if (!order?.id || order.products) return;
+    detailLinesLoading = true;
+    try {
+      const full = await fetchOrderDetail(order.id);
+      if (detailOrder?.id === order.id) detailOrder = full;
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : "订单明细加载失败", true);
+    } finally {
+      detailLinesLoading = false;
+    }
+  }
   function openDetail(order: any, pushHistory = true) {
     if (!order) return;
     if (pushHistory && currentAppPath() !== `/orders/${order.id}`) pushState(appPath(`/orders/${order.id}`), {});
@@ -1647,26 +1668,40 @@ export function createOrderDesk(data: Data) {
     orderFormDirty = false;
     detailOrder = order;
     detailAttachments = [];
+    void loadDetailLines(order);
     loadDetailAttachments(order.id);
   }
-  function editOrder(order: any, pushHistory = true) {
+  async function editOrder(order: any, pushHistory = true) {
     if (pushHistory && currentAppPath() !== `/orders/${order.id}/edit`) pushState(appPath(`/orders/${order.id}/edit`), {});
-    editingOrderId = order.id;
-    customerId = order.customer_id;
-    projectId = order.project_id;
-    orderDate = order.order_date;
-    deliveryDate = order.delivery_date || "";
-    orderSource = order.order_source || "";
-    designer = order.designer || "";
-    designerUid = order.designer_uid || null;
-    planner = order.planner || "";
-    plannerUid = order.planner_uid || null;
-    executionCompany = order.execution_company || "";
-    paymentStatus = order.payment_status || "未结款";
-    status = order.status === "已完成" ? "已完成" : "已提交";
-    createdBy = order.created_by || creatorName;
-    note = order.note || "";
-    products = mergeCostsIntoProducts(order.products, order.costs);
+    let target = order;
+    if (!order.products) {
+      busy = true;
+      try {
+        target = await fetchOrderDetail(order.id);
+      } catch (reason) {
+        notify(reason instanceof Error ? reason.message : "订单明细加载失败", true);
+        view = "overview";
+        return;
+      } finally {
+        busy = false;
+      }
+    }
+    editingOrderId = target.id;
+    customerId = target.customer_id;
+    projectId = target.project_id;
+    orderDate = target.order_date;
+    deliveryDate = target.delivery_date || "";
+    orderSource = target.order_source || "";
+    designer = target.designer || "";
+    designerUid = target.designer_uid || null;
+    planner = target.planner || "";
+    plannerUid = target.planner_uid || null;
+    executionCompany = target.execution_company || "";
+    paymentStatus = target.payment_status || "未结款";
+    status = target.status === "已完成" ? "已完成" : "已提交";
+    createdBy = target.created_by || creatorName;
+    note = target.note || "";
+    products = mergeCostsIntoProducts(target.products, target.costs);
     detailOrder = null;
     view = "entry";
     orderFormDirty = false;
@@ -2165,6 +2200,7 @@ export function createOrderDesk(data: Data) {
   Object.defineProperty(desk, "detailOrder", { get: () => detailOrder, set: (value) => { detailOrder = value; } });
   Object.defineProperty(desk, "detailAttachments", { get: () => detailAttachments });
   Object.defineProperty(desk, "detailAttachmentsLoading", { get: () => detailAttachmentsLoading });
+  Object.defineProperty(desk, "detailLinesLoading", { get: () => detailLinesLoading });
   Object.defineProperty(desk, "attachmentPreviewOpen", { get: () => attachmentPreviewOpen });
   Object.defineProperty(desk, "attachmentPreviewLoading", { get: () => attachmentPreviewLoading });
   Object.defineProperty(desk, "attachmentPreviewError", { get: () => attachmentPreviewError });

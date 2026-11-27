@@ -515,8 +515,16 @@ try {
   result = await request('/api/reimbursements', { method: 'POST', json: { employee: '填写人甲', item: '交通费', amount: '12.34', advance_date: '2026-09-16', order_id: orderId } });
   assert.equal(result.response.status, 201, JSON.stringify(result.data));
   const reimbursementId = result.data.data.id;
+  // 首屏列表只下发订单摘要（产品行/成本行/垫付明细按需取），明细走 /api/orders/{id}。
   result = await request('/api/orders');
-  assert.ok((result.data.data.find((item) => item.id === orderId).advances || []).some((item) => item.id === reimbursementId), '订单显示时应自动包含关联的报销');
+  const summaryOrder = result.data.data.find((item) => item.id === orderId);
+  assert.ok(summaryOrder, '订单列表应包含新建的订单');
+  assert.ok(!('products' in summaryOrder) && !('advances' in summaryOrder), '订单列表不应再下发产品行/垫付明细');
+  assert.ok(String(summaryOrder.search_text || '').length > 0, '订单摘要应带产品名搜索串');
+  result = await request(`/api/orders/${encodeURIComponent(orderId)}`);
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+  assert.ok((result.data.data.advances || []).some((item) => item.id === reimbursementId), '订单详情应自动包含关联的报销');
+  assert.ok((result.data.data.products || []).length > 0, '订单详情应包含产品行');
   async function setAdminWorkflowRole(role) {
     const form = new FormData();
     form.append('role', role);

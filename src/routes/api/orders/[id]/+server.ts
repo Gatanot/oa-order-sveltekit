@@ -1,7 +1,23 @@
+import { json } from '@sveltejs/kit';
 import { action, body } from '$lib/server/http';
-import { hasAnyRole, orderDeleteRoles, orderManageRoles, getEmployeeDisplayName } from '$lib/server/identity';
-import { addAuditLog, deleteOrder, getOrderAccessInfo, resolveOrderEmployeeUid, setOrderEmployees, updateOrder } from '$lib/server/order-db';
+import { hasAnyRole, orderDeleteRoles, orderManageRoles, orderViewAllRoles, getEmployeeDisplayName } from '$lib/server/identity';
+import { addAuditLog, deleteOrder, getOrderAccessInfo, getOrderById, resolveOrderEmployeeUid, setOrderEmployees, updateOrder } from '$lib/server/order-db';
 import type { RequestHandler } from './$types';
+
+/**
+ * 订单明细按需加载：首屏列表只下发摘要，打开详情/编辑时再取产品行、成本行和关联报销。
+ * 权限与列表一致——可看全部订单的身份，或该订单的录入人/设计师/策划人。
+ */
+export const GET: RequestHandler = async ({ params, locals }) => {
+  const identity = await locals.getCurrentIdentity();
+  if (!identity) return json({ error: { code: 'UNAUTHORIZED', message: '请通过 Catsco 登录后访问' } }, { status: 401 });
+  const order = getOrderById(params.id);
+  if (!order) return json({ error: { code: 'NOT_FOUND', message: '订单不存在' } }, { status: 404 });
+  const canViewAll = hasAnyRole(identity, orderViewAllRoles);
+  const isParticipant = order.created_by_uid === identity.uid || order.designer_uid === identity.uid || order.planner_uid === identity.uid;
+  if (!canViewAll && !isParticipant) return json({ error: { code: 'FORBIDDEN', message: '没有查看该订单的权限' } }, { status: 403 });
+  return json({ data: order });
+};
 
 export const PATCH: RequestHandler = async (event) => {
   const data = await body(event);

@@ -1,9 +1,10 @@
-import { isDepartmentApprover, listCatalog, listCatalogSources, listCustomers, listExecutionCompanies, listOrders, listProjects, listReimbursementOrders, withReimbursementActions } from './order-db';
+import { isDepartmentApprover, listCatalog, listCatalogSources, listCustomers, listExecutionCompanies, listOrderSummaries, listProjects, listReimbursementOrders, withReimbursementActions } from './order-db';
 import { listActiveEmployees, orderViewAllRoles, reimbursementActionRoles, reimbursementViewAllRoles, catalogViewRoles, hasAnyRole, type CurrentIdentity } from './identity';
 import { todayInBizTZ } from '$lib/server/time';
 
 export function loadWorkbench(identity?: CurrentIdentity) {
-  const allOrders = listOrders();
+  // 列表只需要订单摘要：产品行/成本行/垫付明细在打开详情或编辑时再按需取。
+  const allOrders = listOrderSummaries();
   const allReimbursements = listReimbursementOrders();
   const canViewAllOrders = !identity || hasAnyRole(identity, orderViewAllRoles);
   const canViewAllReimbursements = !identity || hasAnyRole(identity, reimbursementViewAllRoles);

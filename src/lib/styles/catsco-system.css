@@ -1,7 +1,9 @@
 /* Catsco geometry and interaction tokens; color aliases retain the OA palette. */
 :root {
-  --cc-font-sans: "Inter Variable", "Noto Sans SC Variable", Inter, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
-  --cc-font-mono: "JetBrains Mono Variable", "JetBrains Mono", Consolas, monospace;
+  /* 中文走系统字体（苹方/微软雅黑/思源黑体）：不再随页面下发 Noto Sans SC 的 120 个子集，
+     首屏字体下载从 ~740KB 降到 ~50KB（只剩 Inter 的拉丁字形），中文也更接近系统原生观感。 */
+  --cc-font-sans: "Inter Variable", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans SC", "Noto Sans CJK SC", sans-serif;
+  --cc-font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, "Courier New", monospace;
   --cc-font-weight-regular: 400;
   --cc-font-weight-medium: 500;
   --cc-font-weight-semibold: 600;

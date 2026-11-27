@@ -1518,36 +1518,61 @@ function syncOrderAdvanceReimbursements(
   }
 }
 
-function hydrateOrder(row: Record<string, unknown>): Record<string, any> {
+const HYDRATE_CHUNK_SIZE = 400;
+
+/** 把 id 列表切成若干块：SQLite 单条语句的变量数量有限，订单多时要分批 IN 查询。 */
+function chunkIds(ids: string[], size = HYDRATE_CHUNK_SIZE): string[][] {
+  const parts: string[][] = [];
+  for (let index = 0; index < ids.length; index += size) parts.push(ids.slice(index, index + size));
+  return parts;
+}
+
+/**
+ * 批量补全订单明细（产品行/成本行/关联报销/员工最新姓名）。
+ * 原来每张订单各查 4 次，一千张订单首屏要跑近 4000 条 SQL（实测 TTFB 400ms+）；
+ * 改成按 id 分块批量查询后固定为十几条，明细结构与单条补全完全一致。
+ */
+function hydrateOrders(rows: Array<Record<string, unknown>>): Array<Record<string, any>> {
+  if (!rows.length) return [];
   const db = getOrderDb();
-  const normalizedProducts = db.prepare(`SELECT op.id AS line_id,op.catalog_item_id AS catalog_id,op.name,op.specification,op.remark,op.unit,op.quantity,op.unit_price / 100.0 AS unit_price,op.subtotal / 100.0 AS subtotal,qi.category
-    FROM order_products op LEFT JOIN catalog_quote_items qi ON qi.id=op.catalog_item_id WHERE op.order_id=? ORDER BY op.position`).all(row.id) as Array<Record<string, unknown>>;
-  const normalizedCosts = db.prepare('SELECT catalog_item_id AS catalog_id,parent_line_id,name,vendor,unit,quantity,unit_price / 100.0 AS unit_price,subtotal / 100.0 AS subtotal FROM order_costs WHERE order_id=? ORDER BY position').all(row.id) as Array<Record<string, unknown>>;
-  const rawCosts: Array<Record<string, unknown>> = normalizedCosts.length ? normalizedCosts : parseList(row.costs_json).map((cost) => ({ parent_line_id: '', ...(cost as Record<string, unknown>) }));
-  // 额外成本不混入订单级主成本列表，而是挂回所属产品行，详情和编辑页可以按行展示/维护。
-  const costs = rawCosts.filter((cost) => !text(cost.parent_line_id)).map(({ parent_line_id, ...cost }) => cost);
-  const pendingExtras = new Map<string, Array<Record<string, unknown>>>();
-  for (const cost of rawCosts) {
-    const parent = text(cost.parent_line_id);
-    if (!parent) continue;
-    const list = pendingExtras.get(parent) || [];
-    list.push({ ...cost, amount: Number(cost.subtotal ?? Number(cost.quantity || 0) * Number(cost.unit_price || 0)) });
-    pendingExtras.set(parent, list);
+  const ids = rows.map((row) => text(row.id));
+  const productsByOrder = new Map<string, Array<Record<string, unknown>>>();
+  const costsByOrder = new Map<string, Array<Record<string, unknown>>>();
+  const advancesByOrder = new Map<string, Array<Record<string, unknown>>>();
+  const employeeUids = new Set<number>();
+  const push = (map: Map<string, Array<Record<string, unknown>>>, orderId: unknown, item: Record<string, unknown>) => {
+    const key = text(orderId);
+    const list = map.get(key);
+    if (list) list.push(item);
+    else map.set(key, [item]);
+  };
+  for (const part of chunkIds(ids)) {
+    const marks = part.map(() => '?').join(',');
+    for (const item of db.prepare(`SELECT op.order_id,op.id AS line_id,op.catalog_item_id AS catalog_id,op.name,op.specification,op.remark,op.unit,op.quantity,op.unit_price / 100.0 AS unit_price,op.subtotal / 100.0 AS subtotal,qi.category
+      FROM order_products op LEFT JOIN catalog_quote_items qi ON qi.id=op.catalog_item_id WHERE op.order_id IN (${marks}) ORDER BY op.order_id,op.position`).all(...part) as Array<Record<string, unknown>>) {
+      push(productsByOrder, item.order_id, item);
+    }
+    for (const item of db.prepare(`SELECT order_id,catalog_item_id AS catalog_id,parent_line_id,name,vendor,unit,quantity,unit_price / 100.0 AS unit_price,subtotal / 100.0 AS subtotal
+      FROM order_costs WHERE order_id IN (${marks}) ORDER BY order_id,position`).all(...part) as Array<Record<string, unknown>>) {
+      push(costsByOrder, item.order_id, item);
+    }
+    for (const item of db.prepare(`SELECT r.order_id,r.id,r.employee,r.item,r.amount / 100.0 AS amount,r.advance_date AS date,r.invoice,r.note,r.status,r.source_line_id,
+      (SELECT ra.id FROM reimbursement_attachments ra WHERE ra.reimbursement_id=r.id ORDER BY ra.created_at DESC LIMIT 1) AS attachment_id,
+      (SELECT COUNT(*) FROM reimbursement_attachments ra WHERE ra.reimbursement_id=r.id) AS attachment_count
+      FROM reimbursements_simple r WHERE r.order_id IN (${marks}) ORDER BY r.order_id,r.advance_date,r.id`).all(...part) as Array<Record<string, unknown>>) {
+      push(advancesByOrder, item.order_id, item);
+    }
   }
-  const products = (normalizedProducts.length ? normalizedProducts : parseList(row.products_json)).map((product): Record<string, any> => ({
-    ...product,
-    extra_costs: pendingExtras.get(text(product.line_id)) || normalizeExtraCosts(product.extra_costs).map((extra) => ({ ...extra, amount: Number(extra.quantity || 0) * Number(extra.unit_price || 0) }))
-  }));
-  const advances = (db.prepare(`SELECT r.id,r.employee,r.item,r.amount / 100.0 AS amount,r.advance_date AS date,r.invoice,r.note,r.status,r.source_line_id,
-    (SELECT ra.id FROM reimbursement_attachments ra WHERE ra.reimbursement_id=r.id ORDER BY ra.created_at DESC LIMIT 1) AS attachment_id,
-    (SELECT COUNT(*) FROM reimbursement_attachments ra WHERE ra.reimbursement_id=r.id) AS attachment_count
-    FROM reimbursements_simple r WHERE r.order_id=? ORDER BY r.advance_date,r.id`).all(row.id) as Array<Record<string, unknown>>).map((item) => ({ ...item, status: reimbursementStatusLabel(item.status) }));
-  const employeeUids = [...new Set([row.created_by_uid, row.designer_uid, row.planner_uid]
-    .map((uid) => Number(uid))
-    .filter((uid) => Number.isSafeInteger(uid) && uid > 0))];
+  for (const row of rows) {
+    for (const uid of [row.created_by_uid, row.designer_uid, row.planner_uid]) {
+      const value = Number(uid);
+      if (Number.isSafeInteger(value) && value > 0) employeeUids.add(value);
+    }
+  }
   const employeeNames = new Map<number, string>();
-  if (employeeUids.length) {
-    const rows = db.prepare(`SELECT catsco_uid,display_name FROM employees WHERE catsco_uid IN (${employeeUids.map(() => '?').join(',')})`).all(...employeeUids) as Array<{ catsco_uid: number; display_name: string }>;
+  const uidList = [...employeeUids];
+  for (const part of chunkIds(uidList.map(String))) {
+    const rows = db.prepare(`SELECT catsco_uid,display_name FROM employees WHERE catsco_uid IN (${part.map(() => '?').join(',')})`).all(...part.map(Number)) as Array<{ catsco_uid: number; display_name: string }>;
     for (const employee of rows) employeeNames.set(employee.catsco_uid, employee.display_name);
   }
   // 订单里保存的是姓名快照，展示时优先按 UID 读取员工档案的最新姓名，
@@ -1556,17 +1581,46 @@ function hydrateOrder(row: Record<string, unknown>): Record<string, any> {
     const value = Number(uid);
     return (Number.isSafeInteger(value) ? employeeNames.get(value) : '') || text(fallback);
   };
-  // 订单行是否处于个人垫付以自动报销记录为准，刷新/再次编辑时仍能正确回显开关。
-  const advanceLineIds = new Set(advances.map((item) => text((item as Record<string, unknown>).source_line_id)).filter(Boolean));
-  const hydratedProducts = products.map((item) => ({ ...item, advance: advanceLineIds.has(text(item.line_id)) }));
-  return {
-    ...row,
-    created_by: displayName(row.created_by_uid, row.created_by),
-    designer: displayName(row.designer_uid, row.designer),
-    planner: displayName(row.planner_uid, row.planner),
-    status: normalizeOrderStatus(row.status), products: hydratedProducts, costs, advances,
-    reimbursement_status: reimbursementStatusFor(advances)
-  };
+  return rows.map((row) => {
+    const orderId = text(row.id);
+    const normalizedProducts = productsByOrder.get(orderId) || [];
+    const normalizedCosts = costsByOrder.get(orderId) || [];
+    const rawCosts: Array<Record<string, unknown>> = normalizedCosts.length ? normalizedCosts : parseList(row.costs_json).map((cost) => ({ parent_line_id: '', ...(cost as Record<string, unknown>) }));
+    // 额外成本不混入订单级主成本列表，而是挂回所属产品行，详情和编辑页可以按行展示/维护。
+    const costs = rawCosts.filter((cost) => !text(cost.parent_line_id)).map(({ order_id, parent_line_id, ...cost }) => cost);
+    const pendingExtras = new Map<string, Array<Record<string, unknown>>>();
+    for (const cost of rawCosts) {
+      const parent = text(cost.parent_line_id);
+      if (!parent) continue;
+      const list = pendingExtras.get(parent) || [];
+      list.push({ ...cost, amount: Number(cost.subtotal ?? Number(cost.quantity || 0) * Number(cost.unit_price || 0)) });
+      pendingExtras.set(parent, list);
+    }
+    const products = (normalizedProducts.length ? normalizedProducts : parseList(row.products_json)).map((product): Record<string, any> => {
+      const { order_id: _orderId, ...line } = product as Record<string, unknown>;
+      return {
+        ...line,
+        extra_costs: pendingExtras.get(text(line.line_id)) || normalizeExtraCosts(line.extra_costs).map((extra) => ({ ...extra, amount: Number(extra.quantity || 0) * Number(extra.unit_price || 0) }))
+      };
+    });
+    const advances = (advancesByOrder.get(orderId) || []).map(({ order_id, ...item }) => ({ ...item, status: reimbursementStatusLabel(item.status) }));
+    // 订单行是否处于个人垫付以自动报销记录为准，刷新/再次编辑时仍能正确回显开关。
+    const advanceLineIds = new Set(advances.map((item) => text((item as Record<string, unknown>).source_line_id)).filter(Boolean));
+    const hydratedProducts = products.map((item) => ({ ...item, advance: advanceLineIds.has(text(item.line_id)) }));
+    const { order_id, ...base } = row;
+    return {
+      ...base,
+      created_by: displayName(row.created_by_uid, row.created_by),
+      designer: displayName(row.designer_uid, row.designer),
+      planner: displayName(row.planner_uid, row.planner),
+      status: normalizeOrderStatus(row.status), products: hydratedProducts, costs, advances,
+      reimbursement_status: reimbursementStatusFor(advances)
+    };
+  });
+}
+
+function hydrateOrder(row: Record<string, unknown>): Record<string, any> {
+  return hydrateOrders([row])[0];
 }
 
 export function getOrderAccessInfo(id: string) {
@@ -1630,7 +1684,71 @@ export function getOrderById(id: string): Record<string, any> | undefined {
 
 export function listOrders(): Array<Record<string, any>> {
   const rows = getOrderDb().prepare(`SELECT o.*, c.name AS customer_name, c.contact AS customer_contact, p.name AS project_name, p.owner AS project_owner FROM orders_simple o JOIN customer_profiles c ON c.id=o.customer_id JOIN projects_simple p ON p.id=o.project_id ORDER BY o.order_date DESC,o.created_at DESC`).all() as Array<Record<string, unknown>>;
-  return rows.map(hydrateOrder);
+  return hydrateOrders(rows);
+}
+
+/**
+ * 订单列表专用投影：只带列表/筛选/排序需要的字段，产品行、成本行、关联报销明细
+ * 由 /api/orders/[id] 在打开详情或编辑时按需取。几百上千张订单时，
+ * 这份数据比完整订单小一半左右，首屏解析和水合的对象数也少一大截。
+ * search_text 把产品名/成本名拼成一个字符串，保证列表搜索仍能命中明细内容。
+ */
+export function listOrderSummaries(): Array<Record<string, any>> {
+  const db = getOrderDb();
+  const rows = db.prepare(`SELECT o.id,o.code,o.customer_id,o.project_id,c.name AS customer_name,p.name AS project_name,p.owner AS project_owner,
+      o.service_name,o.quantity,o.unit,o.quote_amount,o.cost_amount,o.order_date,o.delivery_date,o.order_source,
+      o.designer,o.designer_uid,o.planner,o.planner_uid,o.execution_company,o.created_by,o.created_by_uid,
+      o.status,o.payment_status,o.note,o.is_extra,o.created_at
+    FROM orders_simple o JOIN customer_profiles c ON c.id=o.customer_id JOIN projects_simple p ON p.id=o.project_id
+    ORDER BY o.order_date DESC,o.created_at DESC`).all() as Array<Record<string, any>>;
+  if (!rows.length) return [];
+  const ids = rows.map((row) => text(row.id));
+  const searchByOrder = new Map<string, string[]>();
+  const statusesByOrder = new Map<string, Array<Record<string, unknown>>>();
+  for (const part of chunkIds(ids)) {
+    const marks = part.map(() => '?').join(',');
+    for (const item of db.prepare(`SELECT order_id,name FROM order_products WHERE order_id IN (${marks})`).all(...part) as Array<Record<string, unknown>>) {
+      const key = text(item.order_id);
+      searchByOrder.set(key, [...(searchByOrder.get(key) || []), text(item.name)]);
+    }
+    for (const item of db.prepare(`SELECT order_id,name FROM order_costs WHERE order_id IN (${marks})`).all(...part) as Array<Record<string, unknown>>) {
+      const key = text(item.order_id);
+      searchByOrder.set(key, [...(searchByOrder.get(key) || []), text(item.name)]);
+    }
+    for (const item of db.prepare(`SELECT order_id,status FROM reimbursements_simple WHERE order_id IN (${marks})`).all(...part) as Array<Record<string, unknown>>) {
+      const key = text(item.order_id);
+      statusesByOrder.set(key, [...(statusesByOrder.get(key) || []), item]);
+    }
+  }
+  // 员工改名后列表里的姓名快照也要跟着更新，与详情页保持一致的显示规则。
+  const employeeNames = new Map<number, string>();
+  for (const uid of new Set(rows.flatMap((row) => [row.created_by_uid, row.designer_uid, row.planner_uid])
+    .map((uid) => Number(uid))
+    .filter((uid) => Number.isSafeInteger(uid) && uid > 0))) {
+    employeeNames.set(uid, '');
+  }
+  const uidList = [...employeeNames.keys()];
+  for (const part of chunkIds(uidList.map(String))) {
+    const found = db.prepare(`SELECT catsco_uid,display_name FROM employees WHERE catsco_uid IN (${part.map(() => '?').join(',')})`).all(...part.map(Number)) as Array<{ catsco_uid: number; display_name: string }>;
+    for (const employee of found) employeeNames.set(employee.catsco_uid, employee.display_name);
+  }
+  const displayName = (uid: unknown, fallback: unknown) => {
+    const value = Number(uid);
+    return (Number.isSafeInteger(value) ? employeeNames.get(value) : '') || text(fallback);
+  };
+  return rows.map((row) => {
+    const key = text(row.id);
+    const statuses = (statusesByOrder.get(key) || []).map((item) => ({ status: reimbursementStatusLabel(item.status) }));
+    return {
+      ...row,
+      created_by: displayName(row.created_by_uid, row.created_by),
+      designer: displayName(row.designer_uid, row.designer),
+      planner: displayName(row.planner_uid, row.planner),
+      status: normalizeOrderStatus(row.status),
+      reimbursement_status: reimbursementStatusFor(statuses),
+      search_text: (searchByOrder.get(key) || []).join(' ')
+    };
+  });
 }
 
 export type ExecutionCompany = { id: string; name: string; sort_order: number; created_at: string; updated_at: string };

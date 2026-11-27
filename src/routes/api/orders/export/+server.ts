@@ -1,5 +1,5 @@
 import { hasAnyRole, orderExportRoles, orderViewAllRoles } from '$lib/server/identity';
-import { addAuditLog, exportOrders, listOrders } from '$lib/server/order-db';
+import { addAuditLog, exportOrders, listOrderSummaries } from '$lib/server/order-db';
 import { todayInBizTZ } from '$lib/server/time';
 import type { RequestHandler } from './$types';
 
@@ -13,7 +13,7 @@ export const GET: RequestHandler = async (event) => {
     delete filters.actor;
     if (!hasAnyRole(identity, orderViewAllRoles)) {
       const requestedIds = new Set((filters.ids || '').split(',').filter(Boolean));
-      const visibleIds = listOrders().filter((order) =>
+      const visibleIds = listOrderSummaries().filter((order) =>
         (order.created_by_uid === identity.uid || order.designer_uid === identity.uid || order.planner_uid === identity.uid) &&
         (!requestedIds.size || requestedIds.has(order.id))
       ).map((order) => order.id);
